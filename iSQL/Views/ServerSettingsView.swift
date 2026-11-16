@@ -12,15 +12,17 @@ final class SettingsTarget {
 struct ServerSettingsView: View {
 	@Environment(ServerStore.self) private var store
 	private var target = SettingsTarget.shared
+	/// 설정 창 폭: 맥 설정창처럼 탭을 바꿔도 폭은 그대로, 높이만 바뀐다 (폭이 바뀌면 탭 버튼이 움직였다, 사용자 지적)
+	static let width: CGFloat = 920
 	/// 마지막으로 본 탭 (이 맥에만)
 	@AppStorage("settingsTab") private var tab = "general"
 
 	var body: some View {
 		TabView(selection: $tab) {
-			Tab("일반", systemImage: "gearshape", value: "general") { page { general($0) }.frame(width: 640, height: 440) }
-			Tab("사용자 계정", systemImage: "person.2", value: "accounts") { page { accounts($0) }.frame(width: 920, height: 620) }
-			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: 640, height: 440) }
-			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: 640, height: 440) }
+			Tab("일반", systemImage: "gearshape", value: "general") { page { general($0) }.frame(width: Self.width, height: 440) }
+			Tab("사용자 계정", systemImage: "person.2", value: "accounts") { page { accounts($0) }.frame(width: Self.width, height: 620) }
+			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: Self.width, height: 440) }
+			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: Self.width, height: 440) }
 		}
 	}
 

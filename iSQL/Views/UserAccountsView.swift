@@ -26,11 +26,12 @@ struct UserAccountsView: View {
 					Button("다시 읽기") { Task { await manager.load() } }
 				}
 			} else {
-				HStack(spacing: 0) {
-					accountList.frame(width: 240)
-					Divider()
+				// Mail 계정 설정처럼: 테두리 상자 안 목록 + 아래 [+ −], 오른쪽에 고른 계정 (창 가장자리에 붙는 사이드바가 아니다)
+				HStack(alignment: .top, spacing: 16) {
+					accountList.frame(width: 250)
 					detail.frame(maxWidth: .infinity, maxHeight: .infinity)
 				}
+				.padding(20)
 			}
 		}
 		.task {
@@ -119,10 +120,13 @@ struct UserAccountsView: View {
 					.tag(a.id)
 				}
 			}
-			// .sidebar 는 설정 창 제목바까지 올라가 붙어서 일반 목록으로
+			// .sidebar 는 설정 창 제목바까지 올라가 붙어서 테두리 상자 안 목록으로
 			.listStyle(.inset)
+			.scrollContentBackground(.hidden)
+			.background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+			.clipShape(RoundedRectangle(cornerRadius: 8))
+			.overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
 			.overlay { if manager.loading && manager.accounts.isEmpty { ProgressView() } }
-			Divider()
 			HStack(spacing: 8) {
 				AddRemovePill(addHelp: "사용자 추가", add: { addingUser = true },
 				              removeHelp: "고른 사용자 삭제…", remove: selected == nil ? nil : { confirmDrop = true })
@@ -133,7 +137,7 @@ struct UserAccountsView: View {
 				.pill()
 				.help("다시 읽기")
 			}
-			.padding(8)
+			.padding(.top, 10)
 		}
 	}
 
@@ -148,7 +152,8 @@ struct UserAccountsView: View {
 					dbSection(a)
 					grantsSection(a)
 				}
-				.padding(20)
+				.padding(.horizontal, 4)
+				.padding(.bottom, 12)
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 		} else {
