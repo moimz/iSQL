@@ -1207,21 +1207,41 @@ final class GridTableView: NSTableView {
 
 	@objc func copy(_ sender: Any?) { coordinator?.copySelection() }
 
+	/// 끄는 컬럼 묶음 (머리를 다시 그릴 때마다 테두리 자리를 맞춘다)
+	weak var ghost: NSView?
+
 	/// 컬럼을 끄는 동안 AppKit 이 끄는 컬럼의 칸들을 따로 묶어 불투명도 60% 로 띄운다(뒤가 비쳐 어수선했다) → 불투명하게
 	override func didAddSubview(_ subview: NSView) {
 		super.didAddSubview(subview)
-		guard !(subview is NSTableRowView) else { return }
-		func solid() {
-			subview.alphaValue = 1
-			subview.layer?.opacity = 1
-			subview.layer?.backgroundColor = NSColor.alternatingContentBackgroundColors[0].cgColor
-			subview.layer?.shadowOpacity = 0.35
-			subview.layer?.shadowRadius = 6
-			subview.layer?.shadowOffset = .zero
+		guard !(subview is NSTableRowView), !(subview is GridGhostEdge) else { return }
+		ghost = subview
+		solidifyGhost()
+		// AppKit 이 붙인 뒤에 불투명도·크기를 정할 수 있어 한 번 더 (끄는 동안은 이벤트 추적 모드)
+		RunLoop.main.perform(inModes: [.eventTracking, .default]) { MainActor.assumeIsolated { self.solidifyGhost() } }
+	}
+
+	/// 끄는 컬럼 묶음: 불투명·그림자, 양옆 테두리는 위아래 끝까지 (AppKit 의 테두리 선과 칸의 선은 데이터 줄에만 있어 빈 줄에서 끊겼다)
+	func solidifyGhost() {
+		guard let g = ghost, g.superview === self else { return }
+		g.alphaValue = 1
+		g.layer?.opacity = 1
+		g.layer?.backgroundColor = NSColor.alternatingContentBackgroundColors[0].cgColor
+		g.layer?.shadowOpacity = 0.35
+		g.layer?.shadowRadius = 6
+		g.layer?.shadowOffset = .zero
+		for v in g.subviews where !(v is GridField) && !(v is GridCheckView) && !(v is GridGhostEdge) { v.isHidden = true }
+		if !g.subviews.contains(where: { $0 is GridGhostEdge }) {
+			g.addSubview(GridGhostEdge(frame: .zero))
+			g.addSubview(GridGhostEdge(frame: .zero))
 		}
-		solid()
-		// AppKit 이 붙인 뒤에 불투명도를 정할 수 있어 한 번 더 (끄는 동안은 이벤트 추적 모드)
-		RunLoop.main.perform(inModes: [.eventTracking, .default]) { MainActor.assumeIsolated { solid() } }
+		// 붙는 순간엔 크기가 0 일 수 있어 부를 때마다 자리를 다시 잡는다
+		let edges = g.subviews.compactMap { $0 as? GridGhostEdge }
+		let b = g.bounds
+		if edges.count == 2 {
+			edges[0].frame = NSRect(x: 0, y: 0, width: 1, height: b.height)
+			edges[1].frame = NSRect(x: b.width - 1, y: 0, width: 1, height: b.height)
+			edges.forEach { $0.needsDisplay = true }
+		}
 	}
 
 	override func becomeFirstResponder() -> Bool {
@@ -1273,6 +1293,18 @@ final class GridEdgeLine: NSView {
 	}
 }
 
+/// 끄는 컬럼 묶음의 양옆 테두리 (위아래 끝까지)
+final class GridGhostEdge: NSView {
+	override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+	required init?(coder: NSCoder) { fatalError() }
+	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+	// 크기 0 으로 붙은 뒤 늘어나므로 그림 대신 층 바탕색으로 (그림은 크기가 바뀌어도 다시 안 그려졌다)
+	override var wantsUpdateLayer: Bool { true }
+	override func updateLayer() {
+		effectiveAppearance.performAsCurrentDrawingAppearance { self.layer?.backgroundColor = GridTableView.lineColor.cgColor }
+	}
+}
+
 /// 컬럼 머리 줄. 배경을 직접 칠한다: 맥 26 은 머리 배경을 스크롤 가장자리 효과(흐림)로 그리는데
 /// 고정 칸 머리는 그 효과 밖이라 검게 나왔고, 본 표 머리도 가끔 검게 나와 컬럼 구분선이 안 보였다(가로 스크롤하면 돌아옴)
 final class GridHeaderView: NSTableHeaderView {
@@ -1292,18 +1324,38 @@ final class GridHeaderView: NSTableHeaderView {
 
 	override var wantsUpdateLayer: Bool { false }
 
+	/// 끄는 컬럼 머리 바탕 (머리보다 조금 밝게, 불투명)
+	static let dragBackground = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 62 / 255, green: 63 / 255, blue: 66 / 255, alpha: 1) : NSColor(white: 0.9, alpha: 1)
+	}
+
 	override func draw(_ dirtyRect: NSRect) {
 		(drawsBottomLine ? Self.frozenBackground : Self.background).setFill()
 		dirtyRect.intersection(bounds).fill()
-		// 컬럼을 끄는 중이면 AppKit 이 끄는 컬럼을 옮겨 그린다
-		guard draggedColumn < 0, let tv = tableView else { super.draw(dirtyRect); return }
-		// 나머지는 직접: AppKit 은 배경을 투명하게 지우고 그려서 밑이 비면 검게 나왔다 
-		for (i, tc) in tv.tableColumns.enumerated() {
+		guard let tv = tableView else { super.draw(dirtyRect); return }
+		// 모두 직접 그린다: AppKit 은 배경을 투명하게 지우고 그려서 밑이 비면 검게 나왔고,
+		// 끄는 컬럼 머리는 반투명에 위가 4pt 쯤 비어 보였다
+		let dragged = draggedColumn
+		for (i, tc) in tv.tableColumns.enumerated() where i != dragged {
 			let r = headerRect(ofColumn: i)
 			guard r.intersects(dirtyRect) else { continue }
 			tc.headerCell.drawInterior(withFrame: r, in: self)
 			Self.separator.setFill()
 			NSRect(x: r.maxX - 1, y: r.minY + 6, width: 1, height: r.height - 12).fill()
+		}
+		if dragged >= 0, dragged < tv.numberOfColumns {
+			// 끄는 동안 순서는 이미 바뀌어 있다(그 컬럼 자리 + 끈 거리). 표도 새 순서로 세로선을 다시 그리게
+			let r = headerRect(ofColumn: dragged).offsetBy(dx: draggedDistance, dy: 0)
+			Self.dragBackground.setFill()
+			r.fill()
+			tv.tableColumns[dragged].headerCell.drawInterior(withFrame: r, in: self)
+			Self.separator.setFill()
+			NSRect(x: r.minX, y: r.minY, width: 1, height: r.height).fill()
+			NSRect(x: r.maxX - 1, y: r.minY, width: 1, height: r.height).fill()
+			RunLoop.main.perform(inModes: [.eventTracking, .default]) { MainActor.assumeIsolated {
+				tv.needsDisplay = true
+				(tv as? GridTableView)?.solidifyGhost()
+			} }
 		}
 		if drawsBottomLine {
 			NSColor.gridColor.setFill()
@@ -1413,6 +1465,8 @@ enum GridCellBackground {
 			fill.setFill()
 			b.fill(using: .sourceOver)
 		}
+		// 끄는 컬럼 묶음 안이면 선은 묶음 테두리가 위아래 끝까지 그린다 (겹치면 데이터 줄만 진했다)
+		guard view.superview is NSTableRowView else { return }
 		GridTableView.lineColor.setFill()
 		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill(using: .sourceOver)
 	}
