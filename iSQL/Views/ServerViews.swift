@@ -27,6 +27,12 @@ struct ServerSidebar: View {
 		VStack(spacing: 0) {
 		SidebarSearchField(text: $searchText, prompt: "서버 이름, 호스트, 그룹 검색", focused: $searchFocused)
 		List(selection: $model.selectedServerID) {
+			// 맨 위 "새 접속": 고르면 가운데에 빈 서버 정보 입력 (찾는 동안은 숨김)
+			if searchText.isEmpty {
+				Section {
+					NewConnectionRow().tag(WindowModel.newConnectionID)
+				}
+			}
 			ForEach(shown, id: \.group) { g in
 				Section {
 					ForEach(g.servers) { s in
@@ -73,6 +79,10 @@ struct ServerSidebar: View {
 		// 한 번 누르기: 접속한 서버면 그 서버로 옮기고(사이드바는 테이블 목록으로),
 		// 아니면 다른 서버를 보고 있더라도 퀵 커넥트 화면에 그 서버 설정을 띄운다 (보던 접속은 그대로)
 		.onChange(of: model.selectedServerID) { _, id in
+			if id == WindowModel.newConnectionID {
+				if model.currentID != nil { model.goHome() }
+				return
+			}
 			guard let id, let s = store.servers.first(where: { $0.id == id }) else { return }
 			switch model.state(id) {
 			case .connected?, .connecting?: model.open(s)
@@ -97,7 +107,7 @@ struct ServerSidebar: View {
 		.confirmationDialog("‘\(deleting?.displayName ?? "")’ 서버를 지울까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
 			Button("지우기", role: .destructive) {
 				if let d = deleting {
-					if model.selectedServerID == d.id { model.selectedServerID = nil }
+					if model.selectedServerID == d.id { model.selectedServerID = WindowModel.newConnectionID }
 					store.delete(d)
 				}
 				deleting = nil
@@ -221,6 +231,25 @@ struct ServerRow: View {
 				Spacer()
 				Text("접속 중").font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
 					.background(Capsule().fill(Color.green.opacity(0.2))).foregroundStyle(.green)
+			}
+		}
+		.padding(.vertical, 2)
+	}
+}
+
+/// 서버 목록 맨 위 "새 접속" 줄: 서버 줄과 같은 크기의 강조색 N 아이콘
+struct NewConnectionRow: View {
+	var body: some View {
+		HStack(spacing: 9) {
+			RoundedRectangle(cornerRadius: 30 * 0.24, style: .continuous)
+				.fill(Color.accentColor)
+				.frame(width: 30, height: 30)
+				.overlay {
+					Text("N").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(.white)
+				}
+			VStack(alignment: .leading, spacing: 1) {
+				Text("새 접속")
+				Text("서버 정보를 입력해 접속").font(.caption).foregroundStyle(.secondary).lineLimit(1)
 			}
 		}
 		.padding(.vertical, 2)

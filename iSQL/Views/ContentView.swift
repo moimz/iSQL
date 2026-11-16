@@ -131,16 +131,21 @@ struct ServerSwitcher: View {
 		if !saved.isEmpty || !unsaved.isEmpty {
 			menu.addItem(.sectionHeader(title: "접속한 서버"))
 			for s in saved + unsaved { menu.addItem(serverItem(s)) }
-			menu.addItem(.separator())
 		}
 		if let id = model.currentID, model.sessions[id] != nil {
+			menu.addItem(.separator())
 			// 퀵 커넥트로 접속하고 저장을 잊은 경우
 			if !store.servers.contains(where: { $0.id == id }) {
 				menu.addItem(MenuAction.item("이 접속 저장하기") { model.saveUnsaved(id, to: store) })
 			}
 			menu.addItem(MenuAction.item("닫기") { disconnect(id) })
 		}
-		menu.addItem(MenuAction.item("새 접속…") { model.newConnection() })
+		// 새 접속은 왼쪽 서버 목록 맨 위에 있다
+		if menu.items.isEmpty {
+			let none = NSMenuItem(title: "접속한 서버 없음", action: nil, keyEquivalent: "")
+			none.isEnabled = false
+			menu.addItem(none)
+		}
 		// 버튼 바로 아래에 띄운다
 		if let event = NSApp.currentEvent, let window = event.window, let view = window.contentView {
 			let p = view.convert(event.locationInWindow, from: nil)
