@@ -176,30 +176,23 @@ struct TabBar: View {
 	let close: (String) -> Void
 
 	var body: some View {
-		ScrollViewReader { proxy in
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: 0) {
-					ForEach(session.tabs, id: \.self) { id in
-						TabItem(table: session.table(id), id: id,
-						        active: session.activeTab == id,
-						        // data(for:) 로 만들어 두고 읽어야 loading 이 관찰된다
-						        loading: session.table(id).map { session.data(for: $0).loading }
-						            ?? Session.databaseOf(tab: id).map { session.overview($0).loading } ?? false,
-						        stale: session.table(id).map { session.data(for: $0).stale } ?? false,
-						        unsaved: session.unsavedTables.contains(id),
-						        showSchema: needsSchema(id)) {
-							session.activeTab = id
-						} close: {
-							close(id)
-						}
-						.id(id)
-					}
+		TabStrip(selected: session.activeTab) {
+			ForEach(session.tabs, id: \.self) { id in
+				TabItem(table: session.table(id), id: id,
+				        active: session.activeTab == id,
+				        // data(for:) 로 만들어 두고 읽어야 loading 이 관찰된다
+				        loading: session.table(id).map { session.data(for: $0).loading }
+				            ?? Session.databaseOf(tab: id).map { session.overview($0).loading } ?? false,
+				        stale: session.table(id).map { session.data(for: $0).stale } ?? false,
+				        unsaved: session.unsavedTables.contains(id),
+				        showSchema: needsSchema(id)) {
+					session.activeTab = id
+				} close: {
+					close(id)
 				}
+				.id(id)
 			}
-			.onChange(of: session.activeTab) { _, id in
-				if let id { withAnimation { proxy.scrollTo(id) } }
 			}
-		}
 		.frame(height: 36)
 		// 색 배경은 기본으로 안전 영역(제목바 밑)까지 번진다. 탭바 안에만 칠한다
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
@@ -241,9 +234,7 @@ struct TabItem: View {
 			if showSchema, let s = table?.schema {
 				Text(s + ".").foregroundStyle(.secondary)
 			}
-			Text(table?.name ?? Session.databaseOf(tab: id) ?? id)
-				.fontWeight(active ? .semibold : .regular)
-				.lineLimit(1)
+			TabTitle(text: table?.name ?? Session.databaseOf(tab: id) ?? id, active: active)
 			if stale {
 				Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 11)).foregroundStyle(.orange)
 					.help("쿼리로 바뀌었습니다. 다시 읽으세요")

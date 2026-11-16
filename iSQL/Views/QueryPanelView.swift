@@ -151,14 +151,13 @@ struct QueryResultsOverlay: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			// 결과 탭바 (테이블 탭바와 같은 모양)
-			ScrollView(.horizontal, showsIndicators: false) {
-				HStack(spacing: 0) {
-					ForEach(Array(panel.outputs.enumerated()), id: \.element.id) { i, o in
-						ResultTabItem(title: "결과 \(i + 1)", detail: o.totalText, sql: o.sql,
-						              active: i == panel.selectedOutput, loading: o.loading) {
-							panel.selectedOutput = i
-						}
+			TabStrip(selected: panel.selectedOutput) {
+				ForEach(Array(panel.outputs.enumerated()), id: \.element.id) { i, o in
+					ResultTabItem(title: "결과 \(i + 1)", detail: o.totalText, sql: o.sql,
+					              active: i == panel.selectedOutput, loading: o.loading) {
+						panel.selectedOutput = i
 					}
+					.id(i)
 				}
 			}
 			.frame(height: 36)
@@ -211,7 +210,7 @@ struct ResultTabItem: View {
 				}
 			}
 			.frame(width: 14, height: 14)
-			Text(title).fontWeight(active ? .semibold : .regular).lineLimit(1)
+			TabTitle(text: title, active: active)
 			Text(detail).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
 		}
 		.padding(.horizontal, 12)
