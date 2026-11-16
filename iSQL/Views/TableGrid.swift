@@ -299,6 +299,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				table.window?.makeFirstResponder(nil)
 				table.deselectAll(nil)
 				source = new
+				cursorKey = nil
 				bindOrderTracking()
 				lastVersion = -1
 				refresh()
@@ -361,6 +362,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			}
 			columnSignature = sig
 			columns = cols
+			cursorKey = nil
 			rebuildColumns()
 		}
 
@@ -634,6 +636,67 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			return newColumnIndex < 0 || newColumnIndex >= frozenCount
 		}
 
+		// MARK: 지금 칸 (엑셀처럼: 좌우 방향키로 옮기고 엔터로 그 칸 고치기)
+
+		/// 지금 칸의 컬럼 (NSTableColumn 식별자 = 공급자 컬럼 번호). 고른 행의 이 칸에 테두리
+		private(set) var cursorKey: String?
+
+		func setCursor(_ key: String?) {
+			guard key != cursorKey else { return }
+			cursorKey = key
+			redrawCursor()
+		}
+
+		/// 보이는 순서(본 표)에서 지금 칸 자리
+		private var cursorIndex: Int? { table.tableColumns.firstIndex { $0.identifier.rawValue == cursorKey } }
+
+		/// 지금 칸이 없을 때: 보이는 맨 왼쪽 컬럼
+		private var leftmostVisible: Int {
+			if frozenCount > 0 { return 0 }
+			let b = scroll.contentView.bounds
+			return max(0, table.column(at: NSPoint(x: b.minX + 1, y: b.minY + 1)))
+		}
+
+		func moveCursor(_ step: Int) {
+			let n = table.numberOfColumns
+			guard n > 0, table.selectedRow >= 0 else { NSSound.beep(); return }
+			let i = cursorIndex.map { min(max($0 + step, 0), n - 1) } ?? leftmostVisible
+			setCursor(table.tableColumns[i].identifier.rawValue)
+			revealColumn(i)
+		}
+
+		/// 그 컬럼이 보이게 옆으로 (고정 칸 밑에 가려지지 않게)
+		private func revealColumn(_ i: Int) {
+			guard i >= frozenCount, i < table.numberOfColumns else { return }
+			let r = table.rect(ofColumn: i), clip = scroll.contentView.bounds
+			let cover = frozenCount > 0 ? frozen.frame.width : 0
+			var x = clip.minX
+			if r.minX < clip.minX + cover { x = r.minX - cover }
+			else if r.maxX > clip.maxX { x = min(r.minX - cover, r.maxX - clip.width) }
+			if x != clip.minX { table.scroll(NSPoint(x: max(0, x), y: clip.minY)) }
+		}
+
+		/// 엔터: 지금 칸(없으면 보이는 맨 왼쪽)을 고친다
+		func editAtCursor() {
+			guard table.selectedRow >= 0, canEdit else { return }
+			let i = cursorIndex ?? leftmostVisible
+			revealColumn(i)
+			beginEditing(row: table.selectedRow, column: i, in: table)
+		}
+
+		/// 이 칸이 지금 칸인지 (고른 행 · 지금 컬럼)
+		func isCursor(_ view: NSView, in tv: NSTableView) -> Bool {
+			guard let key = cursorKey, tv.selectedRow >= 0 else { return false }
+			let c = tv.column(for: view)
+			return c >= 0 && tv.row(for: view) == tv.selectedRow && tv.tableColumns[c].identifier.rawValue == key
+		}
+
+		private func redrawCursor() {
+			for t in frozenCount > 0 ? [table, frozen] : [table] {
+				t.enumerateAvailableRowViews { rv, _ in if rv.isSelected { rv.subviews.forEach { $0.needsDisplay = true } } }
+			}
+		}
+
 		// MARK: 컬럼 순서
 
 		private func bindOrderTracking() {
@@ -888,6 +951,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				}
 			}
 			guard source.canEdit, row >= 0, row < table.numberOfRows, column >= 0, column < table.numberOfColumns else { return }
+			setCursor(table.tableColumns[column].identifier.rawValue)
 			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted,
 			      source.isEditable(row, col) else { NSSound.beep(); return }
 			// 체크박스 칸은 누르면 바로 바뀐다 (글자 편집 없음)
@@ -1146,6 +1210,9 @@ final class GridTableView: NSTableView {
 	override func mouseDown(with event: NSEvent) {
 		let p = convert(event.locationInWindow, from: nil)
 		let r = row(at: p)
+		// 누른 칸이 지금 칸
+		let c = column(at: p)
+		if r >= 0, c >= 0 { coordinator?.setCursor(tableColumns[c].identifier.rawValue) }
 		if verticalMotionCanBeginDrag, r >= 0, !selectedRowIndexes.contains(r),
 		   event.modifierFlags.intersection([.command, .shift, .control]).isEmpty {
 			selectRowIndexes([r], byExtendingSelection: false)
@@ -1194,12 +1261,12 @@ final class GridTableView: NSTableView {
 		switch event.keyCode {
 		case 51, 117:   // delete, forward delete
 			coordinator?.deleteSelection()
-		case 36, 76:    // return, enter
-			if selectedRow >= 0, coordinator?.canEdit == true {
-				// 보이는 맨 왼쪽 컬럼부터 고친다 (탭으로 옆 칸으로 간다)
-				let col = isFrozenPart ? 0 : max(0, column(at: NSPoint(x: visibleRect.minX + 1, y: visibleRect.minY + 1)))
-				coordinator?.beginEditing(row: selectedRow, column: col, in: self)
-			}
+		case 36, 76:    // return, enter: 지금 칸을 고친다 (없으면 보이는 맨 왼쪽)
+			coordinator?.editAtCursor()
+		case 123 where event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty:   // ←
+			coordinator?.moveCursor(-1)
+		case 124 where event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty:   // →
+			coordinator?.moveCursor(1)
 		default:
 			super.keyDown(with: event)
 		}
@@ -1457,9 +1524,16 @@ final class GridTextCell: NSTextFieldCell {
 /// 밀려나는 칸의 세로선도 칸과 같이 움직인다 (표 배경에 그린 선은 놓을 때까지 제자리였다).
 /// 고른 행이면 줄무늬는 칠하지 않는다 (밑의 선택색이 보이게)
 enum GridCellBackground {
+	/// 지금 칸이면: 고른 행 안에서도 줄무늬 바탕 + 강조색 테두리 (엑셀의 지금 칸처럼)
+	static func isCursor(_ view: NSView) -> Bool {
+		guard let tv = view.superview?.superview as? GridTableView, let c = tv.coordinator else { return false }
+		return c.isCursor(view, in: tv)
+	}
+
 	static func draw(in view: NSView, fill: NSColor?) {
 		let b = view.bounds
-		if let rv = view.superview as? NSTableRowView, !rv.isSelected {
+		let cursor = isCursor(view)
+		if let rv = view.superview as? NSTableRowView, !rv.isSelected || cursor {
 			NSColor.alternatingContentBackgroundColors[0].setFill()
 			b.fill()
 			rv.backgroundColor.setFill()
@@ -1473,6 +1547,12 @@ enum GridCellBackground {
 		guard view.superview is NSTableRowView else { return }
 		GridTableView.lineColor.setFill()
 		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill(using: .sourceOver)
+		if cursor {
+			NSColor.controlAccentColor.setStroke()
+			let path = NSBezierPath(rect: b.insetBy(dx: 1, dy: 1))
+			path.lineWidth = 2
+			path.stroke()
+		}
 	}
 }
 
