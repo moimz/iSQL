@@ -919,6 +919,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		func tableViewSelectionDidChange(_ notification: Notification) {
+			// 지금 칸 테두리는 마지막으로 고른 행에만: 이미 골라져 있던 행은 다시 그려지지 않아 테두리가 남았다
+			if cursorKey != nil { redrawCursor() }
 			// 두 표의 선택을 맞춘다
 			if frozenCount > 0, !syncingSelection, let from = notification.object as? NSTableView {
 				syncingSelection = true
@@ -1270,6 +1272,8 @@ final class GridTableView: NSTableView {
 
 	override func keyDown(with event: NSEvent) {
 		switch event.keyCode {
+		case 53:        // esc: 지금 칸을 없애고 행만 고른 상태로 (⌘C 가 행 전체를 복사)
+			if coordinator?.cursorKey != nil { coordinator?.setCursor(nil) } else { super.keyDown(with: event) }
 		case 51, 117:   // delete, forward delete
 			coordinator?.deleteSelection()
 		case 36, 76:    // return, enter: 지금 칸을 고친다 (없으면 보이는 맨 왼쪽)
