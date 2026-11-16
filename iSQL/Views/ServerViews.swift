@@ -70,6 +70,15 @@ struct ServerSidebar: View {
 			if let id = ids.first, let s = store.servers.first(where: { $0.id == id }) { model.open(s) }
 		}
 		}
+		// 한 번 누르기: 접속한 서버면 그 서버로 옮기고(사이드바는 테이블 목록으로),
+		// 아니면 다른 서버를 보고 있더라도 퀵 커넥트 화면에 그 서버 설정을 띄운다 (보던 접속은 그대로)
+		.onChange(of: model.selectedServerID) { _, id in
+			guard let id, let s = store.servers.first(where: { $0.id == id }) else { return }
+			switch model.state(id) {
+			case .connected?, .connecting?: model.open(s)
+			default: if model.currentID != nil { model.goHome() }
+			}
+		}
 		// ⌘F 로 검색칸
 		.background { Button("") { searchFocused = true }.keyboardShortcut("f").hidden() }
 		.safeAreaInset(edge: .bottom) { SyncStatus().padding(10) }

@@ -9,6 +9,9 @@ final class WindowModel {
 	/// 지금 보고 있는 서버 (nil 이면 퀵 커넥트 화면)
 	private(set) var currentID: UUID?
 
+	/// 왼쪽 사이드바가 서버 목록인지 테이블 목록인지 (접속한 서버가 있을 때 위쪽 [서버 | 테이블] 로 바꾼다)
+	var sidebarMode: SidebarMode = .servers
+
 	/// 퀵 커넥트 화면: 왼쪽 목록에서 고른 저장된 서버 (nil 이면 새 접속 draft)
 	var selectedServerID: UUID?
 	/// 저장하지 않은 새 접속 내용 (화면을 오가도 남게)
@@ -80,3 +83,5 @@ final class WindowModel {
 		if saved { selectedServerID = server.id } else { draft = server; selectedServerID = nil }
 	}
 }
+
+enum SidebarMode { case servers, tables }

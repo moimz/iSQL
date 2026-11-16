@@ -8,9 +8,22 @@ struct ContentView: View {
 
 	var body: some View {
 		NavigationSplitView {
-			Group {
-				if let s = model.current, s.isConnected {
-					TableSidebar(session: s)
+			VStack(spacing: 0) {
+				// 접속한 서버가 하나라도 있으면 위에 [서버 | 테이블]: 접속한 뒤에도 서버 목록을 다시 볼 수 있게
+				if !model.sessions.isEmpty {
+					SidebarModeSegment(selection: $model.sidebarMode)
+						.frame(height: 24)
+						.padding(.horizontal, 10)
+						.padding(.top, 6)
+				}
+				if model.sidebarMode == .tables && !model.sessions.isEmpty {
+					if let s = model.current, s.isConnected {
+						TableSidebar(session: s)
+					} else {
+						ContentUnavailableView("접속한 서버가 아닙니다", systemImage: "cylinder.split.1x2",
+						                       description: Text("제목바에서 접속한 서버를 고르세요."))
+							.frame(maxHeight: .infinity)
+					}
 				} else {
 					ServerSidebar(model: model)
 				}
@@ -28,6 +41,14 @@ struct ContentView: View {
 			}
 		}
 		.toolbar(removing: .title)
+		// 접속이 끝났거나 접속한 서버로 옮기면 테이블 목록으로
+		.onChange(of: model.current?.isConnected == true ? model.currentID : nil) { _, id in
+			if id != nil { model.sidebarMode = .tables }
+		}
+		// 퀵 커넥트 화면(새 접속·접속 안 한 서버)이거나 접속이 모두 닫히면 서버 목록으로
+		.onChange(of: model.currentID == nil || model.sessions.isEmpty) { _, home in
+			if home { model.sidebarMode = .servers }
+		}
 		.toolbar {
 			// 제목이자 서버 바꾸기 (둥근 배경 없이 글자만)
 			ToolbarItem(placement: .navigation) {
@@ -52,12 +73,12 @@ struct ContentView: View {
 			GroupAddSheet { model.onGroupAdded?($0) }
 		}
 		.confirmationDialog("저장 안 된 변경이 있습니다", isPresented: Binding(get: { confirmDisconnect != nil }, set: { if !$0 { confirmDisconnect = nil } })) {
-			Button("버리고 연결 끊기", role: .destructive) {
+			Button("버리고 닫기", role: .destructive) {
 				if let id = confirmDisconnect { model.disconnect(id) }
 				confirmDisconnect = nil
 			}
 		} message: {
-			Text("저장하지 않은 변경은 연결을 끊으면 사라집니다.")
+			Text("저장하지 않은 변경은 서버를 닫으면 사라집니다.")
 		}
 	}
 
@@ -102,23 +123,22 @@ struct ServerSwitcher: View {
 
 	private func showMenu() {
 		let menu = NSMenu()
-		for g in store.grouped {
-			menu.addItem(.sectionHeader(title: g.group.isEmpty ? "서버" : g.group))
-			for s in g.servers { menu.addItem(serverItem(s)) }
-		}
-		// 저장하지 않고 접속한 서버
+		// 접속한 서버만 (전체 서버 목록은 왼쪽 사이드바 [서버] 에서). 왼쪽 목록 순서, 저장 안 한 접속은 뒤에
+		let open = Set(model.sessions.keys)
+		let saved = store.grouped.flatMap(\.servers).filter { open.contains($0.id) }
 		let unsaved = model.sessions.values.compactMap(\.server).filter { s in !store.servers.contains { $0.id == s.id } }
-		if !unsaved.isEmpty {
-			menu.addItem(.sectionHeader(title: "저장 안 한 접속"))
-			for s in unsaved.sorted(by: { $0.displayName < $1.displayName }) { menu.addItem(serverItem(s)) }
+			.sorted { $0.displayName < $1.displayName }
+		if !saved.isEmpty || !unsaved.isEmpty {
+			menu.addItem(.sectionHeader(title: "접속한 서버"))
+			for s in saved + unsaved { menu.addItem(serverItem(s)) }
+			menu.addItem(.separator())
 		}
-		menu.addItem(.separator())
 		if let id = model.currentID, model.sessions[id] != nil {
 			// 퀵 커넥트로 접속하고 저장을 잊은 경우
 			if !store.servers.contains(where: { $0.id == id }) {
 				menu.addItem(MenuAction.item("이 접속 저장하기") { model.saveUnsaved(id, to: store) })
 			}
-			menu.addItem(MenuAction.item("이 서버 연결 끊기") { disconnect(id) })
+			menu.addItem(MenuAction.item("닫기") { disconnect(id) })
 		}
 		menu.addItem(MenuAction.item("새 접속…") { model.newConnection() })
 		// 버튼 바로 아래에 띄운다
@@ -207,5 +227,33 @@ struct ModeSegment: NSViewRepresentable {
 		var parent: ModeSegment
 		init(_ p: ModeSegment) { parent = p }
 		@objc func changed(_ sender: NSSegmentedControl) { parent.selection = sender.selectedSegment }
+	}
+}
+
+/// 사이드바 위 [서버 | 테이블]. SwiftUI 세그먼트 Picker 는 너비를 채우지 않아 NSSegmentedControl 로 칸을 똑같이 나눈다
+struct SidebarModeSegment: NSViewRepresentable {
+	@Binding var selection: SidebarMode
+
+	func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	func makeNSView(context: Context) -> NSSegmentedControl {
+		let c = NSSegmentedControl(labels: ["서버", "테이블"], trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+		c.segmentDistribution = .fillEqually
+		c.setContentHuggingPriority(.defaultLow, for: .horizontal)
+		c.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+		c.selectedSegment = selection == .servers ? 0 : 1
+		return c
+	}
+
+	func updateNSView(_ c: NSSegmentedControl, context: Context) {
+		context.coordinator.parent = self
+		let i = selection == .servers ? 0 : 1
+		if c.selectedSegment != i { c.selectedSegment = i }
+	}
+
+	final class Coordinator: NSObject {
+		var parent: SidebarModeSegment
+		init(_ p: SidebarModeSegment) { parent = p }
+		@objc func changed(_ sender: NSSegmentedControl) { parent.selection = sender.selectedSegment == 0 ? .servers : .tables }
 	}
 }
