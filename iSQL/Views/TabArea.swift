@@ -399,6 +399,12 @@ struct TabBar: View {
 	/// 탭바 빈 곳 위: 맨 뒤에 놓일 자리 (마지막 탭 오른쪽 끝에 세로줄)
 	@State private var dropAtEnd = false
 
+	/// 쿼리 결과 화면이 이 탭바를 덮고 있는지
+	private var covered: Bool {
+		guard let q = session.queryPanel else { return false }
+		return q.open && !q.outputs.isEmpty && q.resultsVisible
+	}
+
 	var body: some View {
 		TabStrip(selected: session.activeTab) {
 			ForEach(session.tabs, id: \.self) { id in
@@ -412,7 +418,8 @@ struct TabBar: View {
 				        showSchema: needsSchema(id),
 				        focused: paneFocused,
 				        menu: [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
-				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])) {
+				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : []),
+				        clickable: !covered) {
 					session.selectTab(id)
 				} close: {
 					close(id)
@@ -667,6 +674,65 @@ struct PaneClickWatcher: NSViewRepresentable {
 	}
 }
 
+/// 누르는 순간(마우스 다운)에 실행: 탭·목록 고르기.
+/// SwiftUI 탭 제스처는 떼는 순간에 일어나고, 끌기(.draggable)가 붙은 탭은 오래 누르면 끌기로 여겨 아예 안 골라졌다 (사용자 지적).
+/// 이벤트는 그대로 흘려보내므로 끌기·버튼은 평소대로 동작한다
+struct MouseDownCatcher: NSViewRepresentable {
+	/// 오른쪽 끝 이만큼은 빼고 (탭 닫기 버튼)
+	var excludeTrailing: CGFloat = 0
+	var enabled = true
+	let action: () -> Void
+
+	final class CatchView: NSView {
+		var excludeTrailing: CGFloat = 0
+		var enabled = true
+		var action: () -> Void = {}
+		private var monitor: Any?
+
+		override func viewDidMoveToWindow() {
+			super.viewDidMoveToWindow()
+			if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+			guard window != nil else { return }
+			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] e in
+				guard let self, self.enabled, e.window === self.window, !self.isHiddenOrHasHiddenAncestor,
+				      !e.modifierFlags.contains(.control) else { return e }
+				let p = self.convert(e.locationInWindow, from: nil)
+				// visibleRect: 탭바 스크롤에 가려진 부분은 빼고
+				if self.visibleRect.contains(p), p.x < self.bounds.maxX - self.excludeTrailing {
+					let run = self.action
+					DispatchQueue.main.async { run() }
+				}
+				return e
+			}
+		}
+
+		override func hitTest(_ point: NSPoint) -> NSView? { nil }
+	}
+
+	func makeNSView(context: Context) -> CatchView {
+		let v = CatchView()
+		updateNSView(v, context: context)
+		return v
+	}
+
+	func updateNSView(_ v: CatchView, context: Context) {
+		v.excludeTrailing = excludeTrailing
+		v.enabled = enabled
+		v.action = action
+	}
+
+	static func dismantleNSView(_ v: CatchView, coordinator: ()) {
+		v.removeFromSuperview()
+	}
+}
+
+extension View {
+	/// 누르는 순간 실행 (MouseDownCatcher)
+	func onMouseDown(excludeTrailing: CGFloat = 0, enabled: Bool = true, perform action: @escaping () -> Void) -> some View {
+		background(MouseDownCatcher(excludeTrailing: excludeTrailing, enabled: enabled, action: action))
+	}
+}
+
 struct TabItem: View {
 	let table: TableInfo?
 	let id: String
@@ -682,6 +748,8 @@ struct TabItem: View {
 	var server: TabServer? = nil
 	/// 오른쪽 클릭 메뉴에 더할 항목 (분할로 옮기기 등)
 	var menu: [TabMenuAction] = []
+	/// 누를 수 있는지 (쿼리 결과 화면이 왼쪽 탭바를 덮고 있으면 꺼서 가려진 탭이 같이 눌리지 않게)
+	var clickable = true
 	let select: () -> Void
 	let close: () -> Void
 	@State private var hover = false
@@ -741,7 +809,8 @@ struct TabItem: View {
 		.overlay(alignment: .trailing) { Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 1) }
 		.contentShape(Rectangle())
 		.onHover { hover = $0 }
-		.onTapGesture(perform: select)
+		// 누르는 순간 고른다 (닫기 버튼 자리는 빼고)
+		.onMouseDown(excludeTrailing: 24, enabled: clickable, perform: select)
 		.help(table.map { $0.comment.isEmpty ? $0.id : "\($0.id)\n\($0.comment)" } ?? Session.databaseOf(tab: id).map { "DB \($0)" } ?? id)
 		.contextMenu {
 			ForEach(menu.indices, id: \.self) { i in Button(menu[i].title, action: menu[i].run) }

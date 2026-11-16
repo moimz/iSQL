@@ -209,7 +209,7 @@ struct ResultTabItem: View {
 		.overlay(alignment: .trailing) { Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 1) }
 		.contentShape(Rectangle())
 		.onHover { hover = $0 }
-		.onTapGesture(perform: select)
+		.onMouseDown(perform: select)
 		.help(sql)
 	}
 }

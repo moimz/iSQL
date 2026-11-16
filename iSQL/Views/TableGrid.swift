@@ -724,6 +724,29 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 final class GridTableView: NSTableView {
 	weak var coordinator: GridController?
 
+	/// 줄을 끌 수 있는 표는 AppKit 이 고르기를 떼는 순간으로 미룬다 → 누르자마자 끌면 안 고른 색으로 끌렸다.
+	/// 고르지 않은 줄을 그냥(⌘·⇧ 없이) 누르면 바로 고른다
+	override func mouseDown(with event: NSEvent) {
+		let p = convert(event.locationInWindow, from: nil)
+		let r = row(at: p)
+		if verticalMotionCanBeginDrag, r >= 0, !selectedRowIndexes.contains(r),
+		   event.modifierFlags.intersection([.command, .shift, .control]).isEmpty {
+			selectRowIndexes([r], byExtendingSelection: false)
+		}
+		super.mouseDown(with: event)
+	}
+
+	/// 마지막 컬럼 오른쪽에도 세로선 (없으면 칸이 거기서 잘린 건지 알기 어려웠다)
+	override func drawGrid(inClipRect clipRect: NSRect) {
+		super.drawGrid(inClipRect: clipRect)
+		guard numberOfColumns > 0 else { return }
+		let x = rect(ofColumn: numberOfColumns - 1).maxX
+		let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
+		guard line.intersects(clipRect) else { return }
+		gridColor.setFill()
+		line.fill()
+	}
+
 	override func keyDown(with event: NSEvent) {
 		switch event.keyCode {
 		case 51, 117:   // delete, forward delete
