@@ -384,6 +384,8 @@ struct TabBar: View {
 	let drop: ([String], String?) -> Bool
 	/// 끌어 온 탭이 놓일 자리 (그 탭 왼쪽에 강조색 세로줄)
 	@State private var dropTarget: String?
+	/// 탭바 빈 곳 위: 맨 뒤에 놓일 자리 (마지막 탭 오른쪽 끝에 세로줄)
+	@State private var dropAtEnd = false
 
 	var body: some View {
 		TabStrip(selected: session.activeTab) {
@@ -409,6 +411,7 @@ struct TabBar: View {
 					if on { dropTarget = id } else if dropTarget == id { dropTarget = nil }
 				}
 				.overlay(alignment: .leading) { if dropTarget == id { DropMarker() } }
+				.overlay(alignment: .trailing) { if dropAtEnd && dropTarget == nil && id == session.tabs.last { DropMarker() } }
 				.id(id)
 			}
 		}
@@ -416,7 +419,7 @@ struct TabBar: View {
 		.animation(.easeOut(duration: 0.18), value: session.tabs)
 		.frame(height: 36)
 		// 탭이 없는 빈 곳에 놓으면 맨 뒤로
-		.dropDestination(for: String.self) { items, _ in drop(items, nil) }
+		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		// 색 배경은 기본으로 안전 영역(제목바 밑)까지 번진다. 탭바 안에만 칠한다
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
@@ -435,6 +438,7 @@ struct ParkedTabBar: View {
 	let close: (ParkedTab) -> Void
 	let drop: ([String], ParkedTab?) -> Bool
 	@State private var dropTarget: ParkedTab?
+	@State private var dropAtEnd = false
 
 	var body: some View {
 		TabStrip(selected: model.parkedActive?.key) {
@@ -464,12 +468,13 @@ struct ParkedTabBar: View {
 					if on { dropTarget = p } else if dropTarget == p { dropTarget = nil }
 				}
 				.overlay(alignment: .leading) { if dropTarget == p { DropMarker() } }
+				.overlay(alignment: .trailing) { if dropAtEnd && dropTarget == nil && p == model.parkedTabs.last { DropMarker() } }
 				.id(p.key)
 			}
 		}
 		.animation(.easeOut(duration: 0.18), value: model.parkedTabs)
 		.frame(height: 36)
-		.dropDestination(for: String.self) { items, _ in drop(items, nil) }
+		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
