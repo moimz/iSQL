@@ -919,8 +919,10 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		func tableViewSelectionDidChange(_ notification: Notification) {
-			// 지금 칸 테두리는 마지막으로 고른 행에만: 이미 골라져 있던 행은 다시 그려지지 않아 테두리가 남았다
-			if cursorKey != nil { redrawCursor() }
+			// 여러 행을 고르면 지금 칸은 없앤다 (테두리가 어색했다, 사용자) → ⌘C 는 행 전체
+			if table.selectedRowIndexes.count > 1 { setCursor(nil) }
+			// 지금 칸 테두리는 고른 행에만: 이미 골라져 있던 행은 다시 그려지지 않아 테두리가 남았다
+			else if cursorKey != nil { redrawCursor() }
 			// 두 표의 선택을 맞춘다
 			if frozenCount > 0, !syncingSelection, let from = notification.object as? NSTableView {
 				syncingSelection = true
