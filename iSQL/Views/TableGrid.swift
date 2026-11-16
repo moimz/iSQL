@@ -1174,14 +1174,19 @@ final class GridTableView: NSTableView {
 
 	/// 세로선은 직접 그린다 (마지막 컬럼 오른쪽까지). 맥 26 의 세로선(gridStyleMask)은 따로 된 뷰라
 	/// 컬럼을 옮기거나 너비를 바꾸면 예전 자리에 남아 칸과 어긋났다
+	/// 세로선 색: 표·칸이 같은 값으로. gridColor 는 칸 안에서 그리면 배경보다 어둡게(34 대 40) 나와 데이터 줄 선이 안 보였다
+	static let lineColor = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.15) : NSColor(white: 0, alpha: 0.12)
+	}
+
 	func drawColumnLines(in clipRect: NSRect) {
-		gridColor.setFill()
+		Self.lineColor.setFill()
 		var x: CGFloat = 0
 		for c in tableColumns {
 			x += c.width + intercellSpacing.width
 			let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
 			if line.minX > clipRect.maxX { break }
-			if line.intersects(clipRect) { line.fill() }
+			if line.intersects(clipRect) { line.fill(using: .sourceOver) }
 		}
 	}
 
@@ -1201,6 +1206,23 @@ final class GridTableView: NSTableView {
 	}
 
 	@objc func copy(_ sender: Any?) { coordinator?.copySelection() }
+
+	/// 컬럼을 끄는 동안 AppKit 이 끄는 컬럼의 칸들을 따로 묶어 불투명도 60% 로 띄운다(뒤가 비쳐 어수선했다) → 불투명하게
+	override func didAddSubview(_ subview: NSView) {
+		super.didAddSubview(subview)
+		guard !(subview is NSTableRowView) else { return }
+		func solid() {
+			subview.alphaValue = 1
+			subview.layer?.opacity = 1
+			subview.layer?.backgroundColor = NSColor.alternatingContentBackgroundColors[0].cgColor
+			subview.layer?.shadowOpacity = 0.35
+			subview.layer?.shadowRadius = 6
+			subview.layer?.shadowOffset = .zero
+		}
+		solid()
+		// AppKit 이 붙인 뒤에 불투명도를 정할 수 있어 한 번 더 (끄는 동안은 이벤트 추적 모드)
+		RunLoop.main.perform(inModes: [.eventTracking, .default]) { MainActor.assumeIsolated { solid() } }
+	}
 
 	override func becomeFirstResponder() -> Bool {
 		let ok = super.becomeFirstResponder()
@@ -1391,8 +1413,8 @@ enum GridCellBackground {
 			fill.setFill()
 			b.fill(using: .sourceOver)
 		}
-		NSColor.gridColor.setFill()
-		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill()
+		GridTableView.lineColor.setFill()
+		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill(using: .sourceOver)
 	}
 }
 
