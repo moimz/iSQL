@@ -21,6 +21,9 @@ struct iSQLApp: App {
 		// 다른 맥에서 iCloud 로 바뀐 서버 파일이 오면 다시 읽는다
 		CloudWatcher.shared.start { s.load() }
 		Keychain.probe()
+		// MCP: 서버 목록을 알려 주고, 켜 두었으면 띄운다
+		AppState.shared.store = s
+		MCPServer.shared.startIfEnabled()
 		return s
 	}()
 
@@ -36,9 +39,9 @@ struct iSQLApp: App {
 		}
 		.windowToolbarStyle(.unified)
 
-		// 서버 설정 창 (제목바 톱니·⌘,): 맥 설정창처럼 위에 아이콘 탭. 내용은 마지막으로 고른 창의 서버
+		// iSQL 앱 설정 (⌘,): 일반 · MCP. 서버별 설정은 제목바 톱니로 여는 따로 된 창(ServerSettingsWindow)
 		Settings {
-			ServerSettingsView()
+			AppSettingsView()
 				.environment(store)
 		}
 	}

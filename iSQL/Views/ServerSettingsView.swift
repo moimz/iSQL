@@ -8,43 +8,108 @@ final class SettingsTarget {
 	weak var session: Session?
 }
 
-/// 서버 설정 창 (Settings 장면). 맥 설정창처럼 위에 아이콘 탭.
-/// 일반 = iCloud 로 동기화되는 서버별 앱 설정, 사용자 계정 = MySQL 사용자 관리, 상태·서버 설정 = 준비 중
-struct ServerSettingsView: View {
+/// 서버 설정 창 (제목바 서버 이름 옆 톱니). ⌘, 는 iSQL 앱 설정(AppSettingsView)이라 이건 따로 된 AppKit 창이다.
+/// 맥 설정창처럼 위에 아이콘 탭 = NSTabViewController(.toolbar). 폭은 탭마다 같고 높이만 바뀐다 (사용자 지적: 폭이 바뀌면 탭 버튼이 움직였다)
+@MainActor
+final class ServerSettingsWindow: NSObject, NSWindowDelegate {
+	static let shared = ServerSettingsWindow()
+	static let width: CGFloat = 920
+
+	private var window: NSWindow?
+
+	/// 탭: (값, 이름, 아이콘, 높이)
+	private static let pages: [(key: String, title: String, symbol: String, height: CGFloat)] = [
+		("general", "일반", "gearshape", 440),
+		("accounts", "사용자 계정", "person.2", 620),
+		("status", "상태", "chart.bar.xaxis", 440),
+		("variables", "서버 설정", "slider.horizontal.3", 440),
+	]
+
+	func show(store: ServerStore) {
+		if window == nil { build(store) }
+		window?.makeKeyAndOrderFront(nil)
+		NSApp.activate()
+	}
+
+	private func build(_ store: ServerStore) {
+		let tabs = SizingTabViewController()
+		tabs.tabStyle = .toolbar
+		for p in Self.pages {
+			let host = NSHostingController(rootView: AnyView(ServerSettingsPage(key: p.key).environment(store)))
+			// 내용 크기를 따라 창이 늘어나지 않게 하고 탭마다 정한 크기를 쓴다
+			host.sizingOptions = []
+			host.preferredContentSize = NSSize(width: Self.width, height: p.height)
+			host.title = p.title
+			let item = NSTabViewItem(viewController: host)
+			item.label = p.title
+			item.image = NSImage(systemSymbolName: p.symbol, accessibilityDescription: p.title)
+			tabs.addTabViewItem(item)
+		}
+		// 마지막으로 본 탭 (이 맥에만)
+		let last = UserDefaults.standard.string(forKey: "serverSettingsTab") ?? "general"
+		tabs.selectedTabViewItemIndex = Self.pages.firstIndex { $0.key == last } ?? 0
+		tabs.onSelect = { i in UserDefaults.standard.set(Self.pages[i].key, forKey: "serverSettingsTab") }
+
+		let w = NSWindow(contentViewController: tabs)
+		w.styleMask = [.titled, .closable, .miniaturizable]
+		w.toolbarStyle = .preference
+		w.titlebarSeparatorStyle = .line
+		w.isReleasedWhenClosed = false
+		w.setContentSize(NSSize(width: Self.width, height: Self.pages[tabs.selectedTabViewItemIndex].height))
+		w.center()
+		w.setFrameAutosaveName("iSQL.ServerSettings")
+		w.delegate = self
+		window = w
+	}
+}
+
+/// 탭을 바꾸면 그 탭 크기로 창을 맞춘다 (위쪽 모서리는 그대로)
+private final class SizingTabViewController: NSTabViewController {
+	var onSelect: ((Int) -> Void)?
+
+	override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+		super.tabView(tabView, didSelect: tabViewItem)
+		guard let item = tabViewItem, let vc = item.viewController, let w = view.window else { return }
+		onSelect?(tabView.indexOfTabViewItem(item))
+		let content = vc.preferredContentSize
+		var frame = w.frameRect(forContentRect: NSRect(origin: .zero, size: content))
+		frame.origin = NSPoint(x: w.frame.minX, y: w.frame.maxY - frame.height)
+		w.setFrame(frame, display: true, animate: true)
+	}
+}
+
+/// 서버 설정 창의 탭 하나
+struct ServerSettingsPage: View {
+	let key: String
 	@Environment(ServerStore.self) private var store
 	private var target = SettingsTarget.shared
-	/// 설정 창 폭: 맥 설정창처럼 탭을 바꿔도 폭은 그대로, 높이만 바뀐다 (폭이 바뀌면 탭 버튼이 움직였다, 사용자 지적)
-	static let width: CGFloat = 920
-	/// 마지막으로 본 탭 (이 맥에만)
-	@AppStorage("settingsTab") private var tab = "general"
+
+	init(key: String) { self.key = key }
 
 	var body: some View {
-		TabView(selection: $tab) {
-			Tab("일반", systemImage: "gearshape", value: "general") { page { general($0) }.frame(width: Self.width, height: 440) }
-			Tab("사용자 계정", systemImage: "person.2", value: "accounts") { page { accounts($0) }.frame(width: Self.width, height: 620) }
-			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: Self.width, height: 440) }
-			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: Self.width, height: 440) }
+		Group {
+			if let s = target.session, s.isConnected {
+				switch key {
+				case "accounts":
+					UserAccountsView(session: s, manager: s.accountManager()).id(ObjectIdentifier(s))
+				case "status":
+					soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수")
+				case "variables":
+					soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기")
+				default:
+					general(s)
+				}
+			} else {
+				ContentUnavailableView("접속한 서버가 없습니다", systemImage: "cylinder.split.1x2",
+				                       description: Text("서버에 접속한 뒤 제목바의 톱니를 누르세요."))
+			}
 		}
-		// 맥 앱 설정창(Mail 등)처럼 위 아이콘 탭줄은 늘 불투명한 띠 + 아래 구분선.
-		// 맥 26 SwiftUI 설정창은 내용이 탭줄 밑까지 깔려(fullSizeContentView) 마우스를 올리거나 창이 비활성일 때만 띠가 보였다 (사용자 지적)
-		.background(SettingsWindowStyler())
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
 
 	private func soon(_ title: String, _ icon: String, _ what: String) -> some View {
 		ContentUnavailableView(title, systemImage: icon, description: Text("\(what)는 준비 중입니다."))
 	}
-
-	/// 접속한 서버가 없으면 안내
-	@ViewBuilder private func page<C: View>(@ViewBuilder _ content: (Session) -> C) -> some View {
-		if let s = target.session, s.isConnected {
-			content(s)
-		} else {
-			ContentUnavailableView("접속한 서버가 없습니다", systemImage: "cylinder.split.1x2",
-			                       description: Text("서버에 접속한 뒤 제목바의 톱니를 누르세요."))
-		}
-	}
-
-	// MARK: 일반
 
 	private func general(_ session: Session) -> some View {
 		Form {
@@ -80,17 +145,11 @@ struct ServerSettingsView: View {
 		}
 		.formStyle(.grouped)
 	}
-
-	// MARK: 사용자 계정
-
-	private func accounts(_ session: Session) -> some View {
-		UserAccountsView(session: session, manager: session.accountManager())
-			.id(ObjectIdentifier(session))
-	}
 }
 
-/// 설정 창(NSWindow)을 직접 다듬는다: 내용이 탭줄 밑으로 들어가지 않게 하고 탭줄 아래 구분선
-private struct SettingsWindowStyler: NSViewRepresentable {
+/// SwiftUI 설정 창(NSWindow)을 직접 다듬는다: 내용이 탭줄 밑으로 들어가지 않게 하고 탭줄 아래 구분선.
+/// 맥 26 SwiftUI 설정창은 내용이 탭줄 밑까지 깔려(fullSizeContentView) 마우스를 올리거나 창이 비활성일 때만 띠가 보였다 (사용자 지적)
+struct SettingsWindowStyler: NSViewRepresentable {
 	final class Probe: NSView {
 		override func viewDidMoveToWindow() {
 			super.viewDidMoveToWindow()

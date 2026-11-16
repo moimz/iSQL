@@ -270,7 +270,11 @@ final class MySQLConnection: @unchecked Sendable {
 		let insertID = r.lenenc() ?? 0
 		let status = r.u16()
 		_ = r.u16()
-		return (affected, insertID, status, String(decoding: r.rest(), as: UTF8.self))
+		// info 는 원래 패킷 끝까지인 글자인데, MySQL 8.4 는 길이 바이트를 앞에 붙여 보냈다("(Rows matched…", "&Records…").
+		// 첫 바이트가 남은 길이와 딱 맞으면 길이 바이트로 보고 뗀다
+		var info = r.rest()
+		if let n = info.first, n < 251, Int(n) == info.count - 1 { info.removeFirst() }
+		return (affected, insertID, status, String(decoding: info, as: UTF8.self))
 	}
 
 	private func parseError(_ pkt: [UInt8]) -> MySQLError {

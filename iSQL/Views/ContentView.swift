@@ -5,7 +5,8 @@ struct ContentView: View {
 	@Environment(ServerStore.self) private var store
 	@State private var model = WindowModel()
 	@State private var confirmDisconnect: UUID?
-	@Environment(\.openSettings) private var openSettings
+	/// 이 창이 앞(키)에 오면 MCP "지금 보고 있는 창의 서버" 가 이 창을 따른다
+	@Environment(\.controlActiveState) private var activeState
 
 	var body: some View {
 		NavigationSplitView {
@@ -42,6 +43,8 @@ struct ContentView: View {
 			}
 		}
 		.toolbar(removing: .title)
+		.onAppear { AppState.shared.register(model) }
+		.onChange(of: activeState, initial: true) { if activeState == .key { AppState.shared.activeModel = model } }
 		// 설정 창이 보일 서버: 이 창에서 서버를 고르면 그 서버로 (⌘, 로 열어도 마지막으로 고른 창의 서버)
 		.onChange(of: model.currentID, initial: true) { SettingsTarget.shared.session = model.current?.isConnected == true ? model.current : SettingsTarget.shared.session }
 		// 접속이 끝났거나 접속한 서버로 옮기면 테이블 목록으로
@@ -63,9 +66,9 @@ struct ContentView: View {
 				ToolbarItem(placement: .navigation) {
 					Button {
 						SettingsTarget.shared.session = model.current
-						openSettings()
+						ServerSettingsWindow.shared.show(store: store)
 					} label: { Image(systemName: "gearshape") }
-						.help("서버 설정 (⌘,)")
+						.help("서버 설정")
 				}
 			}
 

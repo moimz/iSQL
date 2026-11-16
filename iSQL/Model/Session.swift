@@ -128,6 +128,16 @@ final class Session {
 
 	private var tunnel: SSHTunnel?
 	private var conn: MySQLConnection?
+	/// MCP 가 따로 붙을 곳: SSH 면 이 터널의 로컬 포트, 아니면 서버 주소. 비밀번호는 메모리에만
+	@ObservationIgnored private var sideEndpoint: (host: String, port: Int)?
+	@ObservationIgnored private var sidePassword: String?
+
+	/// 같은 서버에 연결을 하나 더 연다 (MCP 용: USE 를 해도 이 창의 쿼리 패널 기본 DB 가 바뀌지 않게). 터널은 같이 쓴다
+	func sideConnection() async throws -> MySQLConnection {
+		guard let server, let e = sideEndpoint else { throw MySQLError.closed }
+		return try await MySQLConnection.connect(.init(host: e.host, port: e.port, user: server.user,
+		                                               password: sidePassword ?? "", database: server.database))
+	}
 
 	static let systemSchemas: Set<String> = ["information_schema", "mysql", "performance_schema", "sys"]
 
@@ -146,6 +156,8 @@ final class Session {
 			}
 			tunnel = t
 			conn = c
+			sideEndpoint = t.map { ("127.0.0.1", Int($0.localPort)) } ?? (server.host, server.port)
+			sidePassword = mysqlPassword
 			serverVersion = c.serverVersion
 			state = .connecting("테이블 목록 읽는 중…")
 			try await loadSchema()
@@ -165,6 +177,8 @@ final class Session {
 		conn = nil
 		tunnel?.close()
 		tunnel = nil
+		sideEndpoint = nil
+		sidePassword = nil
 		server = nil
 		state = .idle
 		databases = []
