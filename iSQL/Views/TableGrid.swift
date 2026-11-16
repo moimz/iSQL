@@ -1189,9 +1189,18 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
 		}
+
+		/// ⌘C: 지금 칸이 있으면 그 컬럼 값만 (여러 행이면 줄마다 하나), 없으면 행 전체
+		func copyShortcut() {
+			guard let key = cursorKey, let col = Int(key), col < columns.count else { copySelection(); return }
+			let lines = table.selectedRowIndexes.map { source.cell($0, col).text ?? "NULL" }
+			guard !lines.isEmpty else { return }
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+		}
 }
 
-/// ⌫ 로 행 삭제, ⌘C 로 선택 행 복사(탭 구분), 엔터로 고치기
+/// ⌫ 로 행 삭제, ⌘C 로 지금 칸 값 복사(지금 칸이 없으면 행, 탭 구분), 엔터로 지금 칸 고치기
 final class GridTableView: NSTableView {
 	weak var coordinator: GridController?
 	/// 컬럼 고정용 표
@@ -1272,7 +1281,7 @@ final class GridTableView: NSTableView {
 		}
 	}
 
-	@objc func copy(_ sender: Any?) { coordinator?.copySelection() }
+	@objc func copy(_ sender: Any?) { coordinator?.copyShortcut() }
 
 	/// 끄는 컬럼 묶음 (머리를 다시 그릴 때마다 테두리 자리를 맞춘다)
 	weak var ghost: NSView?
@@ -1524,7 +1533,7 @@ final class GridTextCell: NSTextFieldCell {
 /// 밀려나는 칸의 세로선도 칸과 같이 움직인다 (표 배경에 그린 선은 놓을 때까지 제자리였다).
 /// 고른 행이면 줄무늬는 칠하지 않는다 (밑의 선택색이 보이게)
 enum GridCellBackground {
-	/// 지금 칸이면: 고른 행 안에서도 줄무늬 바탕 + 강조색 테두리 (엑셀의 지금 칸처럼)
+	/// 지금 칸이면: 바탕은 고른 행 색 그대로, 테두리만 (편집 중처럼 보이지 않게)
 	static func isCursor(_ view: NSView) -> Bool {
 		guard let tv = view.superview?.superview as? GridTableView, let c = tv.coordinator else { return false }
 		return c.isCursor(view, in: tv)
@@ -1533,7 +1542,7 @@ enum GridCellBackground {
 	static func draw(in view: NSView, fill: NSColor?) {
 		let b = view.bounds
 		let cursor = isCursor(view)
-		if let rv = view.superview as? NSTableRowView, !rv.isSelected || cursor {
+		if let rv = view.superview as? NSTableRowView, !rv.isSelected {
 			NSColor.alternatingContentBackgroundColors[0].setFill()
 			b.fill()
 			rv.backgroundColor.setFill()
@@ -1548,9 +1557,10 @@ enum GridCellBackground {
 		GridTableView.lineColor.setFill()
 		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill(using: .sourceOver)
 		if cursor {
-			NSColor.controlAccentColor.setStroke()
-			let path = NSBezierPath(rect: b.insetBy(dx: 1, dy: 1))
-			path.lineWidth = 2
+			// 파란 선택색 위에서 잘 보이게 흰색 (선택이 회색일 때도 보인다)
+			NSColor.white.withAlphaComponent(0.85).setStroke()
+			let path = NSBezierPath(roundedRect: b.insetBy(dx: 1.5, dy: 1.5), xRadius: 2, yRadius: 2)
+			path.lineWidth = 1.5
 			path.stroke()
 		}
 	}
