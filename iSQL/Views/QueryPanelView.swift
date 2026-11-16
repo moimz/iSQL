@@ -262,19 +262,94 @@ struct QueryEditor: NSViewRepresentable {
 		if tv.string != text { tv.string = text }
 	}
 
+	@MainActor
 	final class Coordinator: NSObject, NSTextViewDelegate {
 		var parent: QueryEditor
 		weak var textView: NSTextView?
+		/// 자동완성 목록 (낱말을 치거나 . 뒤, ⌥Esc 로 직접)
+		private lazy var popup: CompletionPopup = {
+			let p = CompletionPopup()
+			p.onPick = { [weak self] in self?.accept($0) }
+			return p
+		}()
+		/// 바꿀 범위 (커서 앞 낱말)
+		private var replaceRange = NSRange(location: 0, length: 0)
+		/// 글자를 쳐서 바뀐 것인지 (선택만 옮긴 것과 구분)
+		private var typing = false
 		init(_ p: QueryEditor) { parent = p }
 
 		func textDidChange(_ notification: Notification) {
 			guard let tv = textView else { return }
 			parent.text = tv.string
+			if typing { typing = false; refresh(force: false) } else { popup.hide() }
 		}
 
 		func textViewDidChangeSelection(_ notification: Notification) {
 			guard let tv = textView else { return }
 			parent.panel.selection = tv.selectedRange()
+			// 커서를 낱말 밖으로 옮기면 닫는다
+			if popup.isVisible {
+				let r = tv.selectedRange()
+				if r.length > 0 || r.location < replaceRange.location || r.location > NSMaxRange(replaceRange) + 1 { popup.hide() }
+			}
+		}
+
+		func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
+			// 한 글자를 치거나 지울 때만 목록을 띄우거나 고친다 (붙여넣기·실행 취소는 아님)
+			if let t = text, t.count == 1, let ch = t.first, ch.isLetter || ch.isNumber || ch == "_" || ch == "." || ch == "`" || ch == "$" {
+				typing = true
+			} else if text == "", range.length == 1, popup.isVisible {
+				typing = true
+			} else {
+				typing = false
+			}
+			return true
+		}
+
+		func textView(_ textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+			if sel == #selector(NSResponder.complete(_:)) {   // ⌥Esc
+				refresh(force: true)
+				return true
+			}
+			guard popup.isVisible else { return false }
+			switch sel {
+			case #selector(NSResponder.moveUp(_:)): popup.move(-1)
+			case #selector(NSResponder.moveDown(_:)): popup.move(1)
+			case #selector(NSResponder.pageUp(_:)), #selector(NSResponder.scrollPageUp(_:)): popup.move(-9)
+			case #selector(NSResponder.pageDown(_:)), #selector(NSResponder.scrollPageDown(_:)): popup.move(9)
+			case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+				if let s = popup.selected { accept(s) } else { popup.hide() }
+			case #selector(NSResponder.cancelOperation(_:)): popup.hide()
+			case #selector(NSResponder.moveLeft(_:)), #selector(NSResponder.moveRight(_:)): popup.hide(); return false
+			default: return false
+			}
+			return true
+		}
+
+		func textDidEndEditing(_ notification: Notification) { popup.hide() }
+
+		private func refresh(force: Bool) {
+			guard let tv = textView, let session = parent.panel.session, let window = tv.window else { popup.hide(); return }
+			let caret = tv.selectedRange()
+			guard caret.length == 0,
+			      let r = SQLCompleter.complete(text: tv.string, caret: caret.location, session: session,
+			                                    defaultDB: parent.panel.database.isEmpty ? session.currentDB : parent.panel.database, force: force)
+			else { popup.hide(); return }
+			replaceRange = r.range
+			// 커서 위치(화면 좌표)
+			let rect = tv.firstRect(forCharacterRange: NSRange(location: r.range.location, length: 0), actualRange: nil)
+			popup.show(r.items, below: rect, parent: window)
+		}
+
+		private func accept(_ item: CompletionItem) {
+			guard let tv = textView else { return }
+			popup.hide()
+			let r = replaceRange
+			guard NSMaxRange(r) <= (tv.string as NSString).length else { return }
+			// 입력처럼 넣어야 실행 취소(⌘Z)가 고르기 하나만 되돌린다 (textStorage 를 직접 바꾸면 치던 글자와 섞였다)
+			tv.breakUndoCoalescing()
+			tv.insertText(item.insert, replacementRange: r)
+			tv.breakUndoCoalescing()
 		}
 	}
 }
