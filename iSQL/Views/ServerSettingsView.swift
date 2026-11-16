@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// 설정 창이 보여 줄 서버 (창마다 접속이 따로라, 톱니를 누른·서버를 고른 창의 세션)
 @Observable
@@ -24,8 +25,9 @@ struct ServerSettingsView: View {
 			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: Self.width, height: 440) }
 			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: Self.width, height: 440) }
 		}
-		// 맥 앱 설정창처럼 위 아이콘 탭줄에 배경 (맥 26 SwiftUI 설정창은 기본이 투명이었다)
-		.toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+		// 맥 앱 설정창(Mail 등)처럼 위 아이콘 탭줄은 늘 불투명한 띠 + 아래 구분선.
+		// 맥 26 SwiftUI 설정창은 내용이 탭줄 밑까지 깔려(fullSizeContentView) 마우스를 올리거나 창이 비활성일 때만 띠가 보였다 (사용자 지적)
+		.background(SettingsWindowStyler())
 	}
 
 	private func soon(_ title: String, _ icon: String, _ what: String) -> some View {
@@ -85,4 +87,22 @@ struct ServerSettingsView: View {
 		UserAccountsView(session: session, manager: session.accountManager())
 			.id(ObjectIdentifier(session))
 	}
+}
+
+/// 설정 창(NSWindow)을 직접 다듬는다: 내용이 탭줄 밑으로 들어가지 않게 하고 탭줄 아래 구분선
+private struct SettingsWindowStyler: NSViewRepresentable {
+	final class Probe: NSView {
+		override func viewDidMoveToWindow() {
+			super.viewDidMoveToWindow()
+			guard let w = window else { return }
+			DispatchQueue.main.async {
+				w.styleMask.remove(.fullSizeContentView)
+				w.titlebarAppearsTransparent = false
+				w.titlebarSeparatorStyle = .line
+				w.toolbarStyle = .preference
+			}
+		}
+	}
+	func makeNSView(context: Context) -> Probe { Probe() }
+	func updateNSView(_ v: Probe, context: Context) {}
 }
