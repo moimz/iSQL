@@ -839,6 +839,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				field.cell = GridTextCell(textCell: "")
 				field.identifier = id
 				field.isBordered = false
+				// 고칠 때 파란 포커스 링은 그리지 않는다 (지금 칸 흰 테두리가 이미 있다)
+				field.focusRingType = .none
 				// 배경은 GridField 가 칸 전체에 칠한다 (글자 칸이 칠하면 글자 높이만큼 한 번 더 겹쳤다)
 				field.drawsBackground = false
 				field.lineBreakMode = .byTruncatingTail
