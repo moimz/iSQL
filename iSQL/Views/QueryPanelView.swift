@@ -4,6 +4,7 @@ import AppKit
 /// 접속한 서버의 본문: [쿼리 패널 (열렸을 때)] + [탭 영역]. SELECT 결과는 탭 영역을 덮는다
 struct ConnectedArea: View {
 	let session: Session
+	let model: WindowModel
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -16,7 +17,7 @@ struct ConnectedArea: View {
 			}
 			GeometryReader { geo in
 				ZStack(alignment: .top) {
-					TabArea(session: session)
+					TabArea(session: session, model: model)
 					// 결과 보기: 위에서 아래로 스르륵 내려오고, 숨기면 위로 말려 올라간다 (탭바·표·하단바 통째로).
 					// 결과가 있는 동안은 결과 화면을 살려 두고 위치만 옮긴다 (보일 때마다 새로 만들면 100ms 씩 멈췄다)
 					if let q = session.queryPanel, q.open, !q.outputs.isEmpty {

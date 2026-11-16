@@ -11,10 +11,14 @@ struct TableDetailView: View {
 	/// 구조 화면은 한 번 열어 본 뒤부터 살려 둔다
 	@State private var structureBuilt = false
 
-	init(session: Session, table: TableInfo, isActive: Bool = true) {
+	/// 이 칸의 표 호스트가 살려 둘 표들 (nil 이면 서버의 왼쪽 탭들). 오른쪽 분할 칸은 그 칸의 탭들을 준다
+	var alive: [GridSource]?
+
+	init(session: Session, table: TableInfo, isActive: Bool = true, alive: [GridSource]? = nil) {
 		self.session = session
 		self.table = table
 		self.isActive = isActive
+		self.alive = alive
 		data = session.data(for: table)
 	}
 
@@ -54,7 +58,7 @@ struct TableDetailView: View {
 		ZStack {
 			// 탭마다 AppKit 표를 살려 두고 보이는 것만 보인다 (탭 전환이 보이기/숨기기 한 번)
 			TableGridHost(active: data,
-			              alive: session.tabs.compactMap { id in session.table(id).map { session.data(for: $0) } }) { selection = $0 }
+			              alive: alive ?? session.tabs.compactMap { id in session.table(id).map { session.data(for: $0) } }) { selection = $0 }
 			if data.loading {
 				if data.rows.isEmpty {
 					// 처음 읽을 때: 제목은 이미 보이고 가운데에 로딩

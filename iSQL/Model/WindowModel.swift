@@ -9,6 +9,11 @@ final class WindowModel {
 	/// 지금 보고 있는 서버 (nil 이면 퀵 커넥트 화면)
 	private(set) var currentID: UUID?
 
+	/// 오른쪽 분할에 둔 탭 (순서대로)과 그중 보이는 탭, 초점이 있는 쪽
+	var parkedTabs: [ParkedTab] = []
+	var parkedActive: ParkedTab?
+	var splitFocus: SplitSide = .left
+
 	/// 왼쪽 사이드바가 서버 목록인지 테이블 목록인지 (접속한 서버가 있을 때 위쪽 [서버 | 테이블] 로 바꾼다)
 	var sidebarMode: SidebarMode = .servers
 
@@ -60,11 +65,15 @@ final class WindowModel {
 		}
 		let pw = secrets[server.id] ?? (Keychain.get(server.mysqlPasswordKey), Keychain.get(server.sshSecretKey))
 		let s = sessions[server.id] ?? Session()
+		let sid = server.id
+		s.focusParked = { [weak self] tab in self?.focusParked(ParkedTab(server: sid, tab: tab)) }
 		sessions[server.id] = s
 		Task { await s.connect(server, mysqlPassword: pw.mysql, sshSecret: pw.ssh) }
 	}
 
 	func disconnect(_ id: UUID) {
+		// 오른쪽에 둔 그 서버 탭도 닫힌다
+		for p in parkedTabs where p.server == id { removeParked(p) }
 		sessions[id]?.disconnect()
 		sessions[id] = nil
 		secrets[id] = nil
@@ -88,3 +97,60 @@ final class WindowModel {
 }
 
 enum SidebarMode { case servers, tables }
+
+/// 오른쪽 분할(임시 영역)에 둔 탭: 어느 서버의 어느 탭인지
+struct ParkedTab: Hashable {
+	let server: UUID
+	let tab: String
+	/// 탭바용 id (서버가 달라도 겹치지 않게)
+	var key: String { server.uuidString + "|" + tab }
+}
+
+/// 왼쪽·오른쪽 중 초점이 있는 쪽. 활성 탭은 양쪽을 통틀어 하나 (초점 쪽에서 고른 탭)
+enum SplitSide { case left, right }
+
+/// 오른쪽 분할: 서버를 바꿔도 그대로 있는 임시 영역. 탭은 각자 자기 서버 Session 의 데이터를 쓴다
+extension WindowModel {
+	var hasSplit: Bool { !parkedTabs.isEmpty }
+
+	/// 왼쪽 탭을 오른쪽으로 옮긴다
+	func park(_ tab: String, from session: Session) {
+		guard let id = session.server?.id else { return }
+		let p = ParkedTab(server: id, tab: tab)
+		session.park(tab)
+		if !parkedTabs.contains(p) { parkedTabs.append(p) }
+		parkedActive = p
+		splitFocus = .right
+	}
+
+	/// 오른쪽 탭을 왼쪽으로. 다른 서버 탭이면 그 서버로 바꾼 뒤 그 서버 왼쪽 탭에 넣는다
+	@MainActor
+	func unpark(_ p: ParkedTab) {
+		guard let s = sessions[p.server] else { removeParked(p); return }
+		removeParked(p)
+		if currentID != p.server, let server = s.server { open(server) }
+		s.unpark(p.tab)
+		splitFocus = .left
+	}
+
+	/// 오른쪽 탭 닫기 (저장 안 한 변경 확인은 부르는 쪽에서)
+	func closeParked(_ p: ParkedTab) {
+		sessions[p.server]?.closeParked(p.tab)
+		removeParked(p)
+	}
+
+	/// 오른쪽 탭을 고른다
+	func focusParked(_ p: ParkedTab) {
+		guard parkedTabs.contains(p) else { return }
+		parkedActive = p
+		splitFocus = .right
+	}
+
+	/// 목록에서만 뺀다 (보이던 탭이면 옆 탭을 보이고, 다 빠지면 분할이 닫히고 초점은 왼쪽)
+	func removeParked(_ p: ParkedTab) {
+		guard let i = parkedTabs.firstIndex(of: p) else { return }
+		parkedTabs.remove(at: i)
+		if parkedActive == p { parkedActive = parkedTabs.isEmpty ? nil : parkedTabs[min(i, parkedTabs.count - 1)] }
+		if parkedTabs.isEmpty { splitFocus = .left }
+	}
+}

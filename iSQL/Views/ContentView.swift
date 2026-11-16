@@ -32,7 +32,7 @@ struct ContentView: View {
 		} detail: {
 			if let s = model.current {
 				if s.isConnected {
-					ConnectedArea(session: s)
+					ConnectedArea(session: s, model: model)
 				} else {
 					SessionStatusView(model: model, session: s)
 				}

@@ -34,7 +34,7 @@ struct PagerBar: View {
 					// 숫자 옆 작은 ↻ (세는 동안은 그 자리에 로딩), 누르면 SELECT COUNT(*)
 					Button { Task { await pager.countExact() } } label: {
 						HStack(spacing: 4) {
-							Text(pager.totalText).monospacedDigit()
+							Text(pager.totalText).monospacedDigit().lineLimit(1).fixedSize()
 							if pager.counting {
 								ProgressView().controlSize(.mini).frame(width: 12, height: 12)
 							} else {
@@ -49,7 +49,7 @@ struct PagerBar: View {
 					.disabled(pager.counting)
 					.help(pager.approxHelp)
 				} else {
-					Text(pager.totalText).foregroundStyle(.secondary).monospacedDigit()
+					Text(pager.totalText).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
 				}
 			} else if pager.isEmptyResult {
 				Text("행 없음").foregroundStyle(.secondary)
@@ -90,7 +90,8 @@ struct PageField: View {
 					else { text = "\(pager.page)" }
 				}
 			if let t = pager.totalPages {
-				Text("/ \(t.approx ? "~" : "")\(t.count.formatted())").foregroundStyle(.secondary).monospacedDigit()
+				// 좁은 칸(분할)에서도 줄바꿈하지 않게
+				Text("/ \(t.approx ? "~" : "")\(t.count.formatted())").foregroundStyle(.secondary).monospacedDigit().lineLimit(1).fixedSize()
 			}
 		}
 		.onAppear { text = "\(pager.page)" }

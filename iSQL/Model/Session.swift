@@ -114,6 +114,7 @@ final class Session {
 		unsavedTables = []
 		holdMemory = true
 		tabs = []
+		parked = []
 		activeTab = nil
 		expanded = []
 		holdMemory = false
@@ -129,9 +130,16 @@ final class Session {
 	/// 저장 안 한 변경이 있는 테이블 id
 	private(set) var unsavedTables: Set<String> = []
 
-	/// 열린 탭 (테이블 id 순서대로)과 지금 탭
+	/// 열린 탭 (테이블 id 순서대로)과 지금 탭. 왼쪽 탭바
 	private(set) var tabs: [String] = []
 	var activeTab: String? { didSet { rememberTabs() } }
+	/// 오른쪽 분할(임시 영역)에 옮겨 둔 이 서버의 탭. 순서·보이는 탭은 창(WindowModel)이 정한다.
+	/// 데이터(openData)는 여기 그대로 두고, 다시 켜면 왼쪽 탭으로 되살린다 (TabMemory 에 같이 적는다)
+	private(set) var parked: [String] = []
+	/// 왼쪽 탭을 열거나 고를 때마다 늘어난다 → 창이 왼쪽 탭에 초점을 준다
+	private(set) var leftFocusTick = 0
+	/// 오른쪽에 있는 탭을 사이드바에서 다시 열면: 그 탭에 초점 (창이 넣어 준다)
+	@ObservationIgnored var focusParked: ((String) -> Void)?
 	/// 사이드바에서 펼친 DB (처음엔 모두 접힘)
 	var expanded: Set<String> = [] { didSet { rememberTabs() } }
 	/// 끊을 때 비우는 동안은 기억하지 않는다 (다음 접속에 복원해야 하니까)
@@ -140,7 +148,7 @@ final class Session {
 	/// 서버별로 열린 탭·지금 탭·펼친 DB 를 기억한다 (이 맥에만)
 	private func rememberTabs() {
 		guard !holdMemory, let id = server?.id, state == .connected else { return }
-		TabMemory.save(server: id, tabs: tabs, active: activeTab, expanded: expanded)
+		TabMemory.save(server: id, tabs: tabs + parked, active: activeTab, expanded: expanded)
 	}
 
 	/// 접속 뒤: 지난번 탭을 되살린다 (지금 없는 테이블은 뺀다)
@@ -191,6 +199,8 @@ final class Session {
 	}
 
 	private func open(tabID id: String) {
+		if parked.contains(id) { focusParked?(id); return }
+		leftFocusTick += 1
 		if !tabs.contains(id) {
 			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(id, at: i + 1) } else { tabs.append(id) }
 		}
@@ -199,6 +209,8 @@ final class Session {
 	}
 
 	func openTab(_ t: TableInfo) {
+		if parked.contains(t.id) { focusParked?(t.id); return }
+		leftFocusTick += 1
 		if !tabs.contains(t.id) {
 			// 지금 탭 바로 오른쪽에 연다
 			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(t.id, at: i + 1) } else { tabs.append(t.id) }
@@ -213,6 +225,41 @@ final class Session {
 		openData[id] = nil
 		setUnsaved(id, false)
 		if activeTab == id { activeTab = tabs.isEmpty ? nil : tabs[min(i, tabs.count - 1)] }
+		rememberTabs()
+	}
+
+	/// 왼쪽 탭을 고른다 (탭바 누르기)
+	func selectTab(_ id: String) {
+		leftFocusTick += 1
+		activeTab = id
+	}
+
+	// MARK: 오른쪽 분할 (임시 영역)
+
+	/// 왼쪽 탭을 오른쪽으로: 탭바에서만 빼고 데이터는 둔다
+	func park(_ id: String) {
+		guard let i = tabs.firstIndex(of: id) else { return }
+		tabs.remove(at: i)
+		if !parked.contains(id) { parked.append(id) }
+		if activeTab == id { activeTab = tabs.isEmpty ? nil : tabs[min(i, tabs.count - 1)] }
+		rememberTabs()
+	}
+
+	/// 오른쪽 탭을 왼쪽으로: 지금 탭 바로 오른쪽에 넣고 고른다
+	func unpark(_ id: String) {
+		parked.removeAll { $0 == id }
+		if !tabs.contains(id) {
+			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(id, at: i + 1) } else { tabs.append(id) }
+		}
+		selectTab(id)
+		rememberTabs()
+	}
+
+	/// 오른쪽 탭 닫기
+	func closeParked(_ id: String) {
+		parked.removeAll { $0 == id }
+		openData[id] = nil
+		setUnsaved(id, false)
 		rememberTabs()
 	}
 
