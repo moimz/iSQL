@@ -153,6 +153,12 @@ struct TabArea: View {
 				Button("") { move(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
 				// ⌘S 저장, ⌘1 데이터, ⌘2 구조, ⌥⌘F 조건 줄
 				Button("") {
+					// 쿼리 결과가 덮고 있으면 고른 결과를 저장
+					if resultsCoverFocused, let q = session.queryPanel, q.outputs.indices.contains(q.selectedOutput) {
+						let src = q.outputs[q.selectedOutput].source
+						Task { await src.save() }
+						return
+					}
 					guard let d = active else { return }
 					Task { if d.mode == .structure { await d.saveStructure() } else { await d.saveIfNeeded() } }
 				}.keyboardShortcut("s")

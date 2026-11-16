@@ -154,28 +154,97 @@ struct QueryResultsOverlay: View {
 			Divider()
 			if panel.outputs.indices.contains(panel.selectedOutput) {
 				let o = panel.outputs[panel.selectedOutput]
-				ZStack {
-					TableGrid(source: o.source).id(ObjectIdentifier(o.source))
-					if o.loading {
-						Color(nsColor: .windowBackgroundColor).opacity(0.55).padding(.top, 28).allowsHitTesting(false)
-						ProgressView()
-					}
-				}
-				Divider()
-				// 아래 줄: 왼쪽은 내보내기와 실행한 SQL, 오른쪽은 쪽 줄
-				HStack(spacing: 10) {
-					ExportButton { o.session?.requestExport(.data(o)) }
-					Text(o.sql).font(.callout.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
-						.help(o.sql)
-					Spacer(minLength: 12)
-					PagerBar(pager: o)
-				}
-				.controlSize(.large)
-				.padding(.horizontal, 14)
-				.padding(.vertical, 8)
+				ResultBody(output: o, source: o.source)
+					.id(ObjectIdentifier(o.source))
 			}
 		}
 		.background(Color(nsColor: .windowBackgroundColor), ignoresSafeAreaEdges: [])
+	}
+}
+
+/// 결과 하나: 표 + 아래 줄. 고칠 수 있는 결과면 [+ −] 와 저장 바 (데이터 탭과 같음)
+struct ResultBody: View {
+	let output: QueryOutput
+	@Bindable var source: QueryResultSource
+	@State private var selection = IndexSet()
+
+	var body: some View {
+		ZStack {
+			TableGrid(source: source) { selection = $0 }
+			if output.loading {
+				Color(nsColor: .windowBackgroundColor).opacity(0.55).padding(.top, 28).allowsHitTesting(false)
+				ProgressView()
+			}
+		}
+		.sheet(isPresented: $source.showSQL) { SQLPreview(statements: source.changeSQL()) }
+		Divider()
+		// ⌘S 는 TabArea 하나가 받는다: 결과가 탭을 덮고 있으면 결과를 저장
+		if source.hasChanges { changesBar } else { footer }
+	}
+
+	/// 아래 줄: [+ −][내보내기] 또는 [내보내기] + 보기만 까닭, 실행한 SQL, 쪽 줄
+	private var footer: some View {
+		HStack(spacing: 10) {
+			if source.canEdit {
+				AddExportGroup(addHelp: "행 추가", add: { source.addRow() },
+				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				               remove: selection.isEmpty ? nil : { source.toggleDelete(selection) },
+				               exportHelp: "내보내기") { output.session?.requestExport(.data(output)) }
+			} else {
+				ExportButton { output.session?.requestExport(.data(output)) }
+				if let why = source.readOnlyReason {
+					Image(systemName: "lock").foregroundStyle(.secondary).help(why)
+				}
+			}
+			Text(output.sql).font(.callout.monospaced()).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+				.help(output.sql)
+			Spacer(minLength: 12)
+			PagerBar(pager: output)
+		}
+		.controlSize(.large)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 8)
+	}
+
+	/// 저장 안 한 변경이 있을 때 (데이터 탭 저장 바와 같은 모양)
+	private var changesBar: some View {
+		VStack(alignment: .leading, spacing: 6) {
+			if let err = source.saveError {
+				Label(err, systemImage: "xmark.octagon.fill")
+					.foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+			}
+			HStack(spacing: 10) {
+				AddRemovePill(addHelp: "행 추가", add: { source.addRow() },
+				              removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				              remove: selection.isEmpty ? nil : { source.toggleDelete(selection) })
+				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+				Text("저장 안 된 변경 \(source.changeCount)건").font(.headline)
+				Text(detail).foregroundStyle(.secondary)
+				Spacer()
+				Button("SQL 미리보기") { source.showSQL = true }
+				Button("되돌리기") { source.discard() }
+				Button {
+					Task { await source.save() }
+				} label: {
+					if source.saving { ProgressView().controlSize(.small) } else { Text("저장  ⌘S") }
+				}
+				.buttonStyle(.borderedProminent)
+				.disabled(source.saving)
+			}
+		}
+		.controlSize(.large)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 10)
+		.background(Color.yellow.opacity(0.18), ignoresSafeAreaEdges: [])
+		.overlay(alignment: .top) { Rectangle().fill(Color.orange.opacity(0.5)).frame(height: 1) }
+	}
+
+	private var detail: String {
+		var parts: [String] = []
+		if source.editCount > 0 { parts.append("수정 \(source.editCount)") }
+		if !source.deleted.isEmpty { parts.append("삭제 \(source.deleted.count)") }
+		if !source.inserted.isEmpty { parts.append("추가 \(source.inserted.count)") }
+		return parts.joined(separator: ", ")
 	}
 }
 

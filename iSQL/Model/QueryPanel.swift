@@ -160,11 +160,36 @@ final class QueryOutput: Identifiable, Pager {
 		source = QueryResultSource(r, session: session)
 		hasMore = more
 		if paged && !more { knownTotal = r.rows.count }
+		attach()
+	}
+
+	/// 결과 표에서 저장하면 같은 쪽을 다시 읽는다
+	private func attach() {
+		source.onSaved = { [weak self] in await self?.reload() }
+	}
+
+	/// 지금 쪽을 다시 실행 (LIMIT 을 붙였으면 그 쪽, 아니면 문장 그대로)
+	@MainActor
+	func reload() async {
+		source.discard()
+		if paged { knownTotal = nil; await load(offset: offset); return }
+		guard let session, !loading else { return }
+		loading = true
+		defer { loading = false }
+		do {
+			result = try await session.query(sql).last ?? QueryResult()
+			source = QueryResultSource(result, session: session)
+			attach()
+		} catch {
+			self.error = error.localizedDescription
+		}
 	}
 
 	@MainActor
 	func load(offset newOffset: Int) async {
 		guard paged, let session, !loading else { return }
+		// 저장 안 한 변경이 있으면 쪽을 넘기지 않는다 (사라지므로)
+		guard !source.hasChanges else { NSSound.beep(); return }
 		loading = true
 		error = nil
 		defer { loading = false }
@@ -176,6 +201,7 @@ final class QueryOutput: Identifiable, Pager {
 			if !hasMore { knownTotal = newOffset + r.rows.count }
 			result = r
 			source = QueryResultSource(r, session: session)
+			attach()
 		} catch {
 			self.error = error.localizedDescription
 			NSSound.beep()
@@ -231,7 +257,9 @@ final class QueryOutput: Identifiable, Pager {
 	}
 }
 
-/// 쿼리 결과를 공용 표에 댄다: 읽기 전용, 정렬은 앱 안에서, 컬럼 코멘트는 원래 테이블에서 찾아 보여 준다
+/// 쿼리 결과를 공용 표에 댄다. 정렬은 앱 안에서, 컬럼 코멘트는 원래 테이블에서 찾는다.
+/// 결과가 기본 키 있는 테이블 하나에서 왔고 그 기본 키 컬럼이 모두 들어 있으면 데이터 탭처럼 고칠 수 있다
+/// (칸 고치기·행 추가·삭제를 모았다가 ⌘S 로 한 트랜잭션). 계산 컬럼(식·별칭 없는 값)은 고칠 수 없다.
 @Observable
 final class QueryResultSource: GridSource {
 	@ObservationIgnored var scrollOrigin: CGPoint = .zero
@@ -241,9 +269,28 @@ final class QueryResultSource: GridSource {
 	@ObservationIgnored let gridColumns: [GridColumn]
 	private(set) var gridVersion = 0
 	@ObservationIgnored let gridID = UUID().uuidString
+	@ObservationIgnored private weak var session: Session?
+
+	/// 고칠 수 있으면 그 테이블
+	@ObservationIgnored private(set) var editTable: TableInfo?
+	/// 고칠 수 없는 까닭 (보기만)
+	@ObservationIgnored private(set) var readOnlyReason: String?
+	@ObservationIgnored private var keyCols: [Int] = []
+	@ObservationIgnored private var editableCols: Set<Int> = []
+
+	/// 원래 행 번호 → 컬럼 → 새 값
+	private(set) var edits: [Int: [Int: Value]] = [:]
+	private(set) var deleted: Set<Int> = []
+	private(set) var inserted: [[Value]] = []
+	private(set) var saving = false
+	private(set) var saveError: String?
+	var showSQL = false
+	/// 저장한 뒤 결과를 다시 읽는다 (QueryOutput 이 단다)
+	@ObservationIgnored var onSaved: (() async -> Void)?
 
 	init(_ result: QueryResult, session: Session) {
 		self.result = result
+		self.session = session
 		order = Array(result.rows.indices)
 		gridColumns = result.columns.enumerated().map { i, c in
 			let info = session.columns["\(c.schema).\(c.orgTable)"]?.first { $0.name == c.orgName }
@@ -251,17 +298,195 @@ final class QueryResultSource: GridSource {
 			return GridColumn(key: String(i), title: c.name, comment: info?.comment ?? "", isKey: c.isPrimaryKey,
 			                  numeric: c.isNumeric, long: c.length > 255)
 		}
+		decideEditable(session)
 	}
 
-	var rowCount: Int { order.count }
+	/// 한 테이블·기본 키 모두 있음 → 고칠 수 있음
+	private func decideEditable(_ session: Session) {
+		let cols = result.columns
+		guard !cols.isEmpty else { readOnlyReason = "결과가 없습니다"; return }
+		let sources = Set(cols.filter { !$0.orgTable.isEmpty }.map { "\($0.schema)\u{1}\($0.orgTable)" })
+		guard sources.count == 1, let c0 = cols.first(where: { !$0.orgTable.isEmpty }) else {
+			readOnlyReason = sources.isEmpty ? "테이블 컬럼이 아닌 결과라 보기만 됩니다" : "여러 테이블에서 온 결과라 보기만 됩니다"
+			return
+		}
+		guard let t = session.tables.first(where: { $0.schema == c0.schema && $0.name == c0.orgTable }), !t.isView else {
+			readOnlyReason = "뷰나 임시 결과라 보기만 됩니다"
+			return
+		}
+		let info = session.columns[t.id] ?? []
+		let pk = info.filter { $0.key == "PRI" }.map(\.name)
+		guard !pk.isEmpty else { readOnlyReason = "기본 키가 없는 테이블이라 보기만 됩니다"; return }
+		var keys: [Int] = []
+		for k in pk {
+			guard let i = cols.firstIndex(where: { $0.orgTable == t.name && $0.orgName == k }) else {
+				readOnlyReason = "결과에 기본 키(\(pk.joined(separator: ", ")))가 없어 보기만 됩니다"
+				return
+			}
+			keys.append(i)
+		}
+		// 같은 컬럼이 두 번 나오면(SELECT a, a) 첫 번째만 고친다
+		var seen = Set<String>()
+		editableCols = Set(cols.indices.filter { i in
+			cols[i].orgTable == t.name && !cols[i].orgName.isEmpty && seen.insert(cols[i].orgName).inserted
+		})
+		keyCols = keys
+		editTable = t
+	}
+
+	var canEdit: Bool { editTable != nil }
+	var rowCount: Int { order.count + inserted.count }
+	var editCount: Int { edits.filter { !deleted.contains($0.key) }.reduce(0) { $0 + $1.value.count } }
+	var changeCount: Int { editCount + deleted.count + inserted.count }
+	var hasChanges: Bool { changeCount > 0 }
+
+	private func bump() { gridVersion += 1 }
+
+	/// 화면 줄 → 원래 행 번호 (새 행이면 nil)
+	private func orig(_ row: Int) -> Int? { row < order.count ? order[row] : nil }
+
+	func value(_ row: Int, _ col: Int) -> Value {
+		guard let o = orig(row) else { return inserted[row - order.count][safe: col] ?? .null }
+		return edits[o]?[col] ?? result.rows[o][col]
+	}
 
 	func cell(_ row: Int, _ col: Int) -> GridCell {
-		GridCell(text: result.rows[order[row]][col].string)
+		let v = value(row, col)
+		guard let o = orig(row) else { return GridCell(text: v.string, state: .inserted) }
+		if deleted.contains(o) { return GridCell(text: v.string, state: .deleted) }
+		if edits[o]?[col] != nil {
+			return GridCell(text: v.string, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].string ?? "NULL"))
+		}
+		return GridCell(text: v.string)
+	}
+
+	func isEditable(_ row: Int, _ col: Int) -> Bool {
+		guard canEdit, editableCols.contains(col) else { return false }
+		if let o = orig(row) { return !deleted.contains(o) }
+		return true
+	}
+
+	func set(_ row: Int, _ col: Int, _ v: Value) {
+		guard isEditable(row, col) else { NSSound.beep(); return }
+		if let o = orig(row) {
+			if result.rows[o][col] == v {
+				edits[o]?[col] = nil
+				if edits[o]?.isEmpty == true { edits[o] = nil }
+			} else {
+				edits[o, default: [:]][col] = v
+			}
+		} else {
+			inserted[row - order.count][col] = v
+		}
+		bump()
+	}
+
+	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
+
+	func addRow() {
+		guard canEdit else { return }
+		inserted.append(Array(repeating: .null, count: result.columns.count))
+		bump()
+	}
+
+	/// 기존 행은 지울 표시(다시 누르면 취소), 새 행은 바로 뺀다
+	func toggleDelete(_ rows: IndexSet) {
+		guard canEdit else { return }
+		let existing = rows.compactMap(orig)
+		let allDeleted = !existing.isEmpty && existing.allSatisfy { deleted.contains($0) }
+		for o in existing { if allDeleted { deleted.remove(o) } else { deleted.insert(o) } }
+		for r in rows.filter({ $0 >= order.count }).sorted(by: >) { inserted.remove(at: r - order.count) }
+		bump()
+	}
+
+	func discard() {
+		edits = [:]; deleted = []; inserted = []; saveError = nil
+		bump()
+	}
+
+	func deleteRows(_ rows: IndexSet) -> Bool {
+		guard canEdit else { return false }
+		toggleDelete(rows)
+		return true
+	}
+
+	func cellMenu(row: Int, col: Int?, selection: IndexSet) -> [GridMenuItem] {
+		guard canEdit else { return [] }
+		var items: [GridMenuItem] = []
+		if let col, isEditable(row, col) {
+			items.append(.action("NULL 로 바꾸기") { self.set(row, col, .null) })
+			items.append(.action("빈 문자열로 바꾸기") { self.set(row, col, .text("")) })
+			if let o = orig(row), edits[o]?[col] != nil { items.append(.action("원래 값으로") { self.set(row, col, self.result.rows[o][col]) }) }
+			items.append(.separator)
+		}
+		let allDeleted = selection.allSatisfy { r in orig(r).map { deleted.contains($0) } ?? false }
+		items.append(.action(allDeleted ? "삭제 취소" : "행 삭제 (\(selection.count)개)") { self.toggleDelete(selection) })
+		return items
+	}
+
+	// MARK: 저장
+
+	private func name(_ col: Int) -> String { result.columns[col].orgName }
+
+	private func keyCondition(_ o: Int) -> String {
+		keyCols.map { i in
+			let v = result.rows[o][i]
+			return v == .null ? "\(quoteName(name(i))) IS NULL" : "\(quoteName(name(i))) = \(literal(v))"
+		}.joined(separator: " AND ")
+	}
+
+	/// 저장할 때 실행할 SQL (미리보기에도 쓴다)
+	func changeSQL() -> [String] {
+		guard let t = editTable else { return [] }
+		var out: [String] = []
+		for o in deleted.sorted() {
+			out.append("DELETE FROM \(t.quoted) WHERE \(keyCondition(o)) LIMIT 1;")
+		}
+		for (o, cols) in edits.sorted(by: { $0.key < $1.key }) where !deleted.contains(o) {
+			let sets = cols.sorted { $0.key < $1.key }.map { "\(quoteName(name($0.key))) = \(literal($0.value))" }
+			out.append("UPDATE \(t.quoted) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(o)) LIMIT 1;")
+		}
+		for row in inserted {
+			// NULL 로 남은 칸은 빼서 기본값·자동 증가가 쓰이게
+			let pairs = row.enumerated().filter { $0.element != .null && editableCols.contains($0.offset) }
+			if pairs.isEmpty { out.append("INSERT INTO \(t.quoted) () VALUES ();"); continue }
+			out.append("INSERT INTO \(t.quoted) (\(pairs.map { quoteName(name($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { literal($0.element) }.joined(separator: ", ")));")
+		}
+		return out
+	}
+
+	@MainActor
+	func save() async {
+		guard let session, let t = editTable, !saving else { return }
+		let statements = changeSQL()
+		guard !statements.isEmpty else { return }
+		saving = true
+		saveError = nil
+		defer { saving = false }
+		do {
+			_ = try await session.query("START TRANSACTION")
+			for s in statements {
+				let r = try await session.query(s).last
+				if s.hasPrefix("UPDATE") || s.hasPrefix("DELETE"), r?.affectedRows == 0, r?.info.contains("Rows matched: 1") != true {
+					throw MySQLError.protocolError("대상 행을 찾지 못했습니다. 다른 곳에서 바뀌었을 수 있습니다.\n\(s)")
+				}
+			}
+			_ = try await session.query("COMMIT")
+		} catch {
+			_ = try? await session.query("ROLLBACK")
+			saveError = error.localizedDescription
+			return
+		}
+		// 같은 테이블이 데이터 탭으로 열려 있으면 "다시 읽기" 표시
+		session.markStale([t.id], defaultDB: "")
+		await onSaved?()
 	}
 
 	var currentSort: (key: String, ascending: Bool)? { sortState }
 
+	/// 저장 안 한 변경이 있으면 줄 순서가 바뀌지 않게 정렬하지 않는다
 	func sort(by key: String?, ascending: Bool) -> Bool {
+		if hasChanges { return false }
 		sortState = key.map { ($0, ascending) }
 		order = Array(result.rows.indices)
 		if let k = key, let c = Int(k) {
