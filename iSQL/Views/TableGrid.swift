@@ -101,6 +101,11 @@ protocol GridSource: AnyObject {
 	func moveRows(_ rows: IndexSet, to: Int)
 	/// 공급자가 표에게 맡긴 편집 시작 (새 줄의 이름 칸 등). 한 번 꺼내면 사라진다
 	func takeEditRequest() -> (row: Int, col: Int)?
+	/// 칸 안에서 고치지 않고 따로 편집 창(시트)을 여는 칸 (여러 줄 글자·JSON)
+	func opensEditor(_ row: Int, _ col: Int) -> Bool
+	func openEditor(_ row: Int, _ col: Int)
+	/// Tab 으로 들르는 칸 (기본: 글자로 고치는 칸만)
+	func tabStop(_ row: Int, _ col: Int) -> Bool
 }
 
 extension GridSource {
@@ -120,6 +125,9 @@ extension GridSource {
 	var canMoveRows: Bool { false }
 	func moveRows(_ rows: IndexSet, to: Int) {}
 	func takeEditRequest() -> (row: Int, col: Int)? { nil }
+	func opensEditor(_ row: Int, _ col: Int) -> Bool { false }
+	func openEditor(_ row: Int, _ col: Int) {}
+	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
 }
 
 // MARK: - 공용 표
@@ -502,12 +510,20 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		/// 그 칸만 편집 가능하게 바꾸고 편집을 시작한다
-		func beginEditing(row: Int, column: Int) {
+		/// step: Tab(1)·Shift+Tab(-1) 으로 들어왔으면 그 방향. 고르기 메뉴에서 고르면 그 방향 다음 칸으로 이어 간다
+		func beginEditing(row: Int, column: Int, step: Int = 0) {
 			guard source.canEdit, row >= 0, row < table.numberOfRows, column >= 0, column < table.numberOfColumns else { return }
 			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted,
 			      source.isEditable(row, col) else { NSSound.beep(); return }
+			if source.opensEditor(row, col) {
+				source.openEditor(row, col)
+				return
+			}
 			if let items = source.choices(row, col) {
-				showChoices(items, row: row, column: column, col: col)
+				let picked = showChoices(items, row: row, column: column, col: col)
+				if picked, step != 0, let next = nextTextColumn(row: row, from: column, step: step) {
+					DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: step) }
+				}
 				return
 			}
 			if let field = table.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTextField {
@@ -532,8 +548,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			// Tab / Shift+Tab: 옆 칸 편집으로 (옆 칸이 평소 편집 불가라 AppKit 이 알아서 넘어가지 않는다)
 			let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap { NSTextMovement(rawValue: $0) }
 			defer {
-				if movement == .tab, let next = nextTextColumn(row: row, from: ci, step: 1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next) } }
-				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next) } }
+				if movement == .tab, let next = nextTextColumn(row: row, from: ci, step: 1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: 1) } }
+				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: -1) } }
 			}
 			let old = source.cell(row, col).text
 			// 혹시 남은 첨부 글자(아이콘)는 뺀다
@@ -545,18 +561,20 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
 		}
 
-		/// Tab 으로 옮겨 갈 옆 글자 칸 (고르기 칸·못 고치는 칸은 건너뛴다)
+		/// Tab 으로 옮겨 갈 옆 칸 (공급자가 정한 Tab 칸만: 못 고치는 칸·예/아니오 칸·시트로 고치는 칸은 건너뛴다)
 		private func nextTextColumn(row: Int, from: Int, step: Int) -> Int? {
 			var c = from + step
 			while c >= 0 && c < table.numberOfColumns {
-				if let col = colIndex(table.tableColumns[c]), source.isEditable(row, col), source.choices(row, col) == nil { return c }
+				if let col = colIndex(table.tableColumns[c]), source.tabStop(row, col) { return c }
 				c += step
 			}
 			return nil
 		}
 
 		/// 고르기 칸: 칸 바로 아래에 메뉴
-		private func showChoices(_ items: [String?], row: Int, column: Int, col: Int) {
+		/// 고르기 메뉴. 무언가 골랐으면 true (Esc 로 닫으면 false)
+		@discardableResult
+		private func showChoices(_ items: [String?], row: Int, column: Int, col: Int) -> Bool {
 			let menu = NSMenu()
 			let current = source.currentChoice(row, col)
 			for it in items {
@@ -570,7 +588,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let rect = table.frameOfCell(atColumn: column, row: row)
 			let selected = menu.items.first { $0.state == .on }
 			// 지금 값이 칸 위에 겹치게 (팝업 버튼처럼)
-			menu.popUp(positioning: selected, at: NSPoint(x: rect.minX, y: selected == nil ? rect.maxY : rect.minY), in: table)
+			return menu.popUp(positioning: selected, at: NSPoint(x: rect.minX, y: selected == nil ? rect.maxY : rect.minY), in: table)
 		}
 
 		private final class ChoiceTarget {

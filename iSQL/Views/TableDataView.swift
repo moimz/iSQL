@@ -47,6 +47,9 @@ struct TableDetailView: View {
 		}
 		.onChange(of: data.tab) { selection = [] }
 		.sheet(isPresented: Bindable(data).showSQL) { SQLPreview(statements: data.changeSQL()) }
+		.sheet(item: Bindable(data).longEdit) { req in
+			LongTextSheet(request: req, table: table) { data.set(req.row, req.col, $0) }
+		}
 	}
 
 	@ViewBuilder private var dataBody: some View {

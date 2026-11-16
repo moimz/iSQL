@@ -441,6 +441,12 @@ final class StructureEditor: GridSource {
 		}
 	}
 
+	/// Tab 으로 들르는 칸: 글자 칸 + 타입(고르기 메뉴가 뜨고, 고르면 다음 칸으로). 예/아니오 칸은 건너뛴다
+	func tabStop(_ row: Int, _ col: Int) -> Bool {
+		guard isEditable(row, col) else { return false }
+		return gridColumns[col].key == "type" || choices(row, col) == nil
+	}
+
 	/// 두 번 누르면 글자 대신 고르기 메뉴가 나오는 칸 (nil = 구분선)
 	func choices(_ row: Int, _ col: Int) -> [String?]? {
 		let c = rows[row].col

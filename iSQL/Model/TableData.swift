@@ -75,6 +75,8 @@ final class TableData {
 	private(set) var saving = false
 	/// 저장 안 한 SQL 미리보기 시트
 	var showSQL = false
+	/// 여러 줄 글자·JSON 칸 편집 시트 (창 제목바에 붙는다)
+	var longEdit: LongEditRequest?
 
 	@MainActor
 	func saveIfNeeded() async {
@@ -410,7 +412,7 @@ final class TableData {
 
 	// MARK: - SQL 만들기
 
-	private func columnName(_ i: Int) -> String {
+	func columnName(_ i: Int) -> String {
 		columns[i].orgName.isEmpty ? columns[i].name : columns[i].orgName
 	}
 
@@ -420,6 +422,17 @@ final class TableData {
 			return v == .null ? "\(quoteName(columnName(i))) IS NULL" : "\(quoteName(columnName(i))) = \(literal(v))"
 		}.joined(separator: " AND ")
 	}
+}
+
+/// 여러 줄 칸 편집 요청 (어느 행·컬럼, 처음 글자)
+struct LongEditRequest: Identifiable {
+	let id = UUID()
+	let row: Int
+	let col: Int
+	let column: String
+	let isJSON: Bool
+	let text: String
+	let wasNull: Bool
 }
 
 func quoteName(_ s: String) -> String { "`" + s.replacingOccurrences(of: "`", with: "``") + "`" }
@@ -478,6 +491,16 @@ extension TableData: GridSource {
 	}
 
 	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
+
+	/// TEXT·JSON 칸은 칸 안이 아니라 시트에서 여러 줄로 고친다
+	func opensEditor(_ row: Int, _ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isLongText }
+
+	func openEditor(_ row: Int, _ col: Int) {
+		guard canEdit, !isDeleted(row) else { NSSound.beep(); return }
+		let v = value(row, col)
+		longEdit = LongEditRequest(row: row, col: col, column: columnName(col), isJSON: columns[col].isJSON,
+		                           text: v.string ?? "", wasNull: v == .null)
+	}
 
 	var currentSort: (key: String, ascending: Bool)? { sort.map { ($0.column, $0.ascending) } }
 

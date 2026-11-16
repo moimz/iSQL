@@ -421,6 +421,10 @@ struct Column: Hashable {
 	/// 문자셋 63(binary) 이고 BLOB·BINARY 계열이면 바이트로 받는다
 	var isBinary: Bool { charset == 63 && [249, 250, 251, 252, 253, 254, 255].contains(type) }
 	var isPrimaryKey: Bool { flags & 0x2 != 0 }
+	/// JSON 컬럼 (MYSQL_TYPE_JSON 245)
+	var isJSON: Bool { type == 245 }
+	/// 여러 줄 글자 컬럼: TEXT 계열(바이너리 아닌 BLOB 형)·JSON → 칸 안이 아니라 편집 시트로 고친다
+	var isLongText: Bool { isJSON || ([249, 250, 251, 252].contains(type) && !isBinary) }
 	var isNumeric: Bool { [0, 1, 2, 3, 4, 5, 8, 9, 13, 246].contains(type) }
 }
 
