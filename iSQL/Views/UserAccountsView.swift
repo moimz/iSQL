@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 설정 창 > 사용자 계정: 왼쪽 계정 목록([+ −] [↻]), 오른쪽 고른 계정 (비밀번호·잠금, 전역 권한, DB 별 권한, SHOW GRANTS)
+/// 설정 창 > 사용자 계정 (Mail 계정 설정 모양): 왼쪽 테두리 목록 + 아래 [+ −] [↻],
+/// 오른쪽 탭 상자 [일반 | 전역 권한 | 데이터베이스별 권한 | SHOW GRANTS]
 struct UserAccountsView: View {
 	let session: Session
 	@Bindable var manager: AccountManager
@@ -12,6 +13,8 @@ struct UserAccountsView: View {
 	@State private var addingDBGrant = false
 	@State private var confirmDrop = false
 	@State private var confirmRevoke: DBGrant?
+	/// 오른쪽 탭 (계정을 바꿔도 그대로)
+	@State private var detailTab = 0
 
 	private var selected: DBAccount? { manager.accounts.first { $0.id == selectedID } }
 
@@ -26,10 +29,13 @@ struct UserAccountsView: View {
 					Button("다시 읽기") { Task { await manager.load() } }
 				}
 			} else {
-				// Mail 계정 설정처럼: 테두리 상자 안 목록 + 아래 [+ −], 오른쪽에 고른 계정 (창 가장자리에 붙는 사이드바가 아니다)
-				HStack(alignment: .top, spacing: 16) {
-					accountList.frame(width: 250)
-					detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+				// Mail 계정 설정처럼: 목록 상자와 탭 상자는 아래 끝이 맞고, [+ −] [↻] 는 목록 밑에
+				VStack(alignment: .leading, spacing: 10) {
+					HStack(alignment: .top, spacing: 16) {
+						accountList.frame(width: 250)
+						detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+					}
+					listButtons.frame(width: 250)
 				}
 				.padding(20)
 			}
@@ -120,14 +126,14 @@ struct UserAccountsView: View {
 					.tag(a.id)
 				}
 			}
-			// .sidebar 는 설정 창 제목바까지 올라가 붙어서 테두리 상자 안 목록으로
-			.listStyle(.inset)
-			.scrollContentBackground(.hidden)
-			.background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-			.clipShape(RoundedRectangle(cornerRadius: 8))
-			.overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(nsColor: .separatorColor)))
+			// 테두리 있는 목록 (.sidebar 는 설정 창 제목바까지 올라가 붙었다)
+			.listStyle(.bordered(alternatesRowBackgrounds: false))
 			.overlay { if manager.loading && manager.accounts.isEmpty { ProgressView() } }
-			HStack(spacing: 8) {
+		}
+	}
+
+	private var listButtons: some View {
+		HStack(spacing: 8) {
 				AddRemovePill(addHelp: "사용자 추가", add: { addingUser = true },
 				              removeHelp: "고른 사용자 삭제…", remove: selected == nil ? nil : { confirmDrop = true })
 				Spacer(minLength: 0)
@@ -136,8 +142,6 @@ struct UserAccountsView: View {
 				}
 				.pill()
 				.help("다시 읽기")
-			}
-			.padding(.top, 10)
 		}
 	}
 
@@ -145,43 +149,86 @@ struct UserAccountsView: View {
 
 	@ViewBuilder private var detail: some View {
 		if let a = selected {
-			ScrollView {
-				VStack(alignment: .leading, spacing: 22) {
-					header(a)
-					globalSection(a)
-					dbSection(a)
-					grantsSection(a)
+			// 상자 위 테두리에 걸친 탭 (Mail 계정 설정 모양).
+			// SwiftUI TabView 를 쓰면 설정 창이 안쪽 탭까지 창 위 아이콘 탭줄로 끌어올려서, 세그먼트 + 테두리 상자로 직접 그린다
+			Group {
+				switch detailTab {
+				case 1: page { globalSection(a) }
+				case 2: page { dbSection(a) }
+				case 3: page { grantsSection(a) }
+				default: page { generalTab(a) }
 				}
-				.padding(.horizontal, 4)
-				.padding(.bottom, 12)
-				.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			.padding(.top, 14)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			.background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.03)))
+			.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+			.padding(.top, 12)
+			.overlay(alignment: .top) {
+				Picker("", selection: $detailTab) {
+					Text("일반").tag(0)
+					Text("전역 권한").tag(1)
+					Text("데이터베이스별 권한").tag(2)
+					Text("SHOW GRANTS").tag(3)
+				}
+				.pickerStyle(.segmented)
+				.labelsHidden()
+				.fixedSize()
 			}
 		} else {
 			ContentUnavailableView("계정을 고르세요", systemImage: "person.2",
 			                       description: Text("\(manager.accounts.count)개 계정"))
+				.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
 		}
 	}
 
-	private func header(_ a: DBAccount) -> some View {
-		VStack(alignment: .leading, spacing: 8) {
-			Text(a.sql).font(.title3.weight(.semibold).monospaced()).textSelection(.enabled)
-			HStack(spacing: 10) {
-				if !a.plugin.isEmpty { Text(a.plugin).font(.callout).foregroundStyle(.secondary) }
-				if a.locked == true { Label("잠김", systemImage: "lock.fill").font(.callout).foregroundStyle(.orange) }
-				Spacer()
-				Button("비밀번호 바꾸기…") { changingPassword = true }
-				if let locked = a.locked {
-					Button(locked ? "잠금 풀기" : "잠그기") {
-						Task { await manager.run(["ALTER USER \(a.sql) ACCOUNT \(locked ? "UNLOCK" : "LOCK")"], then: a) }
+	/// 탭 안: 위에서부터, 넘치면 스크롤
+	private func page<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+		ScrollView {
+			content()
+				.padding(16)
+				.frame(maxWidth: .infinity, alignment: .leading)
+		}
+	}
+
+	// 일반: 계정·인증 방식·상태(잠그기)·비밀번호
+	private func generalTab(_ a: DBAccount) -> some View {
+		Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 14) {
+			GridRow {
+				label("계정")
+				HStack(spacing: 8) {
+					Text(a.sql).font(.body.monospaced()).textSelection(.enabled)
+					if a.id == currentID { Text("지금 접속한 계정").font(.caption.weight(.semibold)).foregroundStyle(.green) }
+				}
+			}
+			GridRow {
+				label("인증 방식")
+				Text(a.plugin.isEmpty ? "—" : a.plugin).foregroundStyle(.secondary)
+			}
+			if let locked = a.locked {
+				GridRow {
+					label("상태")
+					HStack(spacing: 8) {
+						Circle().fill(locked ? Color.orange : Color.green).frame(width: 8, height: 8)
+						Text(locked ? "잠김 (접속할 수 없음)" : "사용 중")
+						Button(locked ? "잠금 풀기" : "잠그기") {
+							Task { await manager.run(["ALTER USER \(a.sql) ACCOUNT \(locked ? "UNLOCK" : "LOCK")"], then: a) }
+						}
+						.padding(.leading, 6)
 					}
 				}
+			}
+			GridRow {
+				label("비밀번호")
+				Button("비밀번호 바꾸기…") { changingPassword = true }
 			}
 		}
 	}
 
-	private func sectionTitle(_ s: String) -> some View {
-		Text(s).font(.headline)
+	private func label(_ s: String) -> some View {
+		Text(s + ":").gridColumnAlignment(.trailing)
 	}
+
 
 	// 전역 권한: 데이터 / 구조 / 관리 세 칸 체크박스
 	private func globalSection(_ a: DBAccount) -> some View {
@@ -189,7 +236,7 @@ struct UserAccountsView: View {
 		let changes = AccountManager.globalChangeSQL(a, to: current)
 		return VStack(alignment: .leading, spacing: 10) {
 			HStack {
-				sectionTitle("전역 권한 (모든 데이터베이스)")
+				Text("모든 데이터베이스에 걸리는 권한").foregroundStyle(.secondary)
 				Spacer()
 				Button("모두 선택") { editing = Set(Privilege.all.map(\.sql)) }.buttonStyle(.link)
 				Button("모두 해제") { editing = [] }.buttonStyle(.link)
@@ -237,7 +284,7 @@ struct UserAccountsView: View {
 		let list = manager.dbGrants[a.id] ?? []
 		return VStack(alignment: .leading, spacing: 8) {
 			HStack {
-				sectionTitle("데이터베이스별 권한")
+				Text("데이터베이스 하나에만 걸리는 권한").foregroundStyle(.secondary)
 				Spacer()
 				Button("데이터베이스 권한 추가…") { addingDBGrant = true }
 			}
@@ -264,7 +311,6 @@ struct UserAccountsView: View {
 	private func grantsSection(_ a: DBAccount) -> some View {
 		let g = manager.showGrants[a.id] ?? []
 		return VStack(alignment: .leading, spacing: 8) {
-			sectionTitle("SHOW GRANTS")
 			Text(g.isEmpty ? "—" : g.joined(separator: ";\n") + ";")
 				.font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
 				.frame(maxWidth: .infinity, alignment: .leading)
