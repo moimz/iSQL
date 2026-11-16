@@ -311,12 +311,19 @@ struct StructureBody: View {
 			Spacer()
 			Text("컬럼 \(editor.rowCount)개").foregroundStyle(.secondary).monospacedDigit()
 			Button {
-				if editor.hasChanges { NSSound.beep() } else { Task { await editor.load() } }
+				// 구조 표 + 오른쪽 테이블 정보(인덱스) + 왼쪽 테이블 목록까지 (다른 곳에서 바뀌었을 수 있다)
+				if editor.hasChanges { NSSound.beep() } else {
+					Task {
+						try? await session.loadSchema()
+						await editor.load()
+						await session.reloadInspector(table)
+					}
+				}
 			} label: {
 				if editor.loading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 			}
 			.pill()
-			.help("구조 다시 읽기")
+			.help("구조·인덱스·테이블 목록 다시 읽기")
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 14)

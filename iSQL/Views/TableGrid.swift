@@ -33,6 +33,8 @@ struct GridCell {
 	var icon: NSImage?
 	/// 흐린 글자
 	var dim = false
+	/// 글자 대신 체크박스 (nil 이면 글자 칸). 누르면 setText(예/아니오)
+	var check: Bool? = nil
 }
 
 enum GridMenuItem {
@@ -437,6 +439,24 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
 			guard let col = colIndex(tableColumn), row < source.rowCount else { return nil }
+			let cellInfo = source.cell(row, col)
+			if let on = cellInfo.check {
+				let cid = NSUserInterfaceItemIdentifier("check")
+				let v: GridCheckView
+				if let reused = tableView.makeView(withIdentifier: cid, owner: nil) as? GridCheckView {
+					v = reused
+				} else {
+					v = GridCheckView()
+					v.identifier = cid
+					v.button.target = self
+					v.button.action = #selector(checkToggled(_:))
+				}
+				v.button.state = on ? .on : .off
+				v.button.isEnabled = source.canEdit && cellInfo.state != .deleted && source.isEditable(row, col)
+				v.fill = Self.fill(cellInfo.state)
+				v.toolTip = cellInfo.tooltip
+				return v
+			}
 			let id = NSUserInterfaceItemIdentifier("cell")
 			let field: GridField
 			if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? GridField {
@@ -470,15 +490,11 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			para.alignment = field.alignment
 			para.lineBreakMode = .byTruncatingTail
 			var attrs: [NSAttributedString.Key: Any] = [.font: f, .foregroundColor: cell.dim ? NSColor.secondaryLabelColor : NSColor.labelColor, .paragraphStyle: para]
-			switch cell.state {
-			case .deleted:
+			if cell.state == .deleted {
 				attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
 				attrs[.foregroundColor] = NSColor.systemRed
-				field.fill = NSColor.systemRed.withAlphaComponent(0.12)
-			case .edited: field.fill = NSColor.systemYellow.withAlphaComponent(0.35)
-			case .inserted: field.fill = NSColor.systemGreen.withAlphaComponent(0.18)
-			case .clean: field.fill = nil
 			}
+			field.fill = Self.fill(cell.state)
 			let s = NSMutableAttributedString()
 			if let icon = cell.icon {
 				let a = NSTextAttachment()
@@ -494,6 +510,24 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			field.attributedStringValue = s
 			field.toolTip = cell.tooltip ?? ((cell.text?.count ?? 0) > 40 ? cell.text : nil)
 			return field
+		}
+
+		/// 칸 상태 배경: 고친 칸 노랑, 새 행 초록, 지울 행 빨강
+		static func fill(_ state: GridCellState) -> NSColor? {
+			switch state {
+			case .deleted: NSColor.systemRed.withAlphaComponent(0.12)
+			case .edited: NSColor.systemYellow.withAlphaComponent(0.35)
+			case .inserted: NSColor.systemGreen.withAlphaComponent(0.18)
+			case .clean: nil
+			}
+		}
+
+		/// 체크박스 칸을 누름: 바로 예/아니오
+		@objc func checkToggled(_ sender: NSButton) {
+			let row = table.row(for: sender), ci = table.column(for: sender)
+			guard row >= 0, ci >= 0, let col = colIndex(table.tableColumns[ci]) else { return }
+			source.setText(row, col, sender.state == .on ? "예" : "아니오")
+			table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
 		}
 
 		func tableViewSelectionDidChange(_ notification: Notification) {
@@ -515,6 +549,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			guard source.canEdit, row >= 0, row < table.numberOfRows, column >= 0, column < table.numberOfColumns else { return }
 			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted,
 			      source.isEditable(row, col) else { NSSound.beep(); return }
+			// 체크박스 칸은 누르면 바로 바뀐다 (글자 편집 없음)
+			if source.cell(row, col).check != nil { return }
 			if source.opensEditor(row, col) {
 				source.openEditor(row, col)
 				return
@@ -881,5 +917,33 @@ final class GridField: NSTextField {
 			bounds.fill(using: .sourceOver)
 		}
 		super.draw(dirtyRect)
+	}
+}
+
+/// 체크박스 칸 (구조의 UNSIGNED·NULL). 상태 배경은 칸 전체에
+final class GridCheckView: NSView {
+	let button = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+	var fill: NSColor? {
+		didSet { if fill != oldValue { needsDisplay = true } }
+	}
+
+	override init(frame: NSRect) {
+		super.init(frame: frame)
+		button.translatesAutoresizingMaskIntoConstraints = false
+		button.controlSize = .small
+		addSubview(button)
+		NSLayoutConstraint.activate([
+			button.centerXAnchor.constraint(equalTo: centerXAnchor),
+			button.centerYAnchor.constraint(equalTo: centerYAnchor),
+		])
+	}
+
+	required init?(coder: NSCoder) { fatalError() }
+
+	override func draw(_ dirtyRect: NSRect) {
+		if let fill {
+			fill.setFill()
+			bounds.fill(using: .sourceOver)
+		}
 	}
 }

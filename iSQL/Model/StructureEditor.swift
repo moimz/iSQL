@@ -422,6 +422,9 @@ final class StructureEditor: GridSource {
 		if r.deleted { state = .deleted } else if r.isNew { state = .inserted } else if let o = r.original, text(o, key) != t { state = .edited }
 		var cell = GridCell(text: t, state: state)
 		switch key {
+		// 예/아니오는 체크박스 (UNSIGNED 는 숫자 종류일 때만)
+		case "unsigned": if r.col.isNumeric { cell.check = r.col.unsigned }
+		case "null": cell.check = r.col.nullable
 		case "name": cell.icon = Self.keyIcons[r.col.key]
 		case "type", "extra": cell.dim = state == .clean
 		case "default": cell.dim = r.col.defaultValue == nil || r.col.defaultExpr
@@ -435,6 +438,7 @@ final class StructureEditor: GridSource {
 		switch gridColumns[col].key {
 		case "length": return c.takesLength
 		case "unsigned": return c.isNumeric
+		case "null": return c.key != "PRI"   // 기본 키는 NULL 을 못 받는다
 		case "default": return !c.autoIncrement && c.generated == nil
 		case "extra": return c.generated == nil
 		default: return true
@@ -444,7 +448,9 @@ final class StructureEditor: GridSource {
 	/// Tab 으로 들르는 칸: 글자 칸 + 타입(고르기 메뉴가 뜨고, 고르면 다음 칸으로). 예/아니오 칸은 건너뛴다
 	func tabStop(_ row: Int, _ col: Int) -> Bool {
 		guard isEditable(row, col) else { return false }
-		return gridColumns[col].key == "type" || choices(row, col) == nil
+		let key = gridColumns[col].key
+		if key == "unsigned" || key == "null" { return false }   // 체크박스는 Tab 에서 건너뜀
+		return key == "type" || choices(row, col) == nil
 	}
 
 	/// 두 번 누르면 글자 대신 고르기 메뉴가 나오는 칸 (nil = 구분선)
@@ -455,7 +461,6 @@ final class StructureEditor: GridSource {
 			var list = NewColumn.typeOptions
 			if !list.contains(c.type) { list = [c.type, nil] + list }
 			return list
-		case "unsigned", "null": return ["예", "아니오"]
 		case "extra":
 			var l: [String?] = ["없음"]
 			if c.isNumeric { l.append("auto_increment") }
@@ -470,8 +475,6 @@ final class StructureEditor: GridSource {
 		let c = rows[row].col
 		switch gridColumns[col].key {
 		case "type": return c.type
-		case "unsigned": return c.unsigned ? "예" : "아니오"
-		case "null": return c.nullable ? "예" : "아니오"
 		case "extra": return c.autoIncrement ? "auto_increment" : (!c.onUpdate.isEmpty ? "on update CURRENT_TIMESTAMP" : "없음")
 		default: return nil
 		}
