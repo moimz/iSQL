@@ -138,8 +138,8 @@ struct UserAccountsView: View {
 	/// 목록 아래: Mail 처럼 AppKit [+ | −] (SwiftUI ControlGroup 은 맥 26 에서 알약 모양이라 위 네모 상자들과 어색했다), 오른쪽에 다시 읽기
 	private var listButtons: some View {
 		HStack(spacing: 8) {
-			PlusMinusControl(removeEnabled: selected != nil, add: { addingUser = true }, remove: { confirmDrop = true })
-				.fixedSize()
+			PlusMinusBar(addHelp: "사용자 추가", removeHelp: "고른 사용자 삭제…", removeEnabled: selected != nil,
+			             add: { addingUser = true }, remove: { confirmDrop = true })
 			Spacer(minLength: 0)
 			Button { Task { await manager.load() } } label: {
 				if manager.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
@@ -511,41 +511,43 @@ struct AccountTile: View {
 	}
 }
 
-/// Mail 계정 목록 아래와 같은 [+ | −] (NSSegmentedControl, 누르는 순간만 눌림)
-struct PlusMinusControl: NSViewRepresentable {
-	var removeEnabled: Bool
+/// Mail 계정 목록 아래와 같은 [+ | −] (둥근 네모 + 가운데 구분선).
+/// AppKit 세그먼트를 끼웠더니 설정 창을 다른 탭으로 열었거나 다시 열 때 목록 왼쪽 선보다 8pt 바깥에 그려졌다(사용자 화면, 시험에서는 재현 안 됨)
+/// → SwiftUI 로 직접 그려 자리가 늘 정확하게
+struct PlusMinusBar: View {
+	let addHelp: String
+	let removeHelp: String
+	var removeEnabled = true
 	let add: () -> Void
 	let remove: () -> Void
 
-	func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-	func makeNSView(context: Context) -> NSSegmentedControl {
-		let images = ["plus", "minus"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
-		let c = FlushSegmentedControl(images: images, trackingMode: .momentary, target: context.coordinator, action: #selector(Coordinator.clicked(_:)))
-		c.setToolTip("사용자 추가", forSegment: 0)
-		c.setToolTip("고른 사용자 삭제…", forSegment: 1)
-		c.setWidth(32, forSegment: 0)
-		c.setWidth(32, forSegment: 1)
-		c.setEnabled(removeEnabled, forSegment: 1)
-		return c
+	var body: some View {
+		HStack(spacing: 0) {
+			Button(action: add) { Image(systemName: "plus") }
+				.buttonStyle(SegmentPress())
+				.help(addHelp)
+			Rectangle().fill(Color.secondary.opacity(0.35)).frame(width: 1, height: 14)
+			Button(action: remove) { Image(systemName: "minus") }
+				.buttonStyle(SegmentPress())
+				.disabled(!removeEnabled)
+				.help(removeHelp)
+		}
+		// 옆 다시 읽기(.bordered) 버튼과 같은 바탕
+		.background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.08)))
+		.clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+		.fixedSize()
 	}
 
-	func updateNSView(_ c: NSSegmentedControl, context: Context) {
-		context.coordinator.parent = self
-		c.setEnabled(removeEnabled, forSegment: 1)
-	}
-
-	final class Coordinator: NSObject {
-		var parent: PlusMinusControl
-		init(_ p: PlusMinusControl) { parent = p }
-		@objc func clicked(_ sender: NSSegmentedControl) {
-			if sender.selectedSegment == 0 { parent.add() } else { parent.remove() }
+	/// 칸 하나: 32×24, 누르는 동안만 살짝 어둡게, 꺼지면 흐리게
+	private struct SegmentPress: ButtonStyle {
+		@Environment(\.isEnabled) private var enabled
+		func makeBody(configuration: Configuration) -> some View {
+			configuration.label
+				.font(.system(size: 13, weight: .medium))
+				.frame(width: 32, height: 24)
+				.contentShape(Rectangle())
+				.foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.5))
+				.background(configuration.isPressed ? Color.primary.opacity(0.15) : Color.clear)
 		}
 	}
-}
-
-/// 정렬 여백이 0 인 세그먼트: 보이는 테두리가 SwiftUI 가 준 자리에 딱 붙는다.
-/// 시스템 설정에 따라 AppKit 세그먼트가 정렬 여백을 갖고, SwiftUI 가 그만큼 옮겨 놓아 목록 왼쪽 선과 어긋났다 (사용자 화면에서만, 시험에서는 여백 0)
-final class FlushSegmentedControl: NSSegmentedControl {
-	override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
 }
