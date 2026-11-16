@@ -4,19 +4,32 @@ import Observation
 /// 테이블 하나 (모든 DB 의 테이블을 한 목록으로 보여 주려고 DB 이름을 같이 가진다)
 /// 테이블 삭제·비우기 요청
 struct TableActionRequest: Identifiable {
-	enum Kind { case drop, truncate }
+	enum Kind { case drop, truncate, dropDatabase }
 	let id = UUID()
 	let kind: Kind
 	let schema: String
 	let tables: [TableStat]
 
+	/// 확인 창의 빨간 버튼
+	var confirmLabel: String {
+		switch kind {
+		case .drop: "삭제"
+		case .truncate: "비우기"
+		case .dropDatabase: "데이터베이스 삭제"
+		}
+	}
+
 	var title: String {
+		if kind == .dropDatabase { return "데이터베이스 \(schema) 을(를) 삭제할까요?" }
 		let verb = kind == .drop ? "삭제할까요?" : "비울까요?"
 		if tables.count == 1 { return "\(tables[0].isView ? "뷰" : "테이블") \(tables[0].name) 을(를) \(verb)" }
 		return "\(tables.count)개를 \(verb)"
 	}
 
 	var message: String {
+		if kind == .dropDatabase {
+			return "테이블·뷰 \(tables.count)개와 모든 데이터가 함께 지워지며 되돌릴 수 없습니다."
+		}
 		let names = tables.prefix(10).map(\.name).joined(separator: ", ") + (tables.count > 10 ? " 외 \(tables.count - 10)개" : "")
 		let what = kind == .drop ? "데이터와 구조가 모두 지워지며" : "구조는 남고 모든 행이 지워지며(AUTO_INCREMENT 도 처음으로)"
 		return "\(schema): \(names)\n\(what) 되돌릴 수 없습니다."
@@ -239,6 +252,28 @@ final class Session {
 		tableAction = TableActionRequest(kind: .drop, schema: schema, tables: tables)
 	}
 
+	/// 데이터베이스 통째로 삭제 (사이드바 − · DB 머리 오른쪽 클릭)
+	func requestDropDatabase(_ schema: String) {
+		tableAction = TableActionRequest(kind: .dropDatabase, schema: schema, tables: tables.filter { $0.schema == schema }.map(TableStat.init))
+	}
+
+	/// 새 데이터베이스 시트 (사이드바 +)
+	var creatingDatabase = false
+
+	/// 지금 탭(테이블·DB 개요)의 데이터베이스 — 사이드바 − 가 지울 DB
+	var currentSchema: String? {
+		guard let id = activeTab else { return nil }
+		return table(id)?.schema ?? Self.databaseOf(tab: id)
+	}
+
+	/// 새 데이터베이스를 만든 뒤: 목록을 다시 읽고 펼쳐서 DB 개요 탭을 연다
+	@MainActor
+	func databaseCreated(_ name: String) async {
+		try? await loadSchema()
+		expanded.insert(name)
+		openDatabase(name)
+	}
+
 	func requestTruncate(schema: String, _ tables: [TableStat]) {
 		let list = tables.filter { !$0.isView }
 		guard !list.isEmpty else { return }
@@ -261,6 +296,17 @@ final class Session {
 			// 실제로 지워진 것만 탭을 닫는다
 			let left = Set(tables.filter { $0.schema == r.schema }.map(\.name))
 			closeTabs(ofTables: Set(r.tables.map(\.name).filter { !left.contains($0) }.map { r.schema + "." + $0 }))
+		case .dropDatabase:
+			do { _ = try await query("DROP DATABASE " + quoteName(r.schema)) } catch { failure = error.localizedDescription }
+			try? await loadSchema()
+			if !databases.contains(r.schema) {
+				closeTabs(ofTables: Set(r.tables.map { r.schema + "." + $0.name }))
+				closeTab(Self.databaseTabID(r.schema))
+				expanded.remove(r.schema)
+				overviews[r.schema] = nil
+			}
+			tableActionError = failure
+			return
 		case .truncate:
 			// TRUNCATE 는 테이블 하나씩. 외래 키로 막히면 거기서 멈춘다
 			for t in r.tables {

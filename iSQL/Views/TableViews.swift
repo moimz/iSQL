@@ -63,7 +63,7 @@ struct TableSidebar: View {
 								Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }
 								Button("데이터베이스 이름 바꾸기…") {}.disabled(true)
 								Divider()
-								Button("데이터베이스 삭제…", role: .destructive) {}.disabled(true)
+								Button("데이터베이스 삭제…", role: .destructive) { session.requestDropDatabase(schema) }
 							}
 						}
 					}
@@ -88,23 +88,29 @@ struct TableSidebar: View {
 			}
 
 			Divider()
-			HStack {
-				Text("DB \(session.databases.count)개 · 테이블 \(session.tables.count)개")
+			// [+ −] 데이터베이스 만들기·지우기 (지우기는 지금 탭의 DB) … [모두 펼치기/접기] [다시 읽기]
+			HStack(spacing: 8) {
+				AddRemovePill(addHelp: "새 데이터베이스", add: { session.creatingDatabase = true },
+				              removeHelp: session.currentSchema.map { "데이터베이스 \($0) 삭제…" } ?? "지울 데이터베이스의 탭을 고르세요",
+				              remove: session.currentSchema.map { s in { session.requestDropDatabase(s) } })
+				Spacer(minLength: 0)
+				Button {
+					session.expanded = session.expanded.isEmpty ? Set(session.databases) : []
+				} label: {
+					PillIcon(systemName: session.expanded.isEmpty ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
+				}
+				.pill()
+				.help(session.expanded.isEmpty ? "모두 펼치기" : "모두 접기")
 				Button {
 					Task { try? await session.loadSchema() }
 				} label: {
-					Image(systemName: "arrow.clockwise")
+					if session.loadingSchema { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 				}
-				.buttonStyle(.plain)
-				.help("테이블 목록 다시 읽기")
-				Spacer()
-				Button(session.expanded.isEmpty ? "모두 펼치기" : "모두 접기") {
-					session.expanded = session.expanded.isEmpty ? Set(session.databases) : []
-				}
-				.buttonStyle(.link)
+				.pill()
+				.help("데이터베이스·테이블 목록 다시 읽기")
 			}
-			.font(.caption).foregroundStyle(.secondary)
-			.padding(8)
+			.padding(.horizontal, 10)
+			.padding(.vertical, 8)
 		}
 		.background {
 			// ⌘F 로 검색칸

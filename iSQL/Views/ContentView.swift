@@ -72,21 +72,11 @@ struct ContentView: View {
 		.sheet(item: Binding(get: { model.current?.createTableRequest }, set: { model.current?.createTableRequest = $0 })) { req in
 			if let s = model.current { CreateTableSheet(request: req, session: s) }
 		}
-		// 테이블 삭제·비우기 확인 (DB 개요 −·오른쪽 클릭 메뉴 어디서 불러도 여기 하나)
-		.confirmationDialog(model.current?.tableAction?.title ?? "",
-		                    isPresented: Binding(get: { model.current?.tableAction != nil }, set: { if !$0 { model.current?.tableAction = nil } })) {
-			Button(model.current?.tableAction?.kind == .truncate ? "비우기" : "삭제", role: .destructive) {
-				guard let s = model.current, let r = s.tableAction else { return }
-				s.tableAction = nil
-				Task { await s.perform(r) }
-			}
-		} message: {
-			Text(model.current?.tableAction?.message ?? "")
-		}
-		.alert("실행하지 못했습니다", isPresented: Binding(get: { model.current?.tableActionError != nil }, set: { if !$0 { model.current?.tableActionError = nil } })) {
-			Button("확인") { model.current?.tableActionError = nil }
-		} message: {
-			Text(model.current?.tableActionError ?? "")
+		// 테이블·데이터베이스 삭제, 테이블 비우기 확인 (어디서 불러도 여기 하나)
+		.modifier(TableActionDialogs(model: model))
+		// 새 데이터베이스: 제목바에 붙는 시트
+		.sheet(isPresented: Binding(get: { model.current?.creatingDatabase ?? false }, set: { model.current?.creatingDatabase = $0 })) {
+			if let s = model.current { CreateDatabaseSheet(session: s) }
 		}
 		// 그룹 추가: 제목바에 붙는 시트
 		.sheet(isPresented: $model.addingGroup) {
@@ -282,3 +272,30 @@ struct SidebarModeSegment: NSViewRepresentable {
 		@objc func changed(_ sender: NSSegmentedControl) { parent.selection = sender.selectedSegment == 0 ? .servers : .tables }
 	}
 }
+
+/// 테이블·DB 삭제, 테이블 비우기 확인 창과 실패 알림 (본문 식이 길어 타입 검사가 안 끝나서 따로 뺐다)
+struct TableActionDialogs: ViewModifier {
+	let model: WindowModel
+
+	func body(content: Content) -> some View {
+		let r = model.current?.tableAction
+		content
+			.confirmationDialog(r?.title ?? "", isPresented: Binding(get: { model.current?.tableAction != nil },
+			                                                          set: { if !$0 { model.current?.tableAction = nil } })) {
+				Button(r?.confirmLabel ?? "삭제", role: .destructive) {
+					guard let s = model.current, let r = s.tableAction else { return }
+					s.tableAction = nil
+					Task { await s.perform(r) }
+				}
+			} message: {
+				Text(r?.message ?? "")
+			}
+			.alert("실행하지 못했습니다", isPresented: Binding(get: { model.current?.tableActionError != nil },
+			                                             set: { if !$0 { model.current?.tableActionError = nil } })) {
+				Button("확인") { model.current?.tableActionError = nil }
+			} message: {
+				Text(model.current?.tableActionError ?? "")
+			}
+	}
+}
+
