@@ -521,7 +521,7 @@ struct PlusMinusControl: NSViewRepresentable {
 
 	func makeNSView(context: Context) -> NSSegmentedControl {
 		let images = ["plus", "minus"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
-		let c = NSSegmentedControl(images: images, trackingMode: .momentary, target: context.coordinator, action: #selector(Coordinator.clicked(_:)))
+		let c = FlushSegmentedControl(images: images, trackingMode: .momentary, target: context.coordinator, action: #selector(Coordinator.clicked(_:)))
 		c.setToolTip("사용자 추가", forSegment: 0)
 		c.setToolTip("고른 사용자 삭제…", forSegment: 1)
 		c.setWidth(32, forSegment: 0)
@@ -542,4 +542,10 @@ struct PlusMinusControl: NSViewRepresentable {
 			if sender.selectedSegment == 0 { parent.add() } else { parent.remove() }
 		}
 	}
+}
+
+/// 정렬 여백이 0 인 세그먼트: 보이는 테두리가 SwiftUI 가 준 자리에 딱 붙는다.
+/// 시스템 설정에 따라 AppKit 세그먼트가 정렬 여백을 갖고, SwiftUI 가 그만큼 옮겨 놓아 목록 왼쪽 선과 어긋났다 (사용자 화면에서만, 시험에서는 여백 0)
+final class FlushSegmentedControl: NSSegmentedControl {
+	override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
 }
