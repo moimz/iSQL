@@ -68,7 +68,7 @@ struct PagerBar: View {
 						.disabled(!pager.hasMore)
 						.help("다음 쪽")
 				}
-				.pill()
+				.pill(interactive: false)
 				Menu {
 					ForEach(TableData.pageSizes, id: \.self) { n in
 						Button { Task { await pager.setPageSize(n) } } label: {

@@ -126,6 +126,10 @@ struct TableDetailView: View {
 					.foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
 			}
 			HStack(spacing: 10) {
+				// 저장 바에서도 행 추가·지우기 (내보내기는 저장 안 한 변경이 있으니 숨긴다)
+				AddRemovePill(addHelp: "행 추가", add: { data.addRow() },
+				              removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				              remove: selection.isEmpty ? nil : { data.toggleDelete(selection) })
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
 				Text("저장 안 된 변경 \(data.changeCount)건").font(.headline)
 				Text(changeDetail).foregroundStyle(.secondary)

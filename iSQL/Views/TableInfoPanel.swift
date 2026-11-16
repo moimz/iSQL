@@ -9,11 +9,39 @@ struct PillIcon: View {
 }
 
 extension View {
-	/// 하단바 유리 알약 모양 (안의 버튼은 테두리 없이)
-	func pill() -> some View {
-		buttonStyle(.borderless)
-			.padding(.horizontal, 4)
-			.glassEffect(.regular.interactive(), in: Capsule())
+	/// 하단바 유리 알약 모양 (안의 버튼은 테두리 없이).
+	/// interactive: 누르면 알약이 밝아지는 유리. 입력칸이 든 알약(쪽 번호)은 끈다 — 입력칸을 눌러도 알약 전체가 밝아져
+	/// 꺼진 화살표가 더 투명해 보였다 (사용자)
+	@ViewBuilder func pill(interactive: Bool = true) -> some View {
+		if interactive {
+			buttonStyle(.borderless).padding(.horizontal, 4).glassEffect(.regular.interactive(), in: Capsule())
+		} else {
+			buttonStyle(.borderless).padding(.horizontal, 4).glassEffect(.regular, in: Capsule())
+		}
+	}
+}
+
+/// [+ (−)] 알약 하나. 저장 바에서는 이것만 (저장 안 한 변경이 있을 때 내보내기는 숨긴다)
+struct AddRemovePill: View {
+	let addHelp: String
+	var add: (() -> Void)?
+	var showsRemove = true
+	var removeHelp = ""
+	var remove: (() -> Void)?
+
+	var body: some View {
+		HStack(spacing: 0) {
+			Button { add?() } label: { PillIcon(systemName: "plus") }
+				.help(addHelp)
+				.disabled(add == nil)
+			if showsRemove {
+				Button { remove?() } label: { PillIcon(systemName: "minus") }
+					.help(removeHelp)
+					.disabled(remove == nil)
+			}
+		}
+		.pill()
+		.fixedSize()
 	}
 }
 
@@ -33,17 +61,7 @@ struct AddExportGroup: View {
 	var body: some View {
 		// [+ −] 알약 하나(사이 구분선 없이) + 내보내기 따로. ControlGroup 은 칸마다 구분선이 생겨 + | − | 내보내기 가 복잡했다 (사용자)
 		HStack(spacing: 8) {
-			HStack(spacing: 0) {
-				Button { add?() } label: { PillIcon(systemName: "plus") }
-					.help(addHelp)
-					.disabled(add == nil)
-				if showsRemove {
-					Button { remove?() } label: { PillIcon(systemName: "minus") }
-						.help(removeHelp)
-						.disabled(remove == nil)
-				}
-			}
-			.pill()
+			AddRemovePill(addHelp: addHelp, add: add, showsRemove: showsRemove, removeHelp: removeHelp, remove: remove)
 			ExportButton(help: exportHelp, action: export)
 		}
 		.fixedSize()

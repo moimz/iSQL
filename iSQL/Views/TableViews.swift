@@ -333,11 +333,9 @@ struct StructureBody: View {
 				Label(p, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
 			}
 			HStack(spacing: 10) {
-				AddExportGroup(addHelp: "컬럼 추가 (고른 줄 아래에)", add: { editor.addColumn(after: selection.last) },
-				               showsRemove: true, removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction,
-				               exportHelp: "테이블 내보내기") {
-					session.requestExport(.table(table.schema, TableStat(table)))
-				}
+				// 저장 안 한 변경이 있으면 내보내기는 숨긴다 (서버의 구조와 화면이 달라서)
+				AddRemovePill(addHelp: "컬럼 추가 (고른 줄 아래에)", add: { editor.addColumn(after: selection.last) },
+				              removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction)
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
 				Text("저장 안 된 구조 변경 \(editor.changeCount)건").font(.headline)
 				Spacer()
