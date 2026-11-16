@@ -33,6 +33,15 @@ final class DatabaseOverview: GridSource {
 	@ObservationIgnored private var sortState: (key: String, ascending: Bool)?
 	/// 표에서 고른 행 (보이는 순서 번호)
 	var selection = IndexSet()
+	/// 검색 줄 보이기 (제목바 검색 버튼·⌥⌘F)
+	var showSearch = false
+	/// 테이블 이름·코멘트 검색 (띄어 쓴 낱말 모두 포함)
+	var searchText = "" {
+		didSet { if searchText != oldValue { resort() } }
+	}
+	/// 검색으로 걸러진 목록인지
+	var isFiltered: Bool { !searchWords.isEmpty }
+	private var searchWords: [String] { searchText.lowercased().split(separator: " ").map(String.init) }
 
 	init(schema: String, session: Session) {
 		self.schema = schema
@@ -85,7 +94,8 @@ final class DatabaseOverview: GridSource {
 
 	/// 고른 테이블 내보내기 (하단바 버튼·여러 개 고른 오른쪽 클릭): 목록을 보이고 고른 것만 체크 (안 골랐으면 전부)
 	func requestExportPicked() {
-		session?.requestExport(.database(schema: schema, tables: orderedStats, picked: Set(selectedStats.map(\.name)), showPicker: true))
+		// 검색으로 걸러져 있으면 목록에는 전체를 보이고, 보이는 것(또는 고른 것)만 체크한다
+		session?.requestExport(.database(schema: schema, tables: isFiltered ? stats : orderedStats, picked: Set(selectedStats.map(\.name)), showPicker: true))
 	}
 
 	static func size(_ b: Int64) -> String {
@@ -171,7 +181,11 @@ final class DatabaseOverview: GridSource {
 	}
 
 	private func resort() {
-		order = Array(stats.indices)
+		let words = searchWords
+		order = words.isEmpty ? Array(stats.indices) : stats.indices.filter { i in
+			let hay = (stats[i].name + "\n" + stats[i].comment).lowercased()
+			return words.allSatisfy { hay.contains($0) }
+		}
 		if let s = sortState {
 			func num(_ t: TableStat) -> Int64? {
 				switch s.key {

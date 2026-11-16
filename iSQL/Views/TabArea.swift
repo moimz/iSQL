@@ -13,6 +13,11 @@ struct TabArea: View {
 
 	private var activeTable: TableInfo? { session.activeTab.flatMap { session.table($0) } }
 
+	/// 지금 탭이 DB 개요 탭이면 그 개요
+	private var activeOverview: DatabaseOverview? {
+		session.activeTab.flatMap { Session.databaseOf(tab: $0) }.map { session.overview($0) }
+	}
+
 	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때: 쿼리 버튼 자리에 테이블 정보 버튼
 	private var structureShown: Bool {
 		active?.mode == .structure && session.queryPanel?.resultsVisible != true
@@ -87,6 +92,19 @@ struct TabArea: View {
 						.fixedSize()
 				}
 				ToolbarSpacer(.fixed)
+			} else if let o = activeOverview, session.queryPanel?.resultsVisible != true {
+				// DB 개요: 테이블 이름·코멘트 검색 (⌥⌘F)
+				ToolbarItem {
+					Button {
+						o.showSearch.toggle()
+						if !o.showSearch { o.searchText = "" }
+					} label: {
+						Image(systemName: "magnifyingglass")
+							.foregroundStyle(o.showSearch || o.isFiltered ? Color.accentColor : Color.primary)
+					}
+					.help("테이블 찾기 (⌥⌘F)")
+				}
+				ToolbarSpacer(.fixed)
 			}
 			if structureShown {
 				// 구조 보기: 쿼리 버튼 대신 테이블 정보 패널 (⌥⌘I). 쿼리 패널은 ⌘J 로 여전히 열린다
@@ -122,7 +140,10 @@ struct TabArea: View {
 				Button("") { if let d = active { Task { await d.saveIfNeeded() } } }.keyboardShortcut("s")
 				Button("") { active?.mode = .data }.keyboardShortcut("1")
 				Button("") { active?.mode = .structure }.keyboardShortcut("2")
-				Button("") { if let d = active { d.mode = .data; d.showFilter.toggle() } }.keyboardShortcut("f", modifiers: [.command, .option])
+				Button("") {
+					if let d = active { d.mode = .data; d.showFilter.toggle() }
+					else if let o = activeOverview { o.showSearch.toggle(); if !o.showSearch { o.searchText = "" } }
+				}.keyboardShortcut("f", modifiers: [.command, .option])
 				// ⌘J 쿼리 패널 열기/닫기
 				Button("") { session.queryPanel?.open.toggle() }.keyboardShortcut("j")
 				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)

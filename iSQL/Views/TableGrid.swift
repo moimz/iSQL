@@ -426,6 +426,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				s.append(NSAttributedString(string: " ", attributes: attrs))
 			}
 			s.append(NSAttributedString(string: text, attributes: attrs))
+			// 문단 설정은 첫 글자 것을 따른다: 아이콘(첨부) 글자에도 넣어야 넘칠 때 … 이 붙는다
+			s.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: s.length))
 			field.attributedStringValue = s
 			field.toolTip = cell.tooltip ?? ((cell.text?.count ?? 0) > 40 ? cell.text : nil)
 			return field
@@ -654,7 +656,8 @@ final class GridHeaderCell: NSTableHeaderCell {
 /// 주의: NSCell 은 복사될 때 Swift 저장 속성이 두 번 풀려 죽으므로 저장 속성을 두지 않는다
 final class GridTextCell: NSTextFieldCell {
 	private func centered(_ rect: NSRect) -> NSRect {
-		let h = ceil(super.cellSize(forBounds: NSRect(x: 0, y: 0, width: rect.width, height: .greatestFiniteMagnitude)).height)
+		// 한 줄 높이로 잰다: 칸 너비로 재면 넘치는 글자는 두 줄 높이로 나와 가운데로 못 옮기고 위에 붙었다 (… 도 안 붙음)
+		let h = ceil(super.cellSize(forBounds: NSRect(x: 0, y: 0, width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).height)
 		guard h < rect.height else { return rect }
 		var r = rect
 		r.origin.y += floor((rect.height - h) / 2)
