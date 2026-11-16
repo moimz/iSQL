@@ -576,17 +576,15 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			return item
 		}
 
-		/// 끌기 시작할 때 고스트를 그 줄 자리에 그 줄 모양으로 둔다.
-		/// AppKit 이 알아서 만든 고스트는 커서보다 한 줄 높이만큼 위에 떴다 (사용자 보고)
+		/// 끌기 시작할 때 고스트를 그 줄 자리에 둔다. 그림은 AppKit 이 만든 것을 그대로 쓰고 자리만 옮긴다.
+		/// AppKit 이 정한 자리는 커서보다 한 줄 높이만큼 위였다 (사용자 보고).
+		/// 그림을 직접 만들면(cacheDisplay) 칸 글자가 빠져 투명해 보여서 그림은 건드리지 않는다
 		func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
 			session.enumerateDraggingItems(options: [], for: tableView, classes: [NSPasteboardItem.self], searchOptions: [:]) { item, _, _ in
 				guard let s = (item.item as? NSPasteboardItem)?.string(forType: Self.rowDragType), let row = Int(s), row < tableView.numberOfRows else { return }
-				let rect = tableView.rect(ofRow: row).intersection(tableView.visibleRect)
-				guard !rect.isEmpty, let rep = tableView.bitmapImageRepForCachingDisplay(in: rect) else { return }
-				tableView.cacheDisplay(in: rect, to: rep)
-				let image = NSImage(size: rect.size)
-				image.addRepresentation(rep)
-				item.setDraggingFrame(rect, contents: image)
+				var frame = item.draggingFrame
+				frame.origin.y = tableView.rect(ofRow: row).minY
+				item.draggingFrame = frame
 			}
 		}
 
