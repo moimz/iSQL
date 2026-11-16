@@ -1426,7 +1426,11 @@ final class GridHeaderCell: NSTableHeaderCell {
 /// 글자를 세로 가운데에 그리는 셀 (표 칸은 행 높이 24 를 다 차지한다).
 /// 주의: NSCell 은 복사될 때 Swift 저장 속성이 두 번 풀려 죽으므로 저장 속성을 두지 않는다
 final class GridTextCell: NSTextFieldCell {
+	/// 좌우 여백: 오른쪽 정렬 숫자와 옆 칸 왼쪽 정렬 글자가 세로선에 붙어 빽빽했다 (배경·세로선은 칸 전체라 그대로)
+	static let padding: CGFloat = 4
+
 	private func centered(_ rect: NSRect) -> NSRect {
+		let rect = rect.insetBy(dx: Self.padding, dy: 0)
 		// 한 줄 높이로 잰다: 칸 너비로 재면 넘치는 글자는 두 줄 높이로 나와 가운데로 못 옮기고 위에 붙었다 (… 도 안 붙음)
 		let h = ceil(super.cellSize(forBounds: NSRect(x: 0, y: 0, width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)).height)
 		guard h < rect.height else { return rect }
