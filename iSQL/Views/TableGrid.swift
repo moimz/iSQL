@@ -411,16 +411,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
 			guard let col = colIndex(tableColumn), row < source.rowCount else { return nil }
 			let id = NSUserInterfaceItemIdentifier("cell")
-			let field: NSTextField
-			if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField {
+			let field: GridField
+			if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? GridField {
 				field = reused
 			} else {
-				field = NSTextField()
+				field = GridField()
 				// 행 높이만큼 늘어난 글자 칸은 글자를 위에 붙여 그린다 → 세로 가운데로 그리는 셀
 				field.cell = GridTextCell(textCell: "")
 				field.identifier = id
 				field.isBordered = false
-				field.drawsBackground = true
+				// 배경은 GridField 가 칸 전체에 칠한다 (글자 칸이 칠하면 글자 높이만큼 한 번 더 겹쳤다)
+				field.drawsBackground = false
 				field.lineBreakMode = .byTruncatingTail
 				field.cell?.usesSingleLineMode = true
 				field.cell?.truncatesLastVisibleLine = true
@@ -446,16 +447,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			case .deleted:
 				attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
 				attrs[.foregroundColor] = NSColor.systemRed
-				field.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12)
-			case .edited: field.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35)
-			case .inserted: field.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.18)
-			case .clean: field.backgroundColor = .clear
+				field.fill = NSColor.systemRed.withAlphaComponent(0.12)
+			case .edited: field.fill = NSColor.systemYellow.withAlphaComponent(0.35)
+			case .inserted: field.fill = NSColor.systemGreen.withAlphaComponent(0.18)
+			case .clean: field.fill = nil
 			}
 			let s = NSMutableAttributedString()
 			if let icon = cell.icon {
 				let a = NSTextAttachment()
 				a.image = icon
-				a.bounds = NSRect(x: 0, y: -1, width: icon.size.width, height: icon.size.height)
+				// 글자(대문자 높이) 가운데에 맞춘다. 고정 -1 이면 아이콘이 글자보다 위로 떴다
+				a.bounds = NSRect(x: 0, y: round((f.capHeight - icon.size.height) / 2), width: icon.size.width, height: icon.size.height)
 				s.append(NSAttributedString(attachment: a))
 				s.append(NSAttributedString(string: " ", attributes: attrs))
 			}
@@ -785,21 +787,27 @@ final class GridTextCell: NSTextFieldCell {
 		super.drawingRect(forBounds: centered(rect))
 	}
 
-	/// 배경(고친 칸 노랑·새 행 초록·지울 행 빨강)은 칸 전체에. 기본 그리기는 글자 높이(drawingRect)만 칠했다.
-	/// 테두리 없는 글자 칸이라 바탕만 칠하고 글자는 drawInterior 로 그린다
-	override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-		if drawsBackground, let bg = backgroundColor {
-			bg.setFill()
-			cellFrame.fill(using: .sourceOver)
-		}
-		drawInterior(withFrame: cellFrame, in: controlView)
-	}
-
 	override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
 		super.edit(withFrame: centered(rect), in: controlView, editor: textObj, delegate: delegate, event: event)
 	}
 
 	override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
 		super.select(withFrame: centered(rect), in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
+	}
+}
+
+/// 표 칸 하나. 상태 배경(고친 칸 노랑·새 행 초록·지울 행 빨강)을 칸 전체에 칠한다.
+/// 글자 칸(NSTextFieldCell)의 배경은 세로 가운데 맞춘 글자 높이만 칠해서 따로 그린다
+final class GridField: NSTextField {
+	var fill: NSColor? {
+		didSet { if fill != oldValue { needsDisplay = true } }
+	}
+
+	override func draw(_ dirtyRect: NSRect) {
+		if let fill {
+			fill.setFill()
+			bounds.fill(using: .sourceOver)
+		}
+		super.draw(dirtyRect)
 	}
 }

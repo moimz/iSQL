@@ -310,6 +310,8 @@ final class StructureEditor: GridSource {
 		}
 		try? await session.loadSchema()
 		await load()
+		// 테이블 정보 패널의 인덱스 목록도 (이름을 바꾼 컬럼, 지운 컬럼)
+		await session.reloadInspector(table)
 	}
 
 	// MARK: 줄 고치기

@@ -445,6 +445,12 @@ final class Session {
 	@ObservationIgnored private var catalogLoaded = false
 	@ObservationIgnored private var inspectors: [String: TableInspector] = [:]
 
+	/// 테이블 정보 패널을 한 번이라도 열었으면 다시 읽는다 (구조를 바꾸면 인덱스의 컬럼 이름·키가 바뀐다)
+	@MainActor
+	func reloadInspector(_ table: TableInfo) async {
+		if let i = inspectors[table.id] { await i.load() }
+	}
+
 	func inspector(for table: TableInfo) -> TableInspector {
 		if let i = inspectors[table.id] { return i }
 		let i = TableInspector(table: table, session: self)
