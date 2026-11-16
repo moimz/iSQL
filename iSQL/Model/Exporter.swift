@@ -23,6 +23,10 @@ protocol ExportSource: AnyObject {
 	var exportTotalEstimate: Int? { get }
 	/// 그 행 수가 정확한지
 	var isExactTotal: Bool { get }
+	/// 결과 컬럼 (엑셀: 타입을 보고 숫자·날짜로)
+	var exportResultColumns: [Column] { get }
+	/// 컬럼 이름 → 코멘트 (엑셀 첫 행)
+	var exportColumnComments: [String: String] { get }
 }
 
 /// SQL 내보내기 옵션
@@ -66,6 +70,127 @@ struct DatabaseExportOptions {
 	var includeStructure = true
 	var includeDrop = true
 	var includeData = true
+}
+
+/// 엑셀 첫 행에 컬럼 코멘트를 어떻게 쓸지
+enum HeaderComment: String, CaseIterable {
+	case name, comment, nameAndComment
+	var title: String {
+		switch self {
+		case .name: "컬럼 이름만"
+		case .comment: "코멘트로 바꾸기 (없으면 이름)"
+		case .nameAndComment: "이름에 코멘트 덧붙이기"
+		}
+	}
+}
+
+/// 엑셀(xlsx) 내보내기 옵션
+struct ExcelExportOptions {
+	/// 첫 행에 컬럼 이름
+	var header = true
+	var headerComment = HeaderComment.name
+	/// 여러 테이블이면 한 파일에 테이블마다 시트 (끄면 테이블마다 파일)
+	var oneFile = true
+	/// 숫자·날짜를 엑셀 숫자·날짜로 (끄면 모두 글자)
+	var keepTypes = true
+	/// 열린 테이블·쿼리 결과: 화면에 보이는 행만
+	var visibleOnly = true
+}
+
+/// 엑셀 시트 하나로 쓸 것: 이름, 코멘트, 행 받기 (offset, limit → 컬럼과 행)
+struct ExcelSheetSpec {
+	var name: String
+	var comments: [String: String]
+	var total: Int?
+	var fetch: (_ offset: Int, _ limit: Int) async throws -> (columns: [Column], rows: [[Value]])
+
+	/// 열린 테이블·쿼리 결과
+	@MainActor
+	static func data(_ src: ExportSource, visibleOnly: Bool) -> ExcelSheetSpec {
+		let cols = src.exportResultColumns
+		if visibleOnly {
+			let rows = src.visibleRows
+			return ExcelSheetSpec(name: src.exportFileBase, comments: src.exportColumnComments, total: rows.count) { offset, _ in
+				(cols, offset == 0 ? rows : [])
+			}
+		}
+		return ExcelSheetSpec(name: src.exportFileBase, comments: src.exportColumnComments, total: src.exportTotalEstimate) { offset, limit in
+			(cols, try await src.fetchRows(offset: offset, limit: limit))
+		}
+	}
+
+	/// DB 의 테이블 하나 (기본 키 순서로 나눠 받는다)
+	@MainActor
+	static func table(session: Session, schema: String, _ t: TableStat) -> ExcelSheetSpec {
+		let info = session.columns[schema + "." + t.name] ?? []
+		let pk = info.filter { $0.key == "PRI" }.map { quoteName($0.name) }
+		let order = pk.isEmpty ? "" : " ORDER BY " + pk.joined(separator: ", ")
+		let q = "\(quoteName(schema)).\(quoteName(t.name))"
+		return ExcelSheetSpec(name: t.name, comments: Dictionary(info.map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a }),
+		                      total: t.rows.map { Int($0) }) { offset, limit in
+			let r = try await session.query("SELECT * FROM \(q)\(order) LIMIT \(limit) OFFSET \(offset)").last ?? QueryResult()
+			return (r.columns, r.rows)
+		}
+	}
+}
+
+/// MySQL 컬럼 → 엑셀 칸
+enum ExcelValue {
+	enum Kind { case integer, decimal, float, date, dateTime, text, binary }
+
+	static func kind(_ c: Column) -> Kind {
+		if c.isBinary { return .binary }
+		switch c.type {
+		case 1, 2, 3, 8, 9, 13: return .integer
+		case 0, 246: return .decimal
+		case 4, 5: return .float
+		case 10, 14: return .date
+		case 7, 12: return .dateTime
+		default: return .text
+		}
+	}
+
+	/// 엑셀은 숫자를 15자리까지만 정확히 다룬다 → 넘으면 글자로 (BIGINT ID 등)
+	private static func fitsDouble(_ s: String) -> Bool {
+		var digits = 0
+		for u in s.utf8 {
+			if u >= 0x30 && u <= 0x39 { digits += 1 }
+			else if u != 0x2D && u != 0x2E && u != 0x2B { return false }
+		}
+		return digits > 0 && digits <= 15
+	}
+
+	static func cell(_ v: Value, _ kind: Kind, keepTypes: Bool) -> XLSXCell {
+		switch v {
+		case .null: return .empty
+		case .bytes(let d):
+			if let s = String(data: d, encoding: .utf8), kind != .binary { return .text(s) }
+			// 바이너리는 0x 16진수 (칸 글자 수 한도 안에서)
+			return .text("0x" + d.prefix(16_000).map { String(format: "%02X", $0) }.joined())
+		case .text(let s):
+			guard keepTypes else { return .text(s) }
+			switch kind {
+			case .integer, .decimal:
+				return fitsDouble(s) ? .number(s) : .text(s)
+			case .float:
+				if let d = Double(s), d.isFinite { return .number(s) }
+				return .text(s)
+			case .date:
+				return XLSXWriter.excelSerial(s).map { .date($0) } ?? .text(s)
+			case .dateTime:
+				return XLSXWriter.excelSerial(s).map { .dateTime($0) } ?? .text(s)
+			case .text, .binary:
+				return .text(s)
+			}
+		}
+	}
+
+	/// 화면 너비 어림 (한글 등은 두 칸)
+	static func displayWidth(_ s: String) -> Int {
+		var w = 0
+		for u in s.unicodeScalars.prefix(200) { w += u.value > 0x2E7F ? 2 : 1 }
+		return w
+	}
 }
 
 /// 내보내기 진행 (팝오버에 보여 준다)
@@ -243,6 +368,114 @@ final class ExportJob {
 		}
 	}
 
+	/// 엑셀(xlsx)로. oneFile 이면 url 은 파일 하나(시트 여럿), 아니면 url 은 폴더(시트마다 파일).
+	/// 1,000행씩 받아 바로 쓴다. 시트 한 장 최대 행 수(1,048,576)를 넘으면 "이름 (2)" 시트로 이어 쓴다
+	@MainActor
+	func exportExcel(_ specs: [ExcelSheetSpec], options o: ExcelExportOptions, to url: URL, oneFile: Bool) async {
+		guard !running else { return }
+		running = true
+		cancelled = false
+		written = 0
+		message = nil
+		isError = false
+		finished = false
+		fileName = url.lastPathComponent
+		let totals = specs.map(\.total)
+		total = totals.contains { $0 == nil } ? nil : totals.reduce(0) { $0 + ($1 ?? 0) }
+		totalApprox = false
+		defer { running = false; finished = true }
+		var files: [URL] = []
+		do {
+			var shared: XLSXWriter?
+			if oneFile { shared = try XLSXWriter(url: url); files.append(url) }
+			for spec in specs where !cancelled {
+				let w: XLSXWriter
+				if let shared { w = shared } else {
+					let f = Self.freeURL(url.appendingPathComponent(Self.safeFileName(spec.name) + ".xlsx"))
+					w = try XLSXWriter(url: f)
+					files.append(f)
+					fileName = f.lastPathComponent
+				}
+				try await writeSheet(spec, to: w, options: o)
+				if shared == nil { try w.close() }
+			}
+			try shared?.close()
+			if cancelled {
+				message = "그만둠 · \(written.formatted())행까지 썼습니다"
+			} else {
+				message = "\(written.formatted())행 내보냄 · " + (oneFile ? url.lastPathComponent : "파일 \(files.count)개 (\(url.lastPathComponent))")
+			}
+		} catch {
+			fail(error.localizedDescription)
+		}
+	}
+
+	@MainActor
+	private func writeSheet(_ spec: ExcelSheetSpec, to w: XLSXWriter, options o: ExcelExportOptions) async throws {
+		let size = 1000
+		var batch = try await spec.fetch(0, size)
+		let cols = batch.columns
+		let kinds = cols.map(ExcelValue.kind)
+		let titles: [String] = cols.map { c in
+			let comment = (spec.comments[c.orgName.isEmpty ? c.name : c.orgName] ?? spec.comments[c.name] ?? "")
+			switch o.headerComment {
+			case .name: return c.name
+			case .comment: return comment.isEmpty ? c.name : comment
+			case .nameAndComment: return comment.isEmpty ? c.name : "\(c.name) (\(comment))"
+			}
+		}
+		// 너비: 첫 묶음과 제목으로 어림 (날짜는 고정)
+		let widths: [Double] = cols.indices.map { i in
+			switch kinds[i] {
+			case .date: return 11
+			case .dateTime: return 19
+			default:
+				var m = o.header ? ExcelValue.displayWidth(titles[i]) + 2 : 6
+				for r in batch.rows.prefix(200) where i < r.count { m = max(m, ExcelValue.displayWidth(r[i].string ?? "")) }
+				return Double(min(max(m + 1, 6), 60))
+			}
+		}
+		var part = 1
+		func start() throws {
+			try w.beginSheet(part == 1 ? spec.name : "\(spec.name) (\(part))", widths: widths, freezeHeader: o.header)
+			if o.header { try w.row(titles.map { .text($0) }, header: true) }
+		}
+		try start()
+		var offset = 0
+		while !cancelled {
+			for r in batch.rows {
+				if w.rowsInSheet >= XLSXWriter.maxRows {
+					try w.endSheet()
+					part += 1
+					try start()
+				}
+				try w.row(r.indices.map { i in ExcelValue.cell(r[i], i < kinds.count ? kinds[i] : .text, keepTypes: o.keepTypes) })
+			}
+			written += batch.rows.count
+			if batch.rows.count < size { break }
+			offset += size
+			batch = try await spec.fetch(offset, size)
+		}
+		try w.endSheet()
+	}
+
+	/// 파일 이름에 못 쓰는 글자(/ :)는 _
+	private static func safeFileName(_ s: String) -> String {
+		let t = String(s.map { "/:".contains($0) ? "_" : $0 })
+		return t.isEmpty ? "sheet" : t
+	}
+
+	/// 같은 이름이 있으면 "이름 2.xlsx"
+	private static func freeURL(_ u: URL) -> URL {
+		var url = u, i = 2
+		let base = u.deletingPathExtension().lastPathComponent, ext = u.pathExtension
+		while FileManager.default.fileExists(atPath: url.path) {
+			url = u.deletingLastPathComponent().appendingPathComponent("\(base) \(i).\(ext)")
+			i += 1
+		}
+		return url
+	}
+
 	private func fail(_ s: String) {
 		message = s
 		isError = true
@@ -280,6 +513,10 @@ extension TableData: ExportSource {
 	var exportSession: Session? { session }
 	var exportTotalEstimate: Int? { exactTotal ?? statTotal.map { Int($0) } }
 	var isExactTotal: Bool { exactTotal != nil || (statTotal != nil && table.rowsExact) }
+	var exportResultColumns: [Column] { columns }
+	var exportColumnComments: [String: String] {
+		Dictionary((session.columns[table.id] ?? []).map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a })
+	}
 }
 
 // MARK: - 쿼리 결과
@@ -315,4 +552,14 @@ extension QueryOutput: ExportSource {
 	var exportSession: Session? { session }
 	var exportTotalEstimate: Int? { paged ? knownTotal : result.rows.count }
 	var isExactTotal: Bool { true }
+	var exportResultColumns: [Column] { result.columns }
+	/// 원래 테이블의 컬럼 코멘트 (별칭이면 결과 이름으로)
+	var exportColumnComments: [String: String] {
+		var d: [String: String] = [:]
+		for c in result.columns where !c.orgTable.isEmpty {
+			let info = session?.columns["\(c.schema).\(c.orgTable)"]?.first { $0.name.caseInsensitiveCompare(c.orgName) == .orderedSame }
+			if let info, !info.comment.isEmpty, d[c.name] == nil { d[c.name] = info.comment }
+		}
+		return d
+	}
 }

@@ -21,6 +21,11 @@ struct ExportSheet: View {
 	@Environment(\.dismiss) private var dismiss
 	@State private var sql = SQLExportOptions()
 	@State private var db = DatabaseExportOptions()
+	@State private var excel = ExcelExportOptions()
+	/// 고른 탭 (SQL / Excel)
+	/// 고른 탭은 다음에도 (이 맥에만)
+	@AppStorage("exportFormat") private var format = Format.sql
+	enum Format: String, Hashable { case sql, excel }
 	@State private var tabsReady = false
 	/// 고르기 목록에서 체크한 테이블 이름
 	@State private var picked: Set<String> = []
@@ -29,8 +34,9 @@ struct ExportSheet: View {
 		VStack(alignment: .leading, spacing: 16) {
 			Text(title).font(.headline)
 			if let list = pickerTables { tablePicker(list) }
-			TabView {
-				sqlTab.tabItem { Text("SQL") }
+			TabView(selection: $format) {
+				sqlTab.tabItem { Text("SQL") }.tag(Format.sql)
+				excelTab.tabItem { Text("Excel") }.tag(Format.excel)
 			}
 			// 시트 창은 처음에 크기 0 으로 만들어져 NSTabView 가 그때 탭 너비를 재고 다시 안 잰다(탭 이름이 "S…" 로 잘림).
 			// → 시트가 뜬 뒤 한 번 다시 만든다 (tabsReady). 크기는 옵션 줄 수만큼 직접 준다
@@ -43,7 +49,7 @@ struct ExportSheet: View {
 				Button("내보내기…", action: chooseFile)
 					.buttonStyle(.borderedProminent)
 					.keyboardShortcut(.defaultAction)
-					.disabled(isDatabase && (picked.isEmpty || (!db.includeStructure && !db.includeData)))
+					.disabled(isDatabase && (picked.isEmpty || (format == .sql && !db.includeStructure && !db.includeData)))
 			}
 			.controlSize(.large)
 		}
@@ -58,8 +64,14 @@ struct ExportSheet: View {
 		}
 	}
 
-	/// 탭 상자 높이: 옵션 세 줄, 테이블 이름 칸이 있으면 한 줄 더
+	/// 탭 상자 높이: 고른 탭의 옵션 줄 수만큼
 	private var tabHeight: CGFloat {
+		if format == .excel {
+			// 첫 행·코멘트 / 형식 유지(설명 두 줄) / 화면에 보이는 것만 또는 여러 테이블 묶기
+			var h: CGFloat = 164
+			if isDatabase ? chosenTables.count > 1 || pickerTables != nil : true { h += 30 }
+			return h
+		}
 		if case .data(let src) = request.target, src.exportTableName == nil { return 200 }
 		return 162
 	}
@@ -163,7 +175,42 @@ struct ExportSheet: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
+	/// 엑셀 탭: 첫 행(컬럼 이름 / 코멘트), 형식 유지, 화면에 보이는 것만 또는 여러 테이블을 한 파일에
+	@ViewBuilder private var excelTab: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			Toggle("첫 행에 컬럼 이름", isOn: $excel.header)
+			HStack(spacing: 6) {
+				Text("코멘트가 있으면:").foregroundStyle(excel.header ? .primary : .secondary)
+				PopUp(selection: $excel.headerComment, options: HeaderComment.allCases.map { ($0.title, $0) })
+					.frame(width: 220)
+			}
+			.padding(.leading, 20)
+			.disabled(!excel.header)
+			VStack(alignment: .leading, spacing: 2) {
+				Toggle("형식 유지", isOn: $excel.keepTypes)
+				Text("날짜는 엑셀 날짜, 숫자는 숫자로. 글자 컬럼 안의 숫자는 글자 그대로(앞자리 0 유지). 끄면 모두 일반 글자.")
+					.font(.callout).foregroundStyle(.secondary)
+					.fixedSize(horizontal: false, vertical: true)
+					.padding(.leading, 20)
+			}
+			switch request.target {
+			case .data:
+				Toggle("화면에 보이는 데이터만 (끄면 전체)", isOn: $excel.visibleOnly)
+					.help("끄면 지금 조건·정렬 그대로 전체를 1,000행씩 받아 씁니다")
+			case .database:
+				if chosenTables.count > 1 || pickerTables != nil {
+					Toggle("한 파일에 테이블마다 시트 (끄면 테이블마다 파일)", isOn: $excel.oneFile)
+						.disabled(chosenTables.count < 2)
+				}
+			}
+		}
+		.toggleStyle(.checkbox)
+		.padding(14)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
 	private func chooseFile() {
+		if format == .excel { chooseExcel(); return }
 		let panel = NSSavePanel()
 		switch request.target {
 		case .data(let src): panel.nameFieldStringValue = "\(src.exportFileBase).sql"
@@ -192,6 +239,46 @@ struct ExportSheet: View {
 				case .database(let schema, _, _, _): await job.exportDatabase(session: session, schema: schema, tables: chosen, options: dbOptions, to: url)
 				}
 			}
+		}
+	}
+}
+
+extension ExportSheet {
+	/// 엑셀: 파일 하나면 저장 창, 테이블마다 파일이면 폴더 고르기
+	private func chooseExcel() {
+		let target = request.target, session = session, options = excel
+		let chosen = chosenTables
+		var specs: [ExcelSheetSpec]
+		var baseName: String
+		switch target {
+		case .data(let src):
+			specs = [.data(src, visibleOnly: options.visibleOnly)]
+			baseName = src.exportFileBase
+		case .database(let schema, _, _, _):
+			specs = chosen.map { ExcelSheetSpec.table(session: session, schema: schema, $0) }
+			baseName = chosen.count == 1 ? chosen[0].name : schema
+		}
+		let oneFile = specs.count < 2 || options.oneFile
+		dismiss()
+		func run(_ url: URL) {
+			let job = ExportJob()
+			ExportProgressWindow.show(job: job)
+			Task { @MainActor in await job.exportExcel(specs, options: options, to: url, oneFile: oneFile) }
+		}
+		if oneFile {
+			let panel = NSSavePanel()
+			panel.nameFieldStringValue = baseName + ".xlsx"
+			if let t = UTType(filenameExtension: "xlsx") { panel.allowedContentTypes = [t] }
+			panel.canCreateDirectories = true
+			panel.begin { resp in if resp == .OK, let url = panel.url { run(url) } }
+		} else {
+			let panel = NSOpenPanel()
+			panel.title = "엑셀 파일을 둘 폴더"
+			panel.prompt = "여기에 저장"
+			panel.canChooseFiles = false
+			panel.canChooseDirectories = true
+			panel.canCreateDirectories = true
+			panel.begin { resp in if resp == .OK, let url = panel.url { run(url) } }
 		}
 	}
 }
@@ -237,7 +324,7 @@ struct ExportProgressView: View {
 
 	var body: some View {
 		HStack(alignment: .center, spacing: 14) {
-			Image(nsImage: NSWorkspace.shared.icon(for: .init(filenameExtension: "sql") ?? .plainText))
+			Image(nsImage: NSWorkspace.shared.icon(for: .init(filenameExtension: (job.fileName as NSString).pathExtension.isEmpty ? "sql" : (job.fileName as NSString).pathExtension) ?? .plainText))
 				.resizable().frame(width: 40, height: 40)
 			VStack(alignment: .leading, spacing: 6) {
 				Text(title).lineLimit(1).truncationMode(.middle)
