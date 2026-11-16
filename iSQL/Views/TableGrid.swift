@@ -1145,10 +1145,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let col = table.clickedColumn >= 0 ? colIndex(table.tableColumns[table.clickedColumn]) : nil
 			var items: [GridMenuItem] = []
 			if let col {
-				items.append(.action("값 복사") {
-					NSPasteboard.general.clearContents()
-					NSPasteboard.general.setString(self.source.cell(row, col).text ?? "NULL", forType: .string)
-				})
+				items.append(.action("값 복사") { self.writeClipboard(rows: [[self.source.cell(row, col).text]], columns: [col]) })
 			}
 			items.append(.action("행 복사 (\(table.selectedRowIndexes.count)개)") { self.copySelection() })
 			let extra = source.cellMenu(row: row, col: col, selection: table.selectedRowIndexes)
@@ -1187,20 +1184,44 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		/// 선택한 행을 탭으로 나눠 복사
 		func copySelection() {
-			let lines = table.selectedRowIndexes.map { r in
-				columns.indices.map { source.cell(r, $0).text ?? "NULL" }.joined(separator: "\t")
-			}
-			NSPasteboard.general.clearContents()
-			NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+			let cols = Array(columns.indices)
+			writeClipboard(rows: table.selectedRowIndexes.map { r in cols.map { source.cell(r, $0).text } }, columns: cols)
 		}
 
 		/// ⌘C: 지금 칸이 있으면 그 컬럼 값만 (여러 행이면 줄마다 하나), 없으면 행 전체
 		func copyShortcut() {
 			guard let key = cursorKey, let col = Int(key), col < columns.count else { copySelection(); return }
-			let lines = table.selectedRowIndexes.map { source.cell($0, col).text ?? "NULL" }
-			guard !lines.isEmpty else { return }
-			NSPasteboard.general.clearContents()
-			NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+			writeClipboard(rows: table.selectedRowIndexes.map { [source.cell($0, col).text] }, columns: [col])
+		}
+
+		/// 클립보드에 두 가지로: 글자(탭·줄 구분, 메모장용 — 예전 그대로)와 HTML 표(엑셀·Numbers 는 이걸 먼저 쓴다).
+		/// 글자만 주면 칸 안 줄바꿈이 엑셀에서 행을 쪼갰다. HTML 표는 줄바꿈을 같은 칸 안 줄로,
+		/// 숫자 컬럼이 아니거나 15자리를 넘는 숫자는 글자 서식으로 (01234 → 1234, 큰 번호 → 1.8E+19 가 되지 않게; 엑셀로 확인)
+		private func writeClipboard(rows: [[String?]], columns cols: [Int]) {
+			guard !rows.isEmpty else { return }
+			let plain = rows.map { $0.map { $0 ?? "NULL" }.joined(separator: "\t") }.joined(separator: "\n")
+			func esc(_ t: String) -> String {
+				t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+					.replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+					.replacingOccurrences(of: "\r\n", with: "\n")
+					.replacingOccurrences(of: "\n", with: "<br style=\"mso-data-placement:same-cell\">")
+			}
+			var html = "<html><head><meta charset=\"utf-8\"></head><body><table>"
+			for r in rows {
+				html += "<tr>"
+				for (i, v) in r.enumerated() {
+					let text = v ?? "NULL"
+					let numeric = i < cols.count && cols[i] < columns.count && columns[cols[i]].numeric && v != nil
+						&& text.filter(\.isNumber).count <= 15
+					html += numeric ? "<td>\(esc(text))</td>" : "<td style=\"mso-number-format:'\\@'\">\(esc(text))</td>"
+				}
+				html += "</tr>"
+			}
+			html += "</table></body></html>"
+			let pb = NSPasteboard.general
+			pb.clearContents()
+			pb.setString(plain, forType: .string)
+			pb.setString(html, forType: .html)
 		}
 }
 
