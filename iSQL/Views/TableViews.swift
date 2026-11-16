@@ -57,7 +57,7 @@ struct TableSidebar: View {
 								// 보기 → 만들기 → 내보내기·복제·이름 → 삭제 (되돌릴 수 없는 것은 맨 아래)
 								Button("테이블 목록·용량 보기") { session.openDatabase(schema) }
 								Divider()
-								Button("새 테이블 만들기…") {}.disabled(true)
+								Button("새 테이블 만들기…") { session.createTableRequest = CreateTableRequest(schema: schema) }
 								Divider()
 								Button("데이터베이스 내보내기…") { session.requestExport(schema: schema) }
 								Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }

@@ -108,11 +108,14 @@ struct ExportSheet: View {
 						                     set: { if $0 { picked.insert(t.name) } else { picked.remove(t.name) } })) {
 							HStack(spacing: 6) {
 								Image(systemName: t.isView ? "eye" : "tablecells").foregroundStyle(.secondary).frame(width: 16)
-								Text(t.name).lineLimit(1)
+								Text(t.name).lineLimit(1).layoutPriority(1)
+								// 코멘트는 오른쪽 끝에 붙인다 (이름 길이가 달라도 줄이 맞게)
+								Spacer(minLength: 12)
 								if !t.comment.isEmpty {
 									Text(t.comment).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
 								}
 							}
+							.frame(maxWidth: .infinity)
 						}
 						.toggleStyle(.checkbox)
 						.padding(.horizontal, 8)

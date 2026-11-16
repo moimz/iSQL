@@ -68,6 +68,10 @@ struct ContentView: View {
 		.sheet(item: Binding(get: { model.current?.duplicateRequest }, set: { model.current?.duplicateRequest = $0 })) { req in
 			if let s = model.current { DuplicateDatabaseSheet(request: req, session: s) }
 		}
+		// 새 테이블 만들기: 제목바에 붙는 시트
+		.sheet(item: Binding(get: { model.current?.createTableRequest }, set: { model.current?.createTableRequest = $0 })) { req in
+			if let s = model.current { CreateTableSheet(request: req, session: s) }
+		}
 		// 그룹 추가: 제목바에 붙는 시트
 		.sheet(isPresented: $model.addingGroup) {
 			GroupAddSheet { model.onGroupAdded?($0) }

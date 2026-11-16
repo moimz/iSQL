@@ -36,6 +36,7 @@ struct DatabaseOverviewView: View {
 			HStack(spacing: 10) {
 				// [+ | 내보내기] 묶음. + 는 테이블 만들기 (아직 기능 없음)
 				AddExportGroup(addHelp: "새 테이블 만들기",
+				               add: { session.createTableRequest = CreateTableRequest(schema: overview.schema) },
 				               exportHelp: overview.selection.isEmpty ? "모든 테이블 내보내기" : "고른 테이블 내보내기") {
 					overview.requestExportPicked()
 				}

@@ -206,6 +206,20 @@ final class Session {
 	/// 데이터베이스 복제 요청 (창이 제목바 시트로 띄운다)
 	var duplicateRequest: DuplicateRequest?
 
+	/// 새 테이블 만들기 요청 (창이 제목바 시트로 띄운다)
+	var createTableRequest: CreateTableRequest?
+
+	/// 테이블을 만든 뒤: 목록을 다시 읽고, 그 DB 개요가 열려 있으면 다시 읽고, 새 테이블을 탭으로 연다
+	@MainActor
+	func tableCreated(schema: String, name: String) async {
+		try? await loadSchema()
+		if let o = overviews[schema] { Task { await o.load() } }
+		if let t = tables.first(where: { $0.schema == schema && $0.name == name }) {
+			expanded.insert(schema)
+			openTab(t)
+		}
+	}
+
 	/// DB 전체 (사이드바 DB 머리 오른쪽 클릭): 고르기 목록을 보이고 전부 체크
 	func requestExport(schema: String) {
 		let all = tables.filter { $0.schema == schema }.map(TableStat.init)
