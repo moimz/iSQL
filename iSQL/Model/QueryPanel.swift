@@ -6,7 +6,7 @@ import Observation
 /// 실행한 쿼리 기록은 따로 남기지 않는다 (사용자 결정 2026-11-15)
 @Observable
 final class QueryPanel {
-	@ObservationIgnored private weak var session: Session?
+	@ObservationIgnored private(set) weak var session: Session?
 	@ObservationIgnored private let serverID: UUID?
 
 	var open = false

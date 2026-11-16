@@ -257,6 +257,21 @@ final class Session {
 		tableAction = TableActionRequest(kind: .dropDatabase, schema: schema, tables: tables.filter { $0.schema == schema }.map(TableStat.init))
 	}
 
+	/// 설정 창 > 사용자 계정 (처음 볼 때 만든다)
+	@ObservationIgnored private var accountStore: AccountManager?
+	func accountManager() -> AccountManager {
+		if let m = accountStore { return m }
+		let m = AccountManager(session: self)
+		accountStore = m
+		return m
+	}
+
+	/// 서버 설정을 바꿨을 때 (설정 창). 저장은 부른 쪽이 ServerStore 에
+	func updateServer(_ s: Server) {
+		guard s.id == server?.id else { return }
+		server = s
+	}
+
 	/// 새 데이터베이스 시트 (사이드바 +)
 	var creatingDatabase = false
 

@@ -120,8 +120,9 @@ struct QueryPanelView: View {
 	private func run(all: Bool) {
 		let statements = panel.statementsToRun(all: all)
 		guard !statements.isEmpty else { NSSound.beep(); return }
-		// 위험한 쿼리는 서버와 상관없이 늘 확인한다
-		let found = statements.compactMap { st in SQLSplitter.danger(st).map { "• \($0)\n  \(st.prefix(120))" } }
+		// 위험한 쿼리는 확인한다 (서버 설정 > 일반 에서 끌 수 있다, 기본 켬)
+		let warn = panel.session?.server?.warnsDangerousSQL ?? true
+		let found = warn ? statements.compactMap { st in SQLSplitter.danger(st).map { "• \($0)\n  \(st.prefix(120))" } } : []
 		if found.isEmpty {
 			Task { await panel.run(statements) }
 		} else {

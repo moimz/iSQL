@@ -22,6 +22,12 @@ struct Server: Codable, Identifiable, Hashable {
 	/// 마지막으로 고친 시각 (두 맥에서 고쳤을 때 최근 것을 남기려고)
 	var modified = Date()
 
+	// MARK: 서버별 앱 설정 (설정 창 > 일반, iCloud 로 같이 동기화). 예전 파일에는 없어서 옵셔널, nil 이면 기본값
+
+	/// 위험한 SQL(DROP·TRUNCATE·ALTER·WHERE 없는 UPDATE 등)을 쿼리 패널에서 실행하기 전에 묻기 (기본 켬)
+	var warnDangerousSQL: Bool?
+	var warnsDangerousSQL: Bool { warnDangerousSQL ?? true }
+
 	var displayName: String { name.isEmpty ? (ssh.enabled ? "\(ssh.host) → \(host)" : host) : name }
 
 	/// Keychain 항목 이름

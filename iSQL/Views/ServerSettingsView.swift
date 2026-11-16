@@ -7,16 +7,25 @@ final class SettingsTarget {
 	weak var session: Session?
 }
 
-/// 서버 설정 창 (Settings 장면). 맥 설정창처럼 위에 아이콘 탭: 일반 / 사용자 계정 (내용은 차차 채운다)
+/// 서버 설정 창 (Settings 장면). 맥 설정창처럼 위에 아이콘 탭.
+/// 일반 = iCloud 로 동기화되는 서버별 앱 설정, 사용자 계정 = MySQL 사용자 관리, 상태·서버 설정 = 준비 중
 struct ServerSettingsView: View {
+	@Environment(ServerStore.self) private var store
 	private var target = SettingsTarget.shared
+	/// 마지막으로 본 탭 (이 맥에만)
+	@AppStorage("settingsTab") private var tab = "general"
 
 	var body: some View {
-		TabView {
-			Tab("일반", systemImage: "gearshape") { page { general($0) } }
-			Tab("사용자 계정", systemImage: "person.2") { page { accounts($0) } }
+		TabView(selection: $tab) {
+			Tab("일반", systemImage: "gearshape", value: "general") { page { general($0) }.frame(width: 640, height: 440) }
+			Tab("사용자 계정", systemImage: "person.2", value: "accounts") { page { accounts($0) }.frame(width: 920, height: 620) }
+			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: 640, height: 440) }
+			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: 640, height: 440) }
 		}
-		.frame(width: 640, height: 420)
+	}
+
+	private func soon(_ title: String, _ icon: String, _ what: String) -> some View {
+		ContentUnavailableView(title, systemImage: icon, description: Text("\(what)는 준비 중입니다."))
 	}
 
 	/// 접속한 서버가 없으면 안내
@@ -45,8 +54,22 @@ struct ServerSettingsView: View {
 				}
 				if !session.serverVersion.isEmpty { LabeledContent("서버 버전", value: session.serverVersion) }
 				LabeledContent("데이터베이스", value: "\(session.databases.count.formatted())개 · 테이블 \(session.tables.count.formatted())개")
+			}
+			Section {
+				Toggle(isOn: Binding(get: { session.server?.warnsDangerousSQL ?? true }, set: { on in
+					guard var s = session.server else { return }
+					s.warnDangerousSQL = on
+					session.updateServer(s)
+					// 목록에 저장한 서버면 iCloud 파일에도 (퀵 커넥트로 저장 안 한 접속은 이 창을 닫으면 잊는다)
+					if store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
+				})) {
+					Text("위험한 SQL 실행 전에 경고")
+					Text("쿼리 패널에서 DROP·TRUNCATE·ALTER·DELETE·WHERE 없는 UPDATE 를 실행하기 전에 묻습니다")
+				}
+			} header: {
+				Text("이 서버 설정")
 			} footer: {
-				Text("서버별 설정 항목은 여기에 차례로 들어갑니다.").foregroundStyle(.tertiary)
+				Text("서버마다 따로이고, iCloud 로 다른 맥과 같이 맞춰집니다.").foregroundStyle(.tertiary)
 			}
 		}
 		.formStyle(.grouped)
@@ -55,7 +78,7 @@ struct ServerSettingsView: View {
 	// MARK: 사용자 계정
 
 	private func accounts(_ session: Session) -> some View {
-		ContentUnavailableView("사용자 계정", systemImage: "person.2",
-		                       description: Text("\(session.server?.displayName ?? "이 서버")의 MySQL 사용자와 권한 관리는 준비 중입니다."))
+		UserAccountsView(session: session, manager: session.accountManager())
+			.id(ObjectIdentifier(session))
 	}
 }
