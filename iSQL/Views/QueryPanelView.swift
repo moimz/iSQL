@@ -167,6 +167,13 @@ struct ResultBody: View {
 	let output: QueryOutput
 	@Bindable var source: QueryResultSource
 	@State private var selection = IndexSet()
+	@State private var creatingView = false
+
+	/// SELECT 결과만 뷰로 만들 수 있다 (SHOW·EXPLAIN 등은 안 됨)
+	private var viewable: Bool {
+		let head = output.sql.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8).lowercased()
+		return head.hasPrefix("select") || head.hasPrefix("with") || head.hasPrefix("(")
+	}
 
 	var body: some View {
 		ZStack {
@@ -177,6 +184,7 @@ struct ResultBody: View {
 			}
 		}
 		.sheet(isPresented: $source.showSQL) { SQLPreview(statements: source.changeSQL()) }
+		.sheet(isPresented: $creatingView) { if let s = output.session { CreateViewSheet(sql: output.sql, session: s) } }
 		Divider()
 		// ⌘S 는 TabArea 하나가 받는다: 결과가 탭을 덮고 있으면 결과를 저장
 		if source.hasChanges { changesBar } else { footer }
@@ -189,9 +197,9 @@ struct ResultBody: View {
 				AddExportGroup(addHelp: "행 추가", add: { source.addRow() },
 				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
 				               remove: selection.isEmpty ? nil : { source.toggleDelete(selection) },
-				               exportHelp: "내보내기") { output.session?.requestExport(.data(output)) }
+				               exportHelp: "내보내기", makeView: viewable ? { creatingView = true } : nil) { output.session?.requestExport(.data(output)) }
 			} else {
-				ExportButton { output.session?.requestExport(.data(output)) }
+				ExportButton(makeView: viewable ? { creatingView = true } : nil) { output.session?.requestExport(.data(output)) }
 				if let why = source.readOnlyReason {
 					Image(systemName: "lock").foregroundStyle(.secondary).help(why)
 				}
@@ -218,8 +226,9 @@ struct ResultBody: View {
 				              removeHelp: "고른 행 지우기 (저장할 때 반영)",
 				              remove: selection.isEmpty ? nil : { source.toggleDelete(selection) })
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-				Text("저장 안 된 변경 \(source.changeCount)건").font(.headline)
-				Text(detail).foregroundStyle(.secondary)
+				// 좁은 칸(분할)에서도 한 줄로: 종류(수정·추가·삭제)는 행 색으로 보이므로 개수만, 나눈 수는 마우스를 올리면
+				Text("미반영 변경 \(source.changeCount)건").font(.headline).lineLimit(1).fixedSize()
+					.help(detail)
 				Spacer()
 				Button("SQL 미리보기") { source.showSQL = true }
 				Button("되돌리기") { source.discard() }

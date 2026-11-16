@@ -12,8 +12,6 @@ struct TabArea: View {
 	/// 오른쪽 칸 너비 (0 이면 반)
 	@AppStorage("splitRightWidth") private var splitWidth: Double = 0
 	@State private var dragStartWidth: Double?
-	/// 분할이 없을 때 탭을 왼쪽 칸 오른쪽 절반으로 끌고 있으면: "오른쪽 분할로" 안내
-	@State private var splitDropHint = false
 
 	private enum PendingClose {
 		case left(String)
@@ -65,7 +63,7 @@ struct TabArea: View {
 					Divider()
 					TableInfoPanel(session: focusedSession, inspector: focusedSession.inspector(for: t), columns: focusedSession.columns[t.id] ?? [])
 						.id(t.id)
-						.frame(width: 400)
+						.frame(width: 340)
 						.transition(.move(edge: .trailing))
 				}
 			}
@@ -195,19 +193,6 @@ struct TabArea: View {
 		GeometryReader { geo in
 			ZStack(alignment: .top) {
 				leftTabs
-				// 탭을 오른쪽 절반으로 끌면 분할 자리 안내
-				if splitDropHint {
-					HStack(spacing: 0) {
-						Spacer(minLength: 0)
-						RoundedRectangle(cornerRadius: 8)
-							.fill(Color.accentColor.opacity(0.12))
-							.strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 2)
-							.overlay { Label("오른쪽 분할로 옮기기", systemImage: "rectangle.righthalf.inset.filled").foregroundStyle(Color.accentColor) }
-							.padding(6)
-							.frame(width: geo.size.width / 2)
-					}
-					.allowsHitTesting(false)
-				}
 				// 결과 보기: 위에서 아래로 스르륵 내려오고, 숨기면 위로 말려 올라간다 (탭바·표·하단바 통째로).
 				// 결과가 있는 동안은 결과 화면을 살려 두고 위치만 옮긴다 (보일 때마다 새로 만들면 100ms 씩 멈췄다)
 				if let q = session.queryPanel, q.open, !q.outputs.isEmpty {
@@ -219,12 +204,6 @@ struct TabArea: View {
 			}
 			.frame(width: geo.size.width, height: geo.size.height)
 			.clipped()
-			// 탭 놓기: 오른쪽 탭 → 왼쪽으로, 왼쪽 탭을 (분할이 없을 때) 오른쪽 절반에 → 오른쪽 분할로
-			.onDrop(of: [.utf8PlainText, .plainText], delegate: PaneDropDelegate(width: geo.size.width, splitExists: model.hasSplit, hint: $splitDropHint) { text, rightHalf in
-				guard let d = TabDrag(text) else { return }
-				if d.side == .right { model.unpark(d.parked) }
-				else if !model.hasSplit && rightHalf && d.parked.server == session.server?.id { model.park(d.parked.tab, from: session) }
-			})
 		}
 		// 칸 안 어디를 눌러도 초점은 이쪽 (AppKit 표가 마우스를 먹어서 SwiftUI 탭 제스처로는 못 받는다)
 		.background(PaneClickWatcher { if model.hasSplit { model.splitFocus = .left } })
@@ -253,6 +232,13 @@ struct TabArea: View {
 					ContentUnavailableView("테이블을 고르세요", systemImage: "tablecells",
 					                       description: Text("왼쪽 목록에서 누르면 탭으로 열립니다. ⌘F 로 테이블 이름, 코멘트, 컬럼을 찾을 수 있습니다."))
 				}
+			}
+			// 오른쪽 탭을 왼쪽 칸 본문에 놓으면 왼쪽 맨 뒤로.
+			// 분할은 탭 오른쪽 클릭으로만 만든다: 예전엔 왼쪽 탭을 오른쪽 절반에 끌면 분할이 생겼는데,
+			// 칸 전체에 건 놓기 처리가 탭바 위 놓기까지 가로채 탭 순서 바꾸기가 안 됐다 (사용자 지적)
+			.dropDestination(for: String.self) { items, _ in
+				guard let d = items.first.flatMap(TabDrag.init), d.side == .right else { return false }
+				return dropToLeft(items, before: nil)
 			}
 		}
 	}
@@ -418,7 +404,8 @@ struct TabBar: View {
 				        showSchema: needsSchema(id),
 				        focused: paneFocused,
 				        menu: [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
-				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : []),
+				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])
+				            + Self.orderMenu(session.data(tab: id)),
 				        clickable: !covered) {
 					session.selectTab(id)
 				} close: {
@@ -442,6 +429,12 @@ struct TabBar: View {
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		// 색 배경은 기본으로 안전 영역(제목바 밑)까지 번진다. 탭바 안에만 칠한다
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
+	}
+
+	/// 컬럼을 끌어 순서를 바꾼 탭이면 "컬럼 순서 복원"
+	static func orderMenu(_ d: TableData?) -> [TabMenuAction] {
+		guard let d, d.columnsMoved else { return [] }
+		return [TabMenuAction(title: "컬럼 순서 복원") { d.restoreColumns?() }]
 	}
 
 	/// 이 탭바에 서로 다른 DB 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름을 붙인다
@@ -478,7 +471,7 @@ struct ParkedTabBar: View {
 				        server: s?.server.map { srv in
 				            TabServer(name: p.server == currentServer ? nil : srv.displayName, color: srv.color.swiftUI)
 				        },
-				        menu: [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }]) {
+				        menu: [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }] + TabBar.orderMenu(s?.data(tab: p.tab))) {
 					model.focusParked(p)
 				} close: {
 					close(p)
@@ -497,20 +490,30 @@ struct ParkedTabBar: View {
 		.animation(.easeOut(duration: 0.18), value: model.parkedTabs)
 			Divider()
 			// 양쪽 표 세로 스크롤 맞추기 (같은 테이블을 DB·서버끼리 비교할 때)
+			let paused = leftCovered
 			Button { model.scrollSync.toggle() } label: {
 				Image(systemName: "arrow.up.and.down.and.sparkles")
 					.font(.system(size: 12, weight: .semibold))
-					.foregroundStyle(model.scrollSync ? Color.accentColor : Color.secondary)
+					.foregroundStyle(model.scrollSync && !paused ? Color.accentColor : Color.secondary)
 					.frame(width: 30, height: 30)
 					.contentShape(Rectangle())
 			}
 			.buttonStyle(.plain)
 			.padding(.horizontal, 3)
-			.help(model.scrollSync ? "양쪽 세로 스크롤 맞추기 켜짐 (누르면 끔)" : "양쪽 세로 스크롤 맞추기: 왼쪽·오른쪽 표를 같이 위아래로")
+			.disabled(paused)
+			.help(paused ? "쿼리 결과가 왼쪽을 덮고 있어 스크롤 맞추기를 잠시 멈췄습니다 (결과를 숨기면 다시 켜집니다)"
+			      : model.scrollSync ? "양쪽 세로 스크롤 맞추기 켜짐 (누르면 끔)" : "양쪽 세로 스크롤 맞추기: 왼쪽·오른쪽 표를 같이 위아래로")
+			.onChange(of: paused, initial: true) { model.scrollPaused = paused }
 		}
 		.frame(height: 36)
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
+	}
+
+	/// 쿼리 결과 화면이 왼쪽 칸을 덮고 있는지
+	private var leftCovered: Bool {
+		guard let q = model.current?.queryPanel else { return false }
+		return q.open && !q.outputs.isEmpty && q.resultsVisible
 	}
 
 	/// 오른쪽도 같은 규칙: 서로 다른 (서버, DB) 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름
@@ -594,35 +597,6 @@ final class ScrollLink {
 struct DropMarker: View {
 	var body: some View {
 		Rectangle().fill(Color.accentColor).frame(width: 3).padding(.vertical, 4)
-	}
-}
-
-/// 본문에 탭 놓기: 놓는 위치(왼쪽/오른쪽 절반)를 알아야 해서 dropDestination 대신 DropDelegate
-struct PaneDropDelegate: DropDelegate {
-	let width: CGFloat
-	let splitExists: Bool
-	@Binding var hint: Bool
-	let perform: (String, Bool) -> Void
-
-	func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.utf8PlainText, .plainText]) }
-
-	func dropUpdated(info: DropInfo) -> DropProposal? {
-		let on = !splitExists && info.location.x > width / 2
-		if hint != on { hint = on }
-		return DropProposal(operation: .move)
-	}
-
-	func dropExited(info: DropInfo) { hint = false }
-
-	func performDrop(info: DropInfo) -> Bool {
-		let right = info.location.x > width / 2
-		hint = false
-		guard let p = info.itemProviders(for: [.utf8PlainText, .plainText]).first else { return false }
-		_ = p.loadObject(ofClass: NSString.self) { obj, _ in
-			guard let s = obj as? String else { return }
-			DispatchQueue.main.async { perform(s, right) }
-		}
-		return true
 	}
 }
 

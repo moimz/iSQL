@@ -198,8 +198,30 @@ final class TableInspector {
 			: "ALTER TABLE \(table.quoted) DROP INDEX \(Self.ident(index.name))"
 	}
 
+	/// 인덱스 컬럼 한 칸: 이름, 접두 길이 "name(10)" → `name`(10), 식 "(…)" 은 그대로
+	static func indexPart(_ s: String) -> String {
+		if s.hasPrefix("(") { return s }
+		if let m = s.firstMatch(of: /^(.+)\((\d+)\)$/) { return ident(String(m.1)) + "(\(m.2))" }
+		return ident(s)
+	}
+
+	/// 인덱스 컬럼 칸의 컬럼 이름 (접두 길이를 뗀다. 식이면 nil)
+	static func indexColumnName(_ s: String) -> String? {
+		if s.hasPrefix("(") { return nil }
+		if let m = s.firstMatch(of: /^(.+)\((\d+)\)$/) { return String(m.1) }
+		return s
+	}
+
+	/// 인덱스 고치기: MySQL 에는 인덱스를 고치는 명령이 없어 지우기와 만들기를 한 ALTER 로 (중간에 실패해도 인덱스가 사라진 채 남지 않는다)
+	func editIndexSQL(_ old: IndexInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String?) -> String {
+		let drop = old.kind == .primary ? "DROP PRIMARY KEY" : "DROP INDEX \(Self.ident(old.name))"
+		let add = Self.addIndexSQL(table: table, kind: kind, name: name, columns: columns, parser: parser)
+		let prefix = "ALTER TABLE \(table.quoted) "
+		return prefix + drop + ", " + (add.hasPrefix(prefix) ? String(add.dropFirst(prefix.count)) : add)
+	}
+
 	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String? = nil) -> String {
-		let cols = columns.map(ident).joined(separator: ", ")
+		let cols = columns.map(indexPart).joined(separator: ", ")
 		let n = name.trimmingCharacters(in: .whitespaces)
 		let named = n.isEmpty ? "" : " " + ident(n)
 		switch kind {

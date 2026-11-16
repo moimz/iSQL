@@ -56,13 +56,14 @@ struct AddExportGroup: View {
 	/// nil 이면 − 는 흐리게 (고른 것이 없음)
 	var remove: (() -> Void)?
 	let exportHelp: String
+	var makeView: (() -> Void)? = nil
 	let export: () -> Void
 
 	var body: some View {
 		// [+ −] 알약 하나(사이 구분선 없이) + 내보내기 따로. ControlGroup 은 칸마다 구분선이 생겨 + | − | 내보내기 가 복잡했다 (사용자)
 		HStack(spacing: 8) {
 			AddRemovePill(addHelp: addHelp, add: add, showsRemove: showsRemove, removeHelp: removeHelp, remove: remove)
-			ExportButton(help: exportHelp, action: export)
+			ExportButton(help: exportHelp, makeView: makeView, action: export)
 		}
 		.fixedSize()
 	}
@@ -79,6 +80,8 @@ struct TableInfoPanel: View {
 	@State private var failure: String?
 	@State private var selectedIndex: String?
 	@State private var addingIndex = false
+	/// 고치는 인덱스 (두 번 누르기·오른쪽 클릭 "수정…")
+	@State private var editingIndex: IndexInfo?
 
 	var body: some View {
 		ScrollView {
@@ -113,6 +116,14 @@ struct TableInfoPanel: View {
 		.sheet(isPresented: $addingIndex) {
 			AddIndexSheet(table: inspector.table, columns: columns, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize) { sql in
+				Task { failure = await inspector.run(sql) }
+			}
+		}
+		.sheet(item: $editingIndex) { ix in
+			AddIndexSheet(table: inspector.table, columns: columns,
+			              hasPrimary: ix.kind != .primary && inspector.indexes.contains { $0.kind == .primary },
+			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize,
+			              editing: ix, inspector: inspector) { sql in
 				Task { failure = await inspector.run(sql) }
 			}
 		}
@@ -238,7 +249,20 @@ struct TableInfoPanel: View {
 				ForEach(inspector.indexes) { ix in
 					indexRow(ix)
 						.contentShape(Rectangle())
+						.onTapGesture(count: 2) {
+							selectedIndex = ix.name
+							if !inspector.table.isView && !inspector.applying { editingIndex = ix }
+						}
 						.onTapGesture { selectedIndex = ix.name }
+						.contextMenu {
+							Button("수정…") { selectedIndex = ix.name; editingIndex = ix }
+							Divider()
+							Button("삭제…") {
+								selectedIndex = ix.name
+								pending = ("인덱스 \(ix.name) 을(를) 지울까요?", inspector.dropIndexSQL(ix))
+							}
+						}
+						.disabled(inspector.table.isView)
 				}
 				Divider()
 				// 맥 목록 아래 [+][−] 처럼
@@ -322,6 +346,9 @@ struct AddIndexSheet: View {
 	/// 서버의 전문 검색 파서 (ngram 이 있으면 FULLTEXT 에 n-gram 선택)
 	var parsers: [String] = []
 	var ngramTokenSize: Int?
+	/// 고치는 인덱스 (nil 이면 새로 추가)
+	var editing: IndexInfo? = nil
+	var inspector: TableInspector? = nil
 	let add: (String) -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var kind: IndexInfo.Kind = .index
@@ -329,6 +356,24 @@ struct AddIndexSheet: View {
 	@State private var nameEdited = false
 	@State private var picked: [String] = []
 	@State private var ngram = false
+	@State private var prepared = false
+
+	/// 고칠 때: 처음 값으로 채운다
+	private func prepare() {
+		guard !prepared else { return }
+		prepared = true
+		guard let ix = editing else { return }
+		kind = ix.kind
+		picked = ix.columns
+		ngram = ix.parser == "ngram"
+		if ix.kind != .primary { name = ix.name; nameEdited = true }
+	}
+
+	private var unchanged: Bool {
+		guard let ix = editing else { return false }
+		return ix.kind == kind && ix.columns == picked && (ix.kind == .primary || ix.name == name)
+			&& (ix.parser == "ngram") == (canNgram && ngram)
+	}
 	private var canNgram: Bool { kind == .fulltext && parsers.contains("ngram") }
 
 	private var autoName: String {
@@ -337,13 +382,14 @@ struct AddIndexSheet: View {
 	}
 
 	private var sql: String {
-		TableInspector.addIndexSQL(table: table, kind: kind, name: nameEdited ? name : autoName, columns: picked,
-		                           parser: canNgram && ngram ? "ngram" : nil)
+		let n = nameEdited ? name : autoName, parser = canNgram && ngram ? "ngram" : nil
+		if let ix = editing, let inspector { return inspector.editIndexSQL(ix, kind: kind, name: n, columns: picked, parser: parser) }
+		return TableInspector.addIndexSQL(table: table, kind: kind, name: n, columns: picked, parser: parser)
 	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
-			Text("\(table.name) 에 인덱스 추가").font(.headline)
+			Text(editing.map { "\(table.name) 의 인덱스 \($0.kind == .primary ? "PRIMARY" : $0.name) 수정" } ?? "\(table.name) 에 인덱스 추가").font(.headline)
 			Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
 				GridRow {
 					Text("종류").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
@@ -373,7 +419,8 @@ struct AddIndexSheet: View {
 				ScrollView {
 					LazyVStack(alignment: .leading, spacing: 0) {
 						ForEach(columns) { c in
-							let order = picked.firstIndex(of: c.name)
+							// 접두 길이가 붙은 칸("name(10)")도 그 컬럼으로 본다
+							let order = picked.firstIndex { TableInspector.indexColumnName($0) == c.name }
 							Button {
 								if let order { picked.remove(at: order) } else { picked.append(c.name) }
 							} label: {
@@ -401,6 +448,10 @@ struct AddIndexSheet: View {
 				.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
 				.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
 			}
+			if picked.contains(where: { TableInspector.indexColumnName($0) == nil }) {
+				Text("식 인덱스 칸 \(picked.filter { TableInspector.indexColumnName($0) == nil }.joined(separator: ", ")) 은(는) 그대로 둡니다")
+					.font(.callout).foregroundStyle(.secondary)
+			}
 			Text(picked.isEmpty ? "컬럼을 고르세요" : sql)
 				.font(.callout.monospaced())
 				.foregroundStyle(.secondary)
@@ -410,17 +461,18 @@ struct AddIndexSheet: View {
 				Spacer()
 				Button("취소", role: .cancel) { dismiss() }
 					.keyboardShortcut(.cancelAction)
-				Button("추가") {
+				Button(editing == nil ? "추가" : "수정") {
 					dismiss()
 					add(sql)
 				}
 				.buttonStyle(.borderedProminent)
 				.keyboardShortcut(.defaultAction)
-				.disabled(picked.isEmpty)
+				.disabled(picked.isEmpty || unchanged)
 			}
 			.controlSize(.large)
 		}
 		.padding(20)
 		.frame(width: 420)
+		.onAppear(perform: prepare)
 	}
 }

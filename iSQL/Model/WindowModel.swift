@@ -15,7 +15,15 @@ final class WindowModel {
 	var splitFocus: SplitSide = .left
 	/// 양쪽 표 스크롤 맞추기 (오른쪽 탭바 끝 버튼)
 	var scrollSync = false {
-		didSet { scrollLink.enabled = scrollSync; if scrollSync { scrollLink.alignRightToLeft() } }
+		didSet { applyScrollLink() }
+	}
+	/// 쿼리 결과가 왼쪽 칸을 덮고 있으면 맞추기를 잠시 멈춘다 (가려진 표끼리 맞추면 풀린 것처럼 보였다)
+	var scrollPaused = false {
+		didSet { if scrollPaused != oldValue { applyScrollLink() } }
+	}
+	private func applyScrollLink() {
+		scrollLink.enabled = scrollSync && !scrollPaused
+		if scrollLink.enabled { scrollLink.alignRightToLeft() }
 	}
 	@ObservationIgnored let scrollLink = ScrollLink()
 

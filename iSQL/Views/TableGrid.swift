@@ -137,6 +137,12 @@ extension GridSource {
 	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
 }
 
+/// 컬럼을 끌어 순서를 바꾼 걸 알아 두고 되돌릴 수 있는 공급자 (데이터 탭)
+protocol ColumnOrderTracking: AnyObject {
+	var columnsMoved: Bool { get set }
+	var restoreColumns: (() -> Void)? { get set }
+}
+
 // MARK: - 공용 표
 
 /// 앱의 모든 표 (데이터, 구조, 앞으로 쿼리 결과). NSTableView: 세로선, 줄무늬, 줄 높이 24, 두 줄 대신 한 줄 제목.
@@ -247,13 +253,13 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			table.coordinator = self
 			table.style = .plain
 			table.usesAlternatingRowBackgroundColors = true
-			table.gridStyleMask = [.solidVerticalGridLineMask]
+			table.gridStyleMask = []
 			table.allowsMultipleSelection = true
 			table.allowsColumnReordering = true
 			table.columnAutoresizingStyle = .noColumnAutoresizing
 			table.rowHeight = 24
 			table.intercellSpacing = NSSize(width: 0, height: 0)
-			table.headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
+			table.headerView = GridHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: 28))
 			table.headerView?.menu = makeHeaderMenu()
 			table.target = self
 			table.doubleAction = #selector(doubleClicked(_:))
@@ -265,6 +271,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			table.reloadData()
 			lastVersion = source.gridVersion
 			syncRowDragging()
+			bindOrderTracking()
 			scroll.documentView = table
 			scroll.hasVerticalScroller = true
 			scroll.hasHorizontalScroller = true
@@ -277,6 +284,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSView.frameDidChangeNotification, object: table)
 			scroll.postsFrameChangedNotifications = true
 			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSView.frameDidChangeNotification, object: scroll)
+			nc.addObserver(self, selector: #selector(windowKeyChanged(_:)), name: NSWindow.didBecomeKeyNotification, object: nil)
+			nc.addObserver(self, selector: #selector(windowKeyChanged(_:)), name: NSWindow.didResignKeyNotification, object: nil)
 		}
 
 		deinit { NotificationCenter.default.removeObserver(self) }
@@ -290,6 +299,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				table.window?.makeFirstResponder(nil)
 				table.deselectAll(nil)
 				source = new
+				bindOrderTracking()
 				lastVersion = -1
 				refresh()
 				scroll.contentView.scroll(to: new.scrollOrigin)
@@ -366,7 +376,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			for c in table.tableColumns { table.removeTableColumn(c) }
 			for (i, col) in columns.enumerated() {
 				let tc = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(String(i)))
-				let cell = GridHeaderCell(textCell: col.title)
+				let cell = GridHeaderCell(textCell: Self.oneLine(col.title))
 				cell.representedObject = col.comment
 				cell.tag = col.isKey ? GridHeaderCell.keyBit : 0
 				tc.headerCell = cell
@@ -379,6 +389,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			}
 			applySortIndicator()
 			table.reloadData()
+			refreshGridLines()
+			noteColumnOrder()
 			if frozenCount > 0 { setFrozen(min(frozenCount, columns.count)) }
 		}
 
@@ -392,8 +404,13 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if frozenCount > 0 { rebuildFrozen() }
 		}
 
+		/// 제목 안 줄바꿈은 띄어쓰기로 (엑셀에서 가져온 컬럼 이름 등에 줄바꿈이 들어 있으면 제목이 두 줄로 그려졌다)
+		static func oneLine(_ s: String) -> String {
+			s.rangeOfCharacter(from: .newlines) == nil ? s : s.components(separatedBy: .newlines).filter { !$0.isEmpty }.joined(separator: " ")
+		}
+
 		private static func initialWidth(_ col: GridColumn) -> CGFloat {
-			let nameW = (col.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width
+			let nameW = (oneLine(col.title) as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width
 			let commentW = col.comment.isEmpty ? 0 : (col.comment as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 14
 			let w = nameW + commentW + 34
 			let byType: CGFloat = col.numeric ? 80 : (col.long ? 260 : 150)
@@ -418,13 +435,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			f.coordinator = self
 			f.style = .plain
 			f.usesAlternatingRowBackgroundColors = true
-			f.gridStyleMask = [.solidVerticalGridLineMask]
+			f.gridStyleMask = []
 			f.allowsMultipleSelection = true
 			f.allowsColumnReordering = false
 			f.columnAutoresizingStyle = .noColumnAutoresizing
 			f.rowHeight = table.rowHeight
 			f.intercellSpacing = table.intercellSpacing
-			f.headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: table.headerView?.frame.height ?? 28))
+			let fh = GridHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: table.headerView?.frame.height ?? 28))
+			fh.drawsBottomLine = true
+			// 제 층(layer)이 없으면 스크롤 뷰 층에 그려져 스크롤 뷰의 다른 층(가장자리 흐림) 밑에 깔려 검게 보였다
+			fh.wantsLayer = true
+			f.headerView = fh
 			let hm = makeMenu()
 			frozenHeaderMenu = hm
 			f.headerView?.menu = hm
@@ -435,6 +456,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			f.doubleAction = #selector(doubleClicked(_:))
 			f.verticalMotionCanBeginDrag = false
 			f.isFrozenPart = true
+			// 스크롤 뷰 밖에 떠 있는 표라 AppKit 이 표 둘레에 포커스 테두리를 그렸다
+			f.focusRingType = .none
 			// 맥 14 부터 뷰는 기본으로 영역 밖에도 그린다 → 고정 표 배경·경계선이 본 표를 덮었다
 			f.clipsToBounds = true
 			f.headerView?.clipsToBounds = true
@@ -446,16 +469,22 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		func setFrozen(_ n: Int) {
 			let n = max(0, min(n, table.numberOfColumns - 1 < 0 ? 0 : table.numberOfColumns))
 			frozenCount = n
+			applyResizing()
 			if n == 0 {
 				frozen.headerView?.removeFromSuperview()
 				frozen.removeFromSuperview()
+				frozenEdge.removeFromSuperview()
+				refreshEmphasis()
 				return
 			}
 			if frozen.superview == nil {
 				scroll.addFloatingSubview(frozen, for: .horizontal)
 			}
 			if let hv = frozen.headerView, hv.superview == nil { scroll.addSubview(hv) }
+			// 경계선은 머리·표 위에 (머리와 행이 따로 그리면 머리에서 끊겨 보였다)
+			if frozenEdge.superview == nil { scroll.addSubview(frozenEdge) }
 			rebuildFrozen()
+			refreshEmphasis()
 		}
 
 		/// 본 표의 왼쪽 n개 컬럼을 고정 표에 그대로 (같은 식별자라 칸 그리기·편집이 같은 길을 탄다)
@@ -521,15 +550,124 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				hv.frame = NSRect(x: r.minX, y: r.minY, width: width, height: r.height)
 				hv.needsDisplay = true
 			}
+			// 경계선: 머리 위부터 보이는 행 영역 아래까지, 고정 칸 오른쪽 끝에
+			let clip = scroll.contentView.convert(scroll.contentView.bounds, to: scroll)
+			let head = table.headerView?.superview.map { $0.convert($0.bounds, to: scroll) } ?? clip
+			let right = frozen.convert(NSRect(x: 0, y: 0, width: width, height: 1), to: scroll).maxX
+			frozenEdge.frame = NSRect(x: right - 1, y: min(head.minY, clip.minY), width: 1, height: max(head.maxY, clip.maxY) - min(head.minY, clip.minY))
+		}
+
+		/// 세로선(직접 그림) 다시 그리기 (한 번에 모아서)
+		private var gridLinesPending = false
+		private func refreshGridLines() {
+			guard !gridLinesPending else { return }
+			gridLinesPending = true
+			DispatchQueue.main.async { [self] in
+				gridLinesPending = false
+				for t in frozenCount > 0 ? [table, frozen] : [table] {
+					t.needsDisplay = true
+					t.headerView?.needsDisplay = true
+				}
+			}
+		}
+
+		/// 고정 칸 오른쪽 경계선 (어디까지 고정인지). 마우스는 밑으로 그대로 보낸다
+		private lazy var frozenEdge = GridEdgeLine()
+
+		/// 고정한 컬럼은 본 표 머리에서 너비를 못 바꾸게: 본 표의 그 경계는 고정 칸 밑에 가려져 있어서
+		/// 끌면(<|> 커서) 고정 칸 뒤에서 움직여 어색했다. 너비는 고정 칸 머리(<| 커서)에서만 바꾼다
+		private func applyResizing() {
+			for (i, tc) in table.tableColumns.enumerated() {
+				let mask: NSTableColumn.ResizingOptions = i < frozenCount ? [] : [.autoresizingMask, .userResizingMask]
+				if tc.resizingMask != mask { tc.resizingMask = mask }
+			}
+			if let hv = table.headerView { hv.window?.invalidateCursorRects(for: hv) }
+		}
+
+		// MARK: 선택색 (두 표를 한 표처럼)
+
+		/// 두 표 중 하나가 키 입력을 받고 있으면 둘 다 파란 선택색. AppKit 은 표마다 따로 정해서 고정 칸만 회색(비활성)으로 보였다
+		var groupFocused: Bool {
+			guard let w = table.window, w.isKeyWindow, let fr = w.firstResponder else { return false }
+			if fr === table || fr === frozen { return true }
+			if let v = fr as? NSView, v.isDescendant(of: table) || (frozenCount > 0 && v.isDescendant(of: frozen)) { return true }
+			return false
+		}
+
+		/// 고정이 있을 때만 선택색을 함께 정한다 (nil = AppKit 에 맡김)
+		var emphasisOverride: Bool? { frozenCount > 0 ? groupFocused : nil }
+
+		func refreshEmphasis() {
+			DispatchQueue.main.async { [self] in
+				for t in frozenCount > 0 ? [table, frozen] : [table] {
+					t.enumerateAvailableRowViews { rv, _ in
+						rv.isEmphasized = emphasisOverride ?? (self.groupFocused && t === self.table)
+					}
+				}
+			}
+		}
+
+		@objc private func windowKeyChanged(_ n: Notification) {
+			guard frozenCount > 0, (n.object as? NSWindow) === table.window else { return }
+			refreshEmphasis()
+		}
+
+		func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+			let id = NSUserInterfaceItemIdentifier("row")
+			let rv = tableView.makeView(withIdentifier: id, owner: nil) as? GridRowView ?? GridRowView()
+			rv.identifier = id
+			rv.controller = self
+			return rv
+		}
+
+		/// 고정 칸 경계를 넘는 컬럼 끌기는 막는다 (고정 칸 안으로 끌어 넣으면 두 표의 컬럼이 꼬였다)
+		func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+			guard tableView === table, frozenCount > 0 else { return true }
+			if columnIndex < frozenCount { return false }
+			return newColumnIndex < 0 || newColumnIndex >= frozenCount
+		}
+
+		// MARK: 컬럼 순서
+
+		private func bindOrderTracking() {
+			(source as? ColumnOrderTracking)?.restoreColumns = { [weak self] in self?.restoreColumnOrder() }
+		}
+
+		/// 처음 순서와 다른지 (식별자가 공급자 컬럼 번호)
+		private var columnsOutOfOrder: Bool {
+			table.tableColumns.enumerated().contains { $0.element.identifier.rawValue != String($0.offset) }
+		}
+
+		private func noteColumnOrder() {
+			guard let t = source as? ColumnOrderTracking else { return }
+			let moved = columnsOutOfOrder
+			if t.columnsMoved != moved { t.columnsMoved = moved }
+		}
+
+		/// 컬럼을 처음 순서로 (고정은 잠깐 풀었다가 같은 수로 다시)
+		func restoreColumnOrder() {
+			let f = frozenCount
+			if f > 0 { setFrozen(0) }
+			for i in 0..<table.numberOfColumns {
+				if let cur = table.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(i) }), cur != i {
+					table.moveColumn(cur, toColumn: i)
+				}
+			}
+			if f > 0 { setFrozen(f) }
+			noteColumnOrder()
 		}
 
 		@objc private func mainColumnsChanged(_ n: Notification) {
+			if n.name == NSTableView.columnDidMoveNotification { noteColumnOrder() }
+			// 너비·순서가 바뀌면 표 전체를 다시 그린다: 바뀐 곳만 다시 그려서 예전 자리 세로선이 남았다
+			if n.name != NSView.frameDidChangeNotification { refreshGridLines() }
 			guard frozenCount > 0 else { return }
 			rebuildFrozen()
 		}
 
 		/// 고정 표에서 너비를 끌면 본 표의 같은 컬럼도 (밑에 깔린 칸과 어긋나지 않게)
 		@objc private func frozenColumnResized(_ n: Notification) {
+			refreshGridLines()
 			for f in frozen.tableColumns {
 				if let m = table.tableColumns.first(where: { $0.identifier == f.identifier }), m.width != f.width { m.width = f.width }
 			}
@@ -980,7 +1118,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 /// ⌫ 로 행 삭제, ⌘C 로 선택 행 복사(탭 구분), 엔터로 고치기
 final class GridTableView: NSTableView {
 	weak var coordinator: GridController?
-	/// 컬럼 고정용 표 (오른쪽 끝에 경계선을 진하게)
+	/// 컬럼 고정용 표
 	var isFrozenPart = false
 	/// 고정 표의 최소 높이 (본 표만큼)
 	var minimumHeight: CGFloat = 0
@@ -1010,19 +1148,20 @@ final class GridTableView: NSTableView {
 			clipRect.intersection(bounds).fill()
 		}
 		super.drawBackground(inClipRect: clipRect)
+		drawColumnLines(in: clipRect)
 	}
 
-	/// 마지막 컬럼 오른쪽에도 세로선 (없으면 칸이 거기서 잘린 건지 알기 어려웠다)
-	override func drawGrid(inClipRect clipRect: NSRect) {
-		super.drawGrid(inClipRect: clipRect)
-		guard numberOfColumns > 0 else { return }
-		let x = rect(ofColumn: numberOfColumns - 1).maxX
-		// 고정 표는 경계를 두 줄 굵기로 (어디까지 고정인지 보이게)
-		let w: CGFloat = isFrozenPart ? 2 : 1
-		let line = NSRect(x: x - w, y: clipRect.minY, width: w, height: clipRect.height)
-		guard line.intersects(clipRect) else { return }
-		(isFrozenPart ? NSColor.separatorColor.withAlphaComponent(1) : gridColor).setFill()
-		line.fill()
+	/// 세로선은 직접 그린다 (마지막 컬럼 오른쪽까지). 맥 26 의 세로선(gridStyleMask)은 따로 된 뷰라
+	/// 컬럼을 옮기거나 너비를 바꾸면 예전 자리에 남아 칸과 어긋났다
+	func drawColumnLines(in clipRect: NSRect, offsetX: CGFloat = 0) {
+		gridColor.setFill()
+		var x: CGFloat = -offsetX
+		for c in tableColumns {
+			x += c.width + intercellSpacing.width
+			let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
+			if line.minX > clipRect.maxX { break }
+			if line.intersects(clipRect) { line.fill() }
+		}
 	}
 
 	override func keyDown(with event: NSEvent) {
@@ -1041,6 +1180,77 @@ final class GridTableView: NSTableView {
 	}
 
 	@objc func copy(_ sender: Any?) { coordinator?.copySelection() }
+
+	override func becomeFirstResponder() -> Bool {
+		let ok = super.becomeFirstResponder()
+		coordinator?.refreshEmphasis()
+		return ok
+	}
+
+	override func resignFirstResponder() -> Bool {
+		let ok = super.resignFirstResponder()
+		coordinator?.refreshEmphasis()
+		return ok
+	}
+}
+
+/// 행 배경. 고정이 있으면 선택색(파랑/회색)을 두 표가 함께 정한다
+final class GridRowView: NSTableRowView {
+	weak var controller: GridController?
+
+	/// 행 배경(줄무늬)이 표가 그린 세로선을 덮는 행이 있어서 행 위에도 같은 자리에 그린다
+	override func drawBackground(in dirtyRect: NSRect) {
+		super.drawBackground(in: dirtyRect)
+		// 반투명 줄무늬 행은 밑의 선이 비쳐서 또 그리면 두 겹으로 진해진다
+		guard (backgroundColor.usingColorSpace(.sRGB)?.alphaComponent ?? 1) >= 0.99 else { return }
+		(superview as? GridTableView)?.drawColumnLines(in: NSRect(x: dirtyRect.minX, y: 0, width: dirtyRect.width, height: bounds.height), offsetX: frame.minX)
+	}
+	override var isEmphasized: Bool {
+		get { super.isEmphasized }
+		set { super.isEmphasized = controller?.emphasisOverride ?? newValue }
+	}
+}
+
+/// 고정 칸 오른쪽 경계선. 일반 세로선보다 조금 진하게 (흰 2pt 선은 너무 튀었다). 마우스는 받지 않는다
+final class GridEdgeLine: NSView {
+	static let color = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.28) : NSColor(white: 0, alpha: 0.25)
+	}
+	override init(frame: NSRect) { super.init(frame: frame); wantsLayer = true }
+	required init?(coder: NSCoder) { fatalError() }
+	override func hitTest(_ point: NSPoint) -> NSView? { nil }
+	override func draw(_ dirtyRect: NSRect) {
+		Self.color.setFill()
+		bounds.fill()
+	}
+}
+
+/// 컬럼 머리 줄. 배경을 직접 칠한다: 맥 26 은 머리 배경을 스크롤 가장자리 효과(흐림)로 그리는데
+/// 고정 칸 머리는 그 효과 밖이라 검게 나왔고, 본 표 머리도 가끔 검게 나와 컬럼 구분선이 안 보였다(가로 스크롤하면 돌아옴)
+final class GridHeaderView: NSTableHeaderView {
+	static let background = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 45 / 255, green: 46 / 255, blue: 48 / 255, alpha: 1) : NSColor(white: 0.965, alpha: 1)
+	}
+	/// 아래 경계선 (고정 칸 머리: 본 표 머리는 스크롤 가장자리 효과가 그린다)
+	var drawsBottomLine = false
+
+	override var wantsUpdateLayer: Bool { false }
+
+	override func draw(_ dirtyRect: NSRect) {
+		Self.background.setFill()
+		dirtyRect.intersection(bounds).fill()
+		// 컬럼을 끄는 중이면 AppKit 이 끄는 컬럼을 옮겨 그린다
+		guard draggedColumn < 0, let tv = tableView else { super.draw(dirtyRect); return }
+		// 나머지는 직접: AppKit 은 배경을 투명하게 지우고 그려서 밑이 비면 검게 나왔다 (컬럼 구분선은 AppKit 이 따로 얹는다)
+		for (i, tc) in tv.tableColumns.enumerated() {
+			let r = headerRect(ofColumn: i)
+			if r.intersects(dirtyRect) { tc.headerCell.drawInterior(withFrame: r, in: self) }
+		}
+		if drawsBottomLine {
+			NSColor.gridColor.setFill()
+			NSRect(x: dirtyRect.minX, y: isFlipped ? bounds.maxY - 1 : bounds.minY, width: dirtyRect.width, height: 1).fill()
+		}
+	}
 }
 
 /// 컬럼 머리: [키]이름 ··· 코멘트. 둘 다 들어갈 너비가 아니면 이름만 (코멘트는 툴팁)

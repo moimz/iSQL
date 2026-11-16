@@ -328,7 +328,7 @@ final class QueryResultSource: GridSource {
 		// 같은 컬럼이 두 번 나오면(SELECT a, a) 첫 번째만 고친다
 		var seen = Set<String>()
 		editableCols = Set(cols.indices.filter { i in
-			cols[i].orgTable == t.name && !cols[i].orgName.isEmpty && seen.insert(cols[i].orgName).inserted
+			cols[i].orgTable == t.name && !cols[i].orgName.isEmpty && !cols[i].isBinary && seen.insert(cols[i].orgName).inserted
 		})
 		keyCols = keys
 		editTable = t

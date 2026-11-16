@@ -38,6 +38,18 @@ enum SQLCompleter {
 		GROUP_CONCAT JSON_EXTRACT JSON_UNQUOTE CAST CONVERT MD5 SHA2 UUID
 		""".split(separator: " ").map(String.init)
 
+	/// 테이블 이름 뒤(FROM big ▮)에 올 낱말
+	static let clauseKeywords = ["WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "CROSS JOIN", "ON", "USING",
+	                             "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "AS", "SET", "UNION"]
+
+	/// 고르면 뒤에 띄어쓰기를 붙이지 않을 키워드 (보통 뒤에 , ) ; 가 온다)
+	private static let noSpaceAfter: Set<String> = ["NULL", "ASC", "DESC", "END", "COMMIT", "ROLLBACK"]
+
+	/// 키워드는 고르면 뒤에 띄어쓰기까지 (SELECT ▮). DB·테이블은 뒤에 . 을 찍는 일이 많아 붙이지 않는다
+	static func keywordItem(_ k: String) -> CompletionItem {
+		CompletionItem(kind: .keyword, insert: noSpaceAfter.contains(k) ? k : k + " ", label: k, detail: "", comment: "")
+	}
+
 	private static let reserved: Set<String> = Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC", "RANGE", "READ", "WRITE", "RANK"])
 
 	/// 이름이 그대로 쓸 수 있는 식별자면 그대로, 아니면 백틱
@@ -116,6 +128,13 @@ enum SQLCompleter {
 		let refs = tableRefs(statement, session: session, defaultDB: defaultDB)
 		let before = s.substring(with: NSRange(location: min(stmtStart, q), length: q - min(stmtStart, q)))
 		let context = lastKeyword(before)
+		// FROM·JOIN 뒤에 테이블(과 별칭)을 이미 쳤고 띄어 쓴 뒤 (FROM big wh▮, FROM big a j▮): WHERE·JOIN 같은 다음 낱말
+		let afterTable: Bool = {
+			guard qualifiers.isEmpty, ["FROM", "JOIN"].contains(context) else { return false }
+			let trimmed = before.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard let last = trimmed.last, last != ",", last != "(" else { return false }
+			return !trimmed.uppercased().hasSuffix(context) && before.last?.isWhitespace == true
+		}()
 		var items: [CompletionItem] = []
 
 		func columns(of t: TableInfo) -> [CompletionItem] {
@@ -141,6 +160,7 @@ enum SQLCompleter {
 			}
 		} else {
 			let wantsTable = ["FROM", "JOIN", "UPDATE", "INTO", "TABLE", "DESCRIBE", "DESC", "TRUNCATE"].contains(context)
+			if afterTable { items += clauseKeywords.map(keywordItem) }
 			if !wantsTable {
 				var seen = Set<String>()
 				for r in refs where seen.insert(r.table.id).inserted { items += columns(of: r.table) }
@@ -150,7 +170,7 @@ enum SQLCompleter {
 			}
 			items += session.databases.map { CompletionItem(kind: .database, insert: ident($0), label: $0, detail: "DB", comment: "") }
 			if !wantsTable {
-				items += keywords.map { CompletionItem(kind: .keyword, insert: $0, label: $0, detail: "", comment: "") }
+				items += keywords.map(keywordItem)
 				items += functions.map { CompletionItem(kind: .function, insert: $0 + "(", label: $0 + "()", detail: "함수", comment: "") }
 			}
 			if context == "USE" { items = items.filter { $0.kind == .database } }
@@ -160,6 +180,7 @@ enum SQLCompleter {
 		let p = prefix.lowercased()
 		let wantsTable = qualifiers.isEmpty && ["FROM", "JOIN", "UPDATE", "INTO", "TABLE", "DESCRIBE", "DESC", "TRUNCATE"].contains(context)
 		func kindOrder(_ k: CompletionItem.Kind) -> Int {
+			if afterTable { return k == .keyword ? 0 : (k == .table || k == .view ? 1 : 3) }
 			switch k {
 			case .column: return wantsTable ? 5 : 0
 			case .table, .view: return wantsTable ? 0 : 1
@@ -178,7 +199,7 @@ enum SQLCompleter {
 			else if !it.comment.isEmpty, it.comment.lowercased().contains(p) { rank = 2 }
 			else { continue }
 			// 다른 DB 의 같은 이름 테이블은 따로, 같은 이름 키워드·함수(LEFT 등)는 하나만
-			let key = "\(it.kind == .function ? "f" : "x")|\(it.insert)"
+			let key = "\(it.kind == .function ? "f" : "x")|\(it.insert.trimmingCharacters(in: .whitespaces))"
 			guard seen.insert(key).inserted else { continue }
 			// 다른 DB 테이블은 지금 DB 것보다 뒤로
 			let far = (it.kind == .table || it.kind == .view) && it.insert.contains(".") ? 1 : 0

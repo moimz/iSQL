@@ -5,7 +5,7 @@ import Observation
 /// 테이블 데이터 한 쪽(페이지)과 아직 저장하지 않은 변경.
 /// 셀을 고쳐도 바로 DB 에 쓰지 않는다. 변경은 색으로 보여 주고, 저장(⌘S)할 때 한 트랜잭션으로 반영한다.
 @Observable
-final class TableData {
+final class TableData: ColumnOrderTracking {
 	let table: TableInfo
 	/// 이 데이터가 붙은 탭 id (같은 테이블을 두 탭에 열면 탭마다 따로)
 	let tab: String
@@ -37,6 +37,10 @@ final class TableData {
 	var showFilter = false
 	/// 표 스크롤 위치 (표 하나를 탭들이 돌려 쓰므로 탭마다 기억)
 	@ObservationIgnored var scrollOrigin: CGPoint = .zero
+	/// 표에서 컬럼을 끌어 순서를 바꿨는지 (탭 메뉴 "컬럼 순서 복원")
+	var columnsMoved = false
+	/// 표가 걸어 두는 순서 되돌리기
+	@ObservationIgnored var restoreColumns: (() -> Void)?
 
 	/// 구조 편집 (구조 화면을 처음 볼 때 만든다)
 	@ObservationIgnored private var structureStore: StructureEditor?
@@ -491,6 +495,9 @@ extension TableData: GridSource {
 	}
 
 	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
+
+	/// 바이너리(BLOB·BINARY) 칸은 고치지 않는다: 보이는 글자는 "(6 바이트)" 같은 표시라 고치면 그 글자로 덮어썼다
+	func isEditable(_ row: Int, _ col: Int) -> Bool { !(columns.indices.contains(col) && columns[col].isBinary) }
 
 	/// TEXT·JSON 칸은 칸 안이 아니라 시트에서 여러 줄로 고친다
 	func opensEditor(_ row: Int, _ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isLongText }

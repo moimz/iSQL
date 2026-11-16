@@ -156,13 +156,28 @@ final class ExcelImportJob {
 		guard header, let first = raw.first else { return (0..<n).map(Self.letter) }
 		var used = Set<String>()
 		return (0..<n).map { i in
-			var name = (i < first.count ? Self.text(first[i]) : nil)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+			var name = Self.columnName(i < first.count ? Self.text(first[i]) : nil)
 			if name.isEmpty { name = "column_\(i + 1)" }
 			var unique = name, k = 2
-			while used.contains(unique.lowercased()) { unique = "\(name)_\(k)"; k += 1 }
+			while used.contains(unique.lowercased()) {
+				let tail = "_\(k)"
+				unique = String(name.prefix(Self.maxNameLength - tail.count)) + tail
+				k += 1
+			}
 			used.insert(unique.lowercased())
 			return unique
 		}
+	}
+
+	/// MySQL 컬럼 이름 길이 한도
+	static let maxNameLength = 64
+
+	/// 엑셀 제목 칸 → 컬럼 이름: 칸 안 줄바꿈·탭은 띄어쓰기 하나로 (그대로 두면 이름이 두 줄인 컬럼이 생겼다),
+	/// 앞뒤 공백은 빼고(MySQL 은 끝 공백 이름을 거부한다), 64자까지
+	static func columnName(_ raw: String?) -> String {
+		guard let raw else { return "" }
+		let words = raw.components(separatedBy: CharacterSet.whitespacesAndNewlines.union(.controlCharacters)).filter { !$0.isEmpty }
+		return String(words.joined(separator: " ").prefix(maxNameLength)).trimmingCharacters(in: .whitespaces)
 	}
 
 	enum Kind: Equatable { case int, bigint, decimal(Int, Int), double, date, datetime, varchar(Int), text }
