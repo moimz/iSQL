@@ -261,109 +261,87 @@ struct NameAndComment: View {
 	}
 }
 
-/// 테이블 구조: 컬럼, 코멘트, 타입, NULL, 기본값, 기타. 데이터와 같은 공용 표(TableGrid)에 구조 공급자를 끼운다
-struct TableStructureView: View {
+/// 구조 화면: 컬럼 표(두 번 눌러 고치기, 끌어서 순서 바꾸기, ⌫ 지우기) + 아래 줄.
+/// 바꾼 것은 모았다가 저장(⌘S) 때 ALTER TABLE 하나로 반영한다
+struct StructureBody: View {
+	let session: Session
 	let table: TableInfo
-	let columns: [ColumnInfo]
-	@State private var source: StructureSource
-
-	init(table: TableInfo, columns: [ColumnInfo]) {
-		self.table = table
-		self.columns = columns
-		// 처음부터 목록을 넣는다 (뜬 뒤에 넣으면 표가 다시 안 그려졌다)
-		_source = State(initialValue: StructureSource(columns))
-	}
+	let data: TableData
+	let editor: StructureEditor
+	@State private var selection = IndexSet()
 
 	var body: some View {
-		TableGrid(source: source)
-			.onChange(of: columns) { source.update(columns) }
-	}
-}
-
-/// 구조 공급자: 읽기 전용, 정렬은 앱 안에서. gridVersion 이 바뀌면 표가 다시 그려지게 관찰 가능
-@Observable
-final class StructureSource: GridSource {
-	init(_ columns: [ColumnInfo]) {
-		all = columns
-		resort()
-	}
-
-	@ObservationIgnored var scrollOrigin: CGPoint = .zero
-	@ObservationIgnored private var all: [ColumnInfo] = []
-	@ObservationIgnored private var rows: [ColumnInfo] = []
-	@ObservationIgnored private var sortState: (key: String, ascending: Bool)?
-	private(set) var gridVersion = 0
-
-	func update(_ columns: [ColumnInfo]) {
-		guard columns != all else { return }
-		all = columns
-		resort()
-	}
-
-	var gridID: String { "structure" }
-
-	@ObservationIgnored let gridColumns: [GridColumn] = [
-		GridColumn(key: "name", title: "컬럼", mono: true, width: 200),
-		GridColumn(key: "comment", title: "코멘트", width: 240),
-		GridColumn(key: "type", title: "타입", mono: true, width: 160),
-		GridColumn(key: "null", title: "NULL", center: true, width: 50),
-		GridColumn(key: "default", title: "기본값", width: 120),
-		GridColumn(key: "extra", title: "기타", width: 160),
-	]
-
-	var rowCount: Int { rows.count }
-
-	private static let keyIcons: [String: NSImage] = {
-		func icon(_ name: String, _ color: NSColor) -> NSImage? {
-			NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-				.withSymbolConfiguration(.init(pointSize: 10, weight: .semibold).applying(.init(paletteColors: [color])))
+		VStack(spacing: 0) {
+			TableGrid(source: editor) { selection = $0 }
+			if editor.hasChanges || editor.saveError != nil {
+				changesBar
+			} else {
+				Divider()
+				footer
+			}
 		}
-		var d: [String: NSImage] = [:]
-		d["PRI"] = icon("key.fill", .systemYellow)
-		d["UNI"] = icon("key", .secondaryLabelColor)
-		d["MUL"] = icon("line.3.horizontal.decrease", .secondaryLabelColor)
-		return d
-	}()
-
-	func cell(_ row: Int, _ col: Int) -> GridCell {
-		let c = rows[row]
-		switch gridColumns[col].key {
-		case "name": return GridCell(text: c.name, icon: Self.keyIcons[c.key])
-		case "comment": return GridCell(text: c.comment)
-		case "type": return GridCell(text: c.type, dim: true)
-		case "null": return GridCell(text: c.nullable ? "예" : "")
-		case "default": return GridCell(text: c.defaultValue ?? (c.nullable ? "NULL" : ""), dim: c.defaultValue == nil)
-		default: return GridCell(text: c.extra, dim: true)
+		.task(id: table.id) { if !editor.loaded { await editor.load() } }
+		// 다른 곳(쿼리 패널·테이블 정보)에서 구조가 바뀌면 다시 읽는다. 고치던 게 있으면 그대로 둔다
+		.onChange(of: session.columns[table.id] ?? []) {
+			if !editor.hasChanges && !editor.saving { Task { await editor.load() } }
+		}
+		.sheet(isPresented: Bindable(editor).showSQL) {
+			SQLPreview(statements: [(editor.alterSQL ?? "") + ";"], title: "저장하면 ALTER TABLE 하나로 실행됩니다", transaction: false)
 		}
 	}
 
-	var currentSort: (key: String, ascending: Bool)? { sortState }
-
-	func sort(by key: String?, ascending: Bool) -> Bool {
-		sortState = key.map { ($0, ascending) }
-		resort()
-		return true
+	private var footer: some View {
+		HStack(spacing: 10) {
+			AddExportGroup(addHelp: table.isView ? "뷰에는 컬럼을 추가할 수 없습니다" : "컬럼 추가 (고른 줄 아래에)",
+			               add: table.isView ? nil : { editor.addColumn(after: selection.last) },
+			               exportHelp: "테이블 내보내기") {
+				session.requestExport(.table(table.schema, TableStat(table)))
+			}
+			if !table.isView {
+				Text("두 번 눌러 고치기 · 끌어서 순서 바꾸기 · ⌫ 지우기").foregroundStyle(.tertiary).lineLimit(1)
+			}
+			Spacer()
+			Text("컬럼 \(editor.rowCount)개").foregroundStyle(.secondary).monospacedDigit()
+		}
+		.controlSize(.large)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 8)
 	}
 
-	private func resort() {
-		rows = all
-		if let s = sortState {
-			func v(_ c: ColumnInfo) -> String {
-				switch s.key {
-				case "comment": c.comment
-				case "type": c.type
-				case "null": c.nullable ? "1" : "0"
-				case "default": c.defaultValue ?? ""
-				case "extra": c.extra
-				default: c.name
+	/// 저장 안 한 구조 변경 (데이터 보기의 저장 바와 같은 모양)
+	private var changesBar: some View {
+		VStack(alignment: .leading, spacing: 6) {
+			if let err = editor.saveError {
+				Label(err, systemImage: "xmark.octagon.fill")
+					.foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+			} else if let p = editor.problem {
+				Label(p, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+			}
+			HStack(spacing: 10) {
+				AddExportGroup(addHelp: "컬럼 추가 (고른 줄 아래에)", add: { editor.addColumn(after: selection.last) },
+				               exportHelp: "테이블 내보내기") {
+					session.requestExport(.table(table.schema, TableStat(table)))
 				}
-			}
-			rows.sort { a, b in
-				let r = v(a).localizedStandardCompare(v(b))
-				return s.ascending ? r == .orderedAscending : r == .orderedDescending
+				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+				Text("저장 안 된 구조 변경 \(editor.changeCount)건").font(.headline)
+				Spacer()
+				Button("SQL 미리보기") { editor.showSQL = true }
+					.disabled(!editor.hasChanges)
+				Button("되돌리기") { editor.discard() }
+				Button {
+					Task { await data.saveStructure() }
+				} label: {
+					if editor.saving { ProgressView().controlSize(.small) } else { Text("저장  ⌘S") }
+				}
+				.buttonStyle(.borderedProminent)
+				.disabled(editor.saving || !editor.hasChanges || editor.problem != nil)
 			}
 		}
-		gridVersion += 1
+		.controlSize(.large)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 10)
+		.background(Color.yellow.opacity(0.18), ignoresSafeAreaEdges: [])
+		.overlay(alignment: .top) { Rectangle().fill(Color.orange.opacity(0.5)).frame(height: 1) }
 	}
 }
 

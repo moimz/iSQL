@@ -158,7 +158,10 @@ struct TabArea: View {
 				Button("") { move(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
 				Button("") { move(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
 				// ⌘S 저장, ⌘1 데이터, ⌘2 구조, ⌥⌘F 조건 줄
-				Button("") { if let d = active { Task { await d.saveIfNeeded() } } }.keyboardShortcut("s")
+				Button("") {
+					guard let d = active else { return }
+					Task { if d.mode == .structure { await d.saveStructure() } else { await d.saveIfNeeded() } }
+				}.keyboardShortcut("s")
 				Button("") { active?.mode = .data }.keyboardShortcut("1")
 				Button("") { active?.mode = .structure }.keyboardShortcut("2")
 				Button("") {

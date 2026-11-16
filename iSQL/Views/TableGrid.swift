@@ -87,6 +87,20 @@ protocol GridSource: AnyObject {
 	var scrollOrigin: CGPoint { get set }
 	/// 편집할 수 없는 표에서 행을 두 번 누르면 (DB 개요: 그 테이블 열기)
 	func activateRow(_ row: Int)
+
+	/// 칸마다 고칠 수 있는지 (canEdit 인 표에서)
+	func isEditable(_ row: Int, _ col: Int) -> Bool
+	/// 두 번 누르면 글자 입력 대신 고르기 메뉴를 띄울 칸의 항목 (nil = 구분선). 고르면 setText
+	func choices(_ row: Int, _ col: Int) -> [String?]?
+	/// 고르기 메뉴에서 체크할 항목
+	func currentChoice(_ row: Int, _ col: Int) -> String?
+	/// 제목을 눌러 정렬하는 표인지 (구조 편집은 줄 순서가 곧 컬럼 순서라 정렬하지 않는다)
+	var sortable: Bool { get }
+	/// 줄을 끌어 옮길 수 있는지
+	var canMoveRows: Bool { get }
+	func moveRows(_ rows: IndexSet, to: Int)
+	/// 공급자가 표에게 맡긴 편집 시작 (새 줄의 이름 칸 등). 한 번 꺼내면 사라진다
+	func takeEditRequest() -> (row: Int, col: Int)?
 }
 
 extension GridSource {
@@ -99,6 +113,13 @@ extension GridSource {
 	var cellMenuFirst: Bool { false }
 	func deleteRows(_ rows: IndexSet) -> Bool { false }
 	func activateRow(_ row: Int) {}
+	func isEditable(_ row: Int, _ col: Int) -> Bool { true }
+	func choices(_ row: Int, _ col: Int) -> [String?]? { nil }
+	func currentChoice(_ row: Int, _ col: Int) -> String? { nil }
+	var sortable: Bool { true }
+	var canMoveRows: Bool { false }
+	func moveRows(_ rows: IndexSet, to: Int) {}
+	func takeEditRequest() -> (row: Int, col: Int)? { nil }
 }
 
 // MARK: - 공용 표
@@ -217,6 +238,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			table.dataSource = self
 			table.reloadData()
 			lastVersion = source.gridVersion
+			table.registerForDraggedTypes([Self.rowDragType])
+			table.draggingDestinationFeedbackStyle = .gap
 			scroll.documentView = table
 			scroll.hasVerticalScroller = true
 			scroll.hasHorizontalScroller = true
@@ -247,6 +270,14 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				// 고치는 중인 칸이 있으면 다시 읽지 않는다 (입력이 날아감)
 				if table.currentEditor() == nil { table.reloadData() }
 				applySortIndicator()
+			}
+			if let req = source.takeEditRequest(), req.row < table.numberOfRows {
+				// 새 줄: 보이게 하고 고르고 편집 시작 (화면에 붙은 뒤에)
+				DispatchQueue.main.async { [self] in
+					table.scrollRowToVisible(req.row)
+					table.selectRowIndexes([req.row], byExtendingSelection: false)
+					if let ci = table.tableColumns.firstIndex(where: { colIndex($0) == req.col }) { beginEditing(row: req.row, column: ci) }
+				}
 			}
 		}
 
@@ -282,7 +313,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				tc.headerCell = cell
 				tc.headerToolTip = col.comment.isEmpty ? col.title : "\(col.title)\n\(col.comment)"
 				// 제목을 누르면 정렬 (어떻게 할지는 공급자가 정한다)
-				tc.sortDescriptorPrototype = NSSortDescriptor(key: col.key, ascending: true)
+				tc.sortDescriptorPrototype = source.sortable ? NSSortDescriptor(key: col.key, ascending: true) : nil
 				tc.width = col.width ?? Self.initialWidth(col)
 				tc.minWidth = 40
 				table.addTableColumn(tc)
@@ -452,7 +483,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// 그 칸만 편집 가능하게 바꾸고 편집을 시작한다
 		func beginEditing(row: Int, column: Int) {
 			guard source.canEdit, row >= 0, row < table.numberOfRows, column >= 0, column < table.numberOfColumns else { return }
-			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted else { NSSound.beep(); return }
+			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted,
+			      source.isEditable(row, col) else { NSSound.beep(); return }
+			if let items = source.choices(row, col) {
+				showChoices(items, row: row, column: column, col: col)
+				return
+			}
 			if let field = table.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTextField {
 				field.isEditable = true
 				field.isSelectable = true
@@ -469,8 +505,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			// Tab / Shift+Tab: 옆 칸 편집으로 (옆 칸이 평소 편집 불가라 AppKit 이 알아서 넘어가지 않는다)
 			let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap { NSTextMovement(rawValue: $0) }
 			defer {
-				if movement == .tab { DispatchQueue.main.async { self.beginEditing(row: row, column: ci + 1) } }
-				if movement == .backtab { DispatchQueue.main.async { self.beginEditing(row: row, column: ci - 1) } }
+				if movement == .tab, let next = nextTextColumn(row: row, from: ci, step: 1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next) } }
+				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next) } }
 			}
 			let old = source.cell(row, col).text
 			let typed = field.stringValue
@@ -479,6 +515,76 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if typed == (old?.replacingOccurrences(of: "\n", with: "⏎") ?? "") { return }
 			source.setText(row, col, typed.replacingOccurrences(of: "⏎", with: "\n"))
 			table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+		}
+
+		/// Tab 으로 옮겨 갈 옆 글자 칸 (고르기 칸·못 고치는 칸은 건너뛴다)
+		private func nextTextColumn(row: Int, from: Int, step: Int) -> Int? {
+			var c = from + step
+			while c >= 0 && c < table.numberOfColumns {
+				if let col = colIndex(table.tableColumns[c]), source.isEditable(row, col), source.choices(row, col) == nil { return c }
+				c += step
+			}
+			return nil
+		}
+
+		/// 고르기 칸: 칸 바로 아래에 메뉴
+		private func showChoices(_ items: [String?], row: Int, column: Int, col: Int) {
+			let menu = NSMenu()
+			let current = source.currentChoice(row, col)
+			for it in items {
+				guard let it else { menu.addItem(.separator()); continue }
+				let mi = NSMenuItem(title: it, action: #selector(choicePicked(_:)), keyEquivalent: "")
+				mi.target = self
+				mi.representedObject = ChoiceTarget(row: row, col: col, value: it)
+				mi.state = it == current ? .on : .off
+				menu.addItem(mi)
+			}
+			let rect = table.frameOfCell(atColumn: column, row: row)
+			let selected = menu.items.first { $0.state == .on }
+			// 지금 값이 칸 위에 겹치게 (팝업 버튼처럼)
+			menu.popUp(positioning: selected, at: NSPoint(x: rect.minX, y: selected == nil ? rect.maxY : rect.minY), in: table)
+		}
+
+		private final class ChoiceTarget {
+			let row: Int, col: Int, value: String
+			init(row: Int, col: Int, value: String) { self.row = row; self.col = col; self.value = value }
+		}
+
+		@objc private func choicePicked(_ sender: NSMenuItem) {
+			guard let t = sender.representedObject as? ChoiceTarget, t.row < source.rowCount else { return }
+			source.setText(t.row, t.col, t.value)
+			table.reloadData(forRowIndexes: [t.row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+		}
+
+		// MARK: 줄 끌어 옮기기 (구조 편집: 컬럼 순서)
+
+		static let rowDragType = NSPasteboard.PasteboardType("net.moimz.isql.grid-row")
+
+		func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+			guard source.canMoveRows else { return nil }
+			let item = NSPasteboardItem()
+			item.setString(String(row), forType: Self.rowDragType)
+			return item
+		}
+
+		func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
+			guard source.canMoveRows, (info.draggingSource as? NSTableView) === tableView else { return [] }
+			if op == .on { tableView.setDropRow(row, dropOperation: .above) }
+			return .move
+		}
+
+		func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+			guard source.canMoveRows else { return false }
+			var rows = IndexSet()
+			info.enumerateDraggingItems(options: [], for: tableView, classes: [NSPasteboardItem.self], searchOptions: [:]) { item, _, _ in
+				if let s = (item.item as? NSPasteboardItem)?.string(forType: Self.rowDragType), let r = Int(s) { rows.insert(r) }
+			}
+			guard !rows.isEmpty else { return false }
+			source.moveRows(rows, to: row)
+			// 옮긴 줄을 고른 채로
+			let at = row - rows.filter { $0 < row }.count
+			table.selectRowIndexes(IndexSet(integersIn: at..<(at + rows.count)), byExtendingSelection: false)
+			return true
 		}
 
 		// MARK: 오른쪽 클릭 메뉴
@@ -510,7 +616,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				var items = source.headerMenu(col)
 				// 정렬은 모든 표에 공통 (공급자가 정렬을 못 하면 메뉴만 빠진다)
 				let key = columns[col].key
-				let sortItems: [GridMenuItem] = [
+				let sortItems: [GridMenuItem] = !source.sortable ? [] : [
 					.action("오름차순 정렬") { self.sort(key, ascending: true) },
 					.action("내림차순 정렬") { self.sort(key, ascending: false) },
 				] + (source.currentSort != nil ? [.action("정렬 없애기") { self.sort(nil, ascending: true) }] : [])

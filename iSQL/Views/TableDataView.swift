@@ -34,11 +34,7 @@ struct TableDetailView: View {
 				.opacity(data.mode == .data ? 1 : 0)
 				.allowsHitTesting(data.mode == .data)
 			if structureBuilt || data.mode == .structure {
-				VStack(spacing: 0) {
-					TableStructureView(table: table, columns: session.columns[table.id] ?? [])
-					Divider()
-					structureFooter
-				}
+				StructureBody(session: session, table: table, data: data, editor: data.structureEditor())
 					.opacity(data.mode == .structure ? 1 : 0)
 					.allowsHitTesting(data.mode == .structure)
 					.onAppear { structureBuilt = true }
@@ -160,20 +156,6 @@ struct TableDetailView: View {
 		return parts.joined(separator: ", ")
 	}
 
-	/// 구조 보기 하단바: [+ 컬럼 추가 | 내보내기] + 컬럼 수
-	private var structureFooter: some View {
-		HStack(spacing: 10) {
-			// + 는 컬럼 추가 (아직 기능 없음)
-			AddExportGroup(addHelp: table.isView ? "뷰에는 컬럼을 추가할 수 없습니다" : "컬럼 추가", exportHelp: "테이블 내보내기") {
-				session.requestExport(.table(table.schema, TableStat(table)))
-			}
-			Spacer()
-			Text("컬럼 \((session.columns[table.id] ?? []).count)개").foregroundStyle(.secondary).monospacedDigit()
-		}
-		.controlSize(.large)
-		.padding(.horizontal, 14)
-		.padding(.vertical, 8)
-	}
 
 	private var footer: some View {
 		HStack(spacing: 10) {
@@ -203,13 +185,16 @@ struct TableDetailView: View {
 /// 저장할 때 실행할 SQL 보기
 struct SQLPreview: View {
 	let statements: [String]
+	var title = "저장하면 한 트랜잭션으로 실행됩니다"
+	/// START TRANSACTION … COMMIT 로 감싸 보일지 (ALTER 는 감싸지 않는다)
+	var transaction = true
 	@Environment(\.dismiss) private var dismiss
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 12) {
-			Text("저장하면 한 트랜잭션으로 실행됩니다").font(.headline)
+			Text(title).font(.headline)
 			ScrollView {
-				Text((["START TRANSACTION;"] + statements + ["COMMIT;"]).joined(separator: "\n"))
+				Text((transaction ? ["START TRANSACTION;"] + statements + ["COMMIT;"] : statements).joined(separator: "\n"))
 					.font(.body.monospaced())
 					.textSelection(.enabled)
 					.frame(maxWidth: .infinity, alignment: .leading)

@@ -38,6 +38,36 @@ final class TableData {
 	/// 표 스크롤 위치 (표 하나를 탭들이 돌려 쓰므로 탭마다 기억)
 	@ObservationIgnored var scrollOrigin: CGPoint = .zero
 
+	/// 구조 편집 (구조 화면을 처음 볼 때 만든다)
+	@ObservationIgnored private var structureStore: StructureEditor?
+	var structure: StructureEditor? { structureStore }
+
+	func structureEditor() -> StructureEditor {
+		if let e = structureStore { return e }
+		let e = StructureEditor(table: table, session: session, columns: session.columns[table.id] ?? [])
+		e.onChange = { [weak self] in self?.reportUnsaved() }
+		structureStore = e
+		return e
+	}
+
+	/// 구조 저장: 데이터에 저장 안 한 변경이 있으면 막는다 (컬럼이 바뀌면 고친 칸이 엉뚱한 컬럼에 붙는다)
+	@MainActor
+	func saveStructure() async {
+		guard let e = structureStore, e.hasChanges, !e.saving else { return }
+		if hasChanges { e.saveError = "데이터 보기에 저장 안 한 변경이 있습니다. 먼저 저장하거나 되돌리세요."; return }
+		await e.save()
+		if !e.hasChanges && e.saveError == nil {
+			reportUnsaved()
+			// 컬럼이 바뀌었으니 데이터도 다시 (한 번이라도 읽은 탭만)
+			if loaded { await load(offset: offset) }
+		}
+	}
+
+	/// 데이터·구조 어느 쪽이든 저장 안 한 게 있으면 사이드바·탭에 표시
+	private func reportUnsaved() {
+		session.setUnsaved(tab, hasChanges || structureStore?.hasChanges == true)
+	}
+
 	/// 쿼리 패널에서 이 테이블을 바꿔서 다시 읽어야 함 (다시 읽으면 풀린다)
 	var stale = false
 
@@ -206,7 +236,7 @@ final class TableData {
 	/// 다시 그리게 하고, 저장 안 한 변경 여부를 세션에 알린다 (사이드바 표시)
 	private func bump() {
 		version += 1
-		session.setUnsaved(tab, hasChanges)
+		reportUnsaved()
 	}
 
 	/// 한 번이라도 읽었는지 (제목은 구조로 먼저 만들어 두므로 columns 로는 알 수 없다)
