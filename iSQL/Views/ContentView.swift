@@ -55,6 +55,13 @@ struct ContentView: View {
 				ServerSwitcher(model: model, disconnect: askDisconnect)
 			}
 			.sharedBackgroundVisibility(.hidden)
+			// 서버 이름 옆: 이 서버 설정 (접속했을 때만)
+			if model.current?.isConnected == true {
+				ToolbarItem(placement: .navigation) {
+					Button { model.current?.showSettings = true } label: { Image(systemName: "gearshape") }
+						.help("서버 설정")
+				}
+			}
 
 			// 오른쪽 버튼은 여기 두지 않는다: 창 전체에 붙이면 오른쪽 정렬·묶음 나누기가 안 먹는다.
 			// 본문 뷰(TableDetailView)의 .toolbar 에 붙인다 (Ai/iSQL.md 툴바 규칙)
@@ -74,6 +81,10 @@ struct ContentView: View {
 		}
 		// 테이블·데이터베이스 삭제, 테이블 비우기 확인 (어디서 불러도 여기 하나)
 		.modifier(TableActionDialogs(model: model))
+		// 서버 설정: 제목바에 붙는 시트
+		.sheet(isPresented: Binding(get: { model.current?.showSettings ?? false }, set: { model.current?.showSettings = $0 })) {
+			if let s = model.current { ServerSettingsSheet(session: s) }
+		}
 		// 새 데이터베이스: 제목바에 붙는 시트
 		.sheet(isPresented: Binding(get: { model.current?.creatingDatabase ?? false }, set: { model.current?.creatingDatabase = $0 })) {
 			if let s = model.current { CreateDatabaseSheet(session: s) }
