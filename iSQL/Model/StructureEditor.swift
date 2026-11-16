@@ -469,14 +469,15 @@ final class StructureEditor: GridSource {
 		}
 	}
 
-	func setText(_ row: Int, _ col: Int, _ text: String) {
+	func setText(_ row: Int, _ col: Int, _ raw: String) {
+		// 입력이 끝나면 앞뒤 공백·줄바꿈을 뺀다 (기본값을 빈 글자로 두려면 '' 로 적는다)
+		let text = raw.replacingOccurrences(of: "\u{FFFC}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
 		switch gridColumns[col].key {
 		case "name":
-			let t = text.trimmingCharacters(in: .whitespaces)
-			guard !t.isEmpty else { NSSound.beep(); return }
-			update(row) { $0.name = t }
+			guard !text.isEmpty else { NSSound.beep(); return }
+			update(row) { $0.name = text }
 		case "comment": update(row) { $0.comment = text }
-		case "length": update(row) { $0.length = text.trimmingCharacters(in: .whitespaces) }
+		case "length": update(row) { $0.length = text }
 		case "default": update(row) { $0.defaultValue = text; $0.defaultExpr = false }
 		case "type":
 			update(row) { c in

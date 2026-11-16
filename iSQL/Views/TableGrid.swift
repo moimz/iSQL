@@ -492,6 +492,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if let field = table.view(atColumn: column, row: row, makeIfNecessary: true) as? NSTextField {
 				field.isEditable = true
 				field.isSelectable = true
+				// 고칠 때는 글자만: 앞의 키 아이콘(첨부 글자)과 띄어쓰기가 입력에 섞여 이름 앞에 붙었다
+				let cell = source.cell(row, col)
+				if cell.icon != nil {
+					field.attributedStringValue = NSAttributedString(string: cell.text?.replacingOccurrences(of: "\n", with: "⏎") ?? "",
+					                                                 attributes: [.font: font(columns[col])])
+				}
 			}
 			table.editColumn(column, row: row, with: nil, select: true)
 		}
@@ -509,7 +515,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next) } }
 			}
 			let old = source.cell(row, col).text
-			let typed = field.stringValue
+			// 혹시 남은 첨부 글자(아이콘)는 뺀다
+			let typed = field.stringValue.replacingOccurrences(of: "\u{FFFC}", with: "")
 			// NULL 칸을 비운 채로 끝내면 그대로 NULL
 			if old == nil && typed.isEmpty { return }
 			if typed == (old?.replacingOccurrences(of: "\n", with: "⏎") ?? "") { return }
@@ -776,6 +783,16 @@ final class GridTextCell: NSTextFieldCell {
 
 	override func drawingRect(forBounds rect: NSRect) -> NSRect {
 		super.drawingRect(forBounds: centered(rect))
+	}
+
+	/// 배경(고친 칸 노랑·새 행 초록·지울 행 빨강)은 칸 전체에. 기본 그리기는 글자 높이(drawingRect)만 칠했다.
+	/// 테두리 없는 글자 칸이라 바탕만 칠하고 글자는 drawInterior 로 그린다
+	override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+		if drawsBackground, let bg = backgroundColor {
+			bg.setFill()
+			cellFrame.fill(using: .sourceOver)
+		}
+		drawInterior(withFrame: cellFrame, in: controlView)
 	}
 
 	override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
