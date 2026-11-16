@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// 접속한 서버의 본문: [쿼리 패널 (열렸을 때)] + [탭 영역]. SELECT 결과는 탭 영역을 덮는다
+/// 접속한 서버의 본문: [쿼리 패널 (열렸을 때)] + [탭 영역]. SELECT 결과는 탭 영역의 왼쪽 칸을 덮는다
 struct ConnectedArea: View {
 	let session: Session
 	let model: WindowModel
@@ -15,21 +15,8 @@ struct ConnectedArea: View {
 					.transition(.move(edge: .top).animation(.easeOut(duration: 0.2)))
 				Divider()
 			}
-			GeometryReader { geo in
-				ZStack(alignment: .top) {
-					TabArea(session: session, model: model)
-					// 결과 보기: 위에서 아래로 스르륵 내려오고, 숨기면 위로 말려 올라간다 (탭바·표·하단바 통째로).
-					// 결과가 있는 동안은 결과 화면을 살려 두고 위치만 옮긴다 (보일 때마다 새로 만들면 100ms 씩 멈췄다)
-					if let q = session.queryPanel, q.open, !q.outputs.isEmpty {
-						QueryResultsOverlay(panel: q)
-							.offset(y: q.resultsVisible ? 0 : -geo.size.height - 4)
-							.allowsHitTesting(q.resultsVisible)
-							.animation(.easeInOut(duration: 0.28), value: q.resultsVisible)
-					}
-				}
-				.frame(width: geo.size.width, height: geo.size.height)
-				.clipped()
-			}
+			// SELECT 결과는 탭 영역의 왼쪽 칸만 덮는다 (오른쪽 분할은 그대로 보여 결과와 나란히 비교). TabArea 안에서 그린다
+			TabArea(session: session, model: model)
 		}
 	}
 }

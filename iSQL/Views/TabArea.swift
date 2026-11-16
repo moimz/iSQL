@@ -37,9 +37,14 @@ struct TabArea: View {
 		focused.flatMap { f in Session.databaseOf(tab: f.tab).map { f.session.overview($0) } }
 	}
 
+	/// 쿼리 결과가 초점 탭을 덮고 있는지 (결과는 왼쪽 칸만 덮으니 초점이 오른쪽이면 아님)
+	private var resultsCoverFocused: Bool {
+		session.queryPanel?.resultsVisible == true && (!model.hasSplit || model.splitFocus == .left)
+	}
+
 	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때: 쿼리 버튼 자리에 테이블 정보 버튼
 	private var structureShown: Bool {
-		active?.mode == .structure && session.queryPanel?.resultsVisible != true
+		active?.mode == .structure && !resultsCoverFocused
 	}
 
 	var body: some View {
@@ -81,7 +86,7 @@ struct TabArea: View {
 		.toolbar {
 			ToolbarSpacer(.flexible)
 			// 쿼리 결과가 탭을 덮고 있으면 탭용 버튼은 숨긴다
-			if let d = active, session.queryPanel?.resultsVisible != true {
+			if let d = active, !resultsCoverFocused {
 				if d.mode == .data {
 					ToolbarItemGroup {
 						Button {
@@ -106,7 +111,7 @@ struct TabArea: View {
 						.fixedSize()
 				}
 				ToolbarSpacer(.fixed)
-			} else if let o = activeOverview, session.queryPanel?.resultsVisible != true {
+			} else if let o = activeOverview, !resultsCoverFocused {
 				// DB 개요: 테이블 이름·코멘트 검색 (⌥⌘F)
 				ToolbarItem {
 					Button {
@@ -182,6 +187,26 @@ struct TabArea: View {
 	// MARK: 왼쪽 (지금 서버의 탭)
 
 	private var leftPane: some View {
+		GeometryReader { geo in
+			ZStack(alignment: .top) {
+				leftTabs
+				// 결과 보기: 위에서 아래로 스르륵 내려오고, 숨기면 위로 말려 올라간다 (탭바·표·하단바 통째로).
+				// 결과가 있는 동안은 결과 화면을 살려 두고 위치만 옮긴다 (보일 때마다 새로 만들면 100ms 씩 멈췄다)
+				if let q = session.queryPanel, q.open, !q.outputs.isEmpty {
+					QueryResultsOverlay(panel: q)
+						.offset(y: q.resultsVisible ? 0 : -geo.size.height - 4)
+						.allowsHitTesting(q.resultsVisible)
+						.animation(.easeInOut(duration: 0.28), value: q.resultsVisible)
+				}
+			}
+			.frame(width: geo.size.width, height: geo.size.height)
+			.clipped()
+		}
+		// 칸 안 어디를 눌러도 초점은 이쪽 (AppKit 표가 마우스를 먹어서 SwiftUI 탭 제스처로는 못 받는다)
+		.background(PaneClickWatcher { if model.hasSplit { model.splitFocus = .left } })
+	}
+
+	private var leftTabs: some View {
 		VStack(spacing: 0) {
 			if !session.tabs.isEmpty {
 				TabBar(session: session, paneFocused: !model.hasSplit || model.splitFocus == .left,
@@ -204,8 +229,6 @@ struct TabArea: View {
 				}
 			}
 		}
-		// 칸 안 어디를 눌러도 초점은 이쪽 (AppKit 표가 마우스를 먹어서 SwiftUI 탭 제스처로는 못 받는다)
-		.background(PaneClickWatcher { if model.hasSplit { model.splitFocus = .left } })
 	}
 
 	// MARK: 오른쪽 (임시 영역, 서버를 바꿔도 그대로)
