@@ -474,6 +474,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				frozen.headerView?.removeFromSuperview()
 				frozen.removeFromSuperview()
 				frozenEdge.removeFromSuperview()
+				frozenWidthWatch = []
 				refreshEmphasis()
 				return
 			}
@@ -509,6 +510,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					tc.minWidth = src.minWidth
 					tc.width = src.width
 					frozen.addTableColumn(tc)
+				}
+				// 너비를 끄는 동안에도 바로 본 표를 맞춘다 (끝날 때만 맞추면 끄는 동안 고정 칸 뒤의 본 표 제목·칸이 비어져 나왔다)
+				frozenWidthWatch = frozen.tableColumns.map { tc in
+					tc.observe(\.width, options: [.new]) { [weak self] _, _ in
+						MainActor.assumeIsolated { self?.syncFrozenWidths() }
+					}
 				}
 				frozen.delegate = self
 				frozen.dataSource = self
@@ -666,12 +673,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		/// 고정 표에서 너비를 끌면 본 표의 같은 컬럼도 (밑에 깔린 칸과 어긋나지 않게)
-		@objc private func frozenColumnResized(_ n: Notification) {
-			refreshGridLines()
+		@objc private func frozenColumnResized(_ n: Notification) { syncFrozenWidths() }
+
+		private var frozenWidthWatch: [NSKeyValueObservation] = []
+
+		private func syncFrozenWidths() {
+			guard frozenCount > 0 else { return }
 			for f in frozen.tableColumns {
 				if let m = table.tableColumns.first(where: { $0.identifier == f.identifier }), m.width != f.width { m.width = f.width }
 			}
 			layoutFrozen()
+			refreshGridLines()
 		}
 
 		// MARK: 정렬
@@ -1153,9 +1165,9 @@ final class GridTableView: NSTableView {
 
 	/// 세로선은 직접 그린다 (마지막 컬럼 오른쪽까지). 맥 26 의 세로선(gridStyleMask)은 따로 된 뷰라
 	/// 컬럼을 옮기거나 너비를 바꾸면 예전 자리에 남아 칸과 어긋났다
-	func drawColumnLines(in clipRect: NSRect, offsetX: CGFloat = 0) {
+	func drawColumnLines(in clipRect: NSRect) {
 		gridColor.setFill()
-		var x: CGFloat = -offsetX
+		var x: CGFloat = 0
 		for c in tableColumns {
 			x += c.width + intercellSpacing.width
 			let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
@@ -1198,13 +1210,10 @@ final class GridTableView: NSTableView {
 final class GridRowView: NSTableRowView {
 	weak var controller: GridController?
 
-	/// 행 배경(줄무늬)이 표가 그린 세로선을 덮는 행이 있어서 행 위에도 같은 자리에 그린다
-	override func drawBackground(in dirtyRect: NSRect) {
-		super.drawBackground(in: dirtyRect)
-		// 반투명 줄무늬 행은 밑의 선이 비쳐서 또 그리면 두 겹으로 진해진다
-		guard (backgroundColor.usingColorSpace(.sRGB)?.alphaComponent ?? 1) >= 0.99 else { return }
-		(superview as? GridTableView)?.drawColumnLines(in: NSRect(x: dirtyRect.minX, y: 0, width: dirtyRect.width, height: bounds.height), offsetX: frame.minX)
-	}
+	/// 행 배경은 그리지 않는다: 줄무늬·세로선은 표(GridTableView.drawBackground)가 한 번에 그린다.
+	/// 행마다 배경을 칠하면 그 행이 표의 세로선을 덮었고, 컬럼 너비를 바꿔도 행은 다시 그려지지 않아 예전 자리 선이 남았다
+	override func drawBackground(in dirtyRect: NSRect) {}
+
 	override var isEmphasized: Bool {
 		get { super.isEmphasized }
 		set { super.isEmphasized = controller?.emphasisOverride ?? newValue }
@@ -1231,20 +1240,31 @@ final class GridHeaderView: NSTableHeaderView {
 	static let background = NSColor(name: nil) { a in
 		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 45 / 255, green: 46 / 255, blue: 48 / 255, alpha: 1) : NSColor(white: 0.965, alpha: 1)
 	}
+	/// 고정 칸 머리: 검게 (고정됐다는 게 한눈에, 사용자가 좋다고 함)
+	static let frozenBackground = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .black : NSColor(white: 0.88, alpha: 1)
+	}
+	/// 컬럼 구분선 (AppKit 구분선이 안 그려질 때가 있어 직접)
+	static let separator = NSColor(name: nil) { a in
+		a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.22) : NSColor(white: 0, alpha: 0.18)
+	}
 	/// 아래 경계선 (고정 칸 머리: 본 표 머리는 스크롤 가장자리 효과가 그린다)
 	var drawsBottomLine = false
 
 	override var wantsUpdateLayer: Bool { false }
 
 	override func draw(_ dirtyRect: NSRect) {
-		Self.background.setFill()
+		(drawsBottomLine ? Self.frozenBackground : Self.background).setFill()
 		dirtyRect.intersection(bounds).fill()
 		// 컬럼을 끄는 중이면 AppKit 이 끄는 컬럼을 옮겨 그린다
 		guard draggedColumn < 0, let tv = tableView else { super.draw(dirtyRect); return }
-		// 나머지는 직접: AppKit 은 배경을 투명하게 지우고 그려서 밑이 비면 검게 나왔다 (컬럼 구분선은 AppKit 이 따로 얹는다)
+		// 나머지는 직접: AppKit 은 배경을 투명하게 지우고 그려서 밑이 비면 검게 나왔다 
 		for (i, tc) in tv.tableColumns.enumerated() {
 			let r = headerRect(ofColumn: i)
-			if r.intersects(dirtyRect) { tc.headerCell.drawInterior(withFrame: r, in: self) }
+			guard r.intersects(dirtyRect) else { continue }
+			tc.headerCell.drawInterior(withFrame: r, in: self)
+			Self.separator.setFill()
+			NSRect(x: r.maxX - 1, y: r.minY + 6, width: 1, height: r.height - 12).fill()
 		}
 		if drawsBottomLine {
 			NSColor.gridColor.setFill()

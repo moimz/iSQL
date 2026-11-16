@@ -23,6 +23,7 @@ struct TabStrip<ID: Hashable, Content: View>: View {
 			ScrollView(.horizontal, showsIndicators: false) {
 				HStack(spacing: 0) { content }
 					.scrollTargetLayout()
+					.coordinateSpace(.named(TabReorderSpace.name))
 			}
 			.scrollPosition($position)
 			// 고른 탭이 보이게. 새로 연 탭은 아직 배치 전이라 한 박자 뒤에 한다
@@ -85,5 +86,83 @@ struct TabTitle: View {
 				Text(text).fontWeight(active ? .semibold : .regular).lineLimit(1)
 			}
 		}
+	}
+}
+
+enum TabReorderSpace { static let name = "tabstrip" }
+
+/// 탭 끌어 순서 바꾸기 상태 (탭바 하나에 하나)
+struct TabReorder<ID: Hashable> {
+	/// 끄는 탭
+	var dragging: ID?
+	/// 끄는 탭을 제자리에서 얼마나 옮겨 그릴지
+	var offset: CGFloat = 0
+	/// 끌기 시작할 때 그 탭의 왼쪽 끝 (탭바 안 좌표)
+	var startX: CGFloat = 0
+	/// 탭 너비 (순서를 바꾼 뒤 자리를 계산하는 데)
+	var widths: [ID: CGFloat] = [:]
+}
+
+extension View {
+	/// 편집기 탭처럼: 탭을 끌면 마우스를 따라오고, 옆 탭 가운데를 넘으면 그 탭이 비켜나며 순서가 바뀐다.
+	/// 시스템 끌어 놓기(.draggable)는 마우스에 그림만 붙고 탭바는 그대로라 어색했다 (사용자)
+	func reorderable<ID: Hashable>(_ id: ID, order: [ID], state: Binding<TabReorder<ID>>,
+	                               move: @escaping (ID, ID?) -> Void) -> some View {
+		modifier(TabReorderModifier(id: id, order: order, state: state, move: move))
+	}
+}
+
+private struct TabReorderModifier<ID: Hashable>: ViewModifier {
+	let id: ID
+	let order: [ID]
+	@Binding var state: TabReorder<ID>
+	let move: (ID, ID?) -> Void
+
+	private var isDragging: Bool { state.dragging == id }
+
+	/// 지금 순서에서 탭 왼쪽 끝
+	private func left(of target: ID, in ids: [ID]) -> CGFloat {
+		var x: CGFloat = 0
+		for i in ids { if i == target { return x }; x += state.widths[i] ?? 0 }
+		return x
+	}
+
+	func body(content: Content) -> some View {
+		content
+			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { state.widths[id] = $0 }
+			.offset(x: isDragging ? state.offset : 0)
+			.zIndex(isDragging ? 1 : 0)
+			.shadow(color: .black.opacity(isDragging ? 0.25 : 0), radius: 6)
+			// 끄는 탭은 순서가 바뀔 때 미끄러지지 않게 (옮겨 그리기로 마우스 밑에 붙어 있다)
+			.transaction { if isDragging { $0.animation = nil } }
+			.gesture(
+				DragGesture(minimumDistance: 4, coordinateSpace: .named(TabReorderSpace.name))
+					.onChanged { v in
+						if state.dragging != id {
+							state.dragging = id
+							state.startX = left(of: id, in: order)
+						}
+						let w = state.widths[id] ?? 0
+						let wantX = max(0, state.startX + v.translation.width)
+						// 끄는 탭 가운데가 넘어선 옆 탭들 → 들어갈 자리
+						let others = order.filter { $0 != id }
+						var x: CGFloat = 0, target = others.count
+						for (i, o) in others.enumerated() {
+							let ow = state.widths[o] ?? 0
+							if wantX + w / 2 < x + ow / 2 { target = i; break }
+							x += ow
+						}
+						var newOrder = others
+						newOrder.insert(id, at: target)
+						if newOrder != order {
+							move(id, target < others.count ? others[target] : nil)
+						}
+						state.offset = wantX - left(of: id, in: newOrder)
+					}
+					.onEnded { _ in
+						withAnimation(.easeOut(duration: 0.15)) { state.offset = 0 }
+						state.dragging = nil
+					}
+			)
 	}
 }

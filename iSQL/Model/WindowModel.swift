@@ -194,24 +194,3 @@ extension WindowModel {
 	}
 }
 
-/// 끌어 옮기는 탭: "isql-tab:L|R:<서버 id>:<탭 id>" (L = 왼쪽 탭바, R = 오른쪽 분할)
-struct TabDrag {
-	let side: SplitSide
-	let parked: ParkedTab
-
-	init(side: SplitSide, server: UUID, tab: String) {
-		self.side = side
-		parked = ParkedTab(server: server, tab: tab)
-	}
-
-	init?(_ s: String) {
-		guard s.hasPrefix("isql-tab:") else { return nil }
-		let rest = s.dropFirst(9)
-		let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-		guard parts.count == 3, let id = UUID(uuidString: String(parts[1])) else { return nil }
-		side = parts[0] == "R" ? .right : .left
-		parked = ParkedTab(server: id, tab: String(parts[2]))
-	}
-
-	var string: String { "isql-tab:\(side == .right ? "R" : "L"):\(parked.server.uuidString):\(parked.tab)" }
-}

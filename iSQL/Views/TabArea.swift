@@ -214,7 +214,7 @@ struct TabArea: View {
 			if !session.tabs.isEmpty {
 				TabBar(session: session, paneFocused: !model.hasSplit || model.splitFocus == .left,
 				       close: closeLeft, park: { model.park($0, from: session) },
-				       duplicate: { model.duplicateToRight($0, from: session) }, drop: dropToLeft)
+				       duplicate: { model.duplicateToRight($0, from: session) })
 				Divider()
 			}
 			ZStack {
@@ -233,13 +233,6 @@ struct TabArea: View {
 					                       description: Text("왼쪽 목록에서 누르면 탭으로 열립니다. ⌘F 로 테이블 이름, 코멘트, 컬럼을 찾을 수 있습니다."))
 				}
 			}
-			// 오른쪽 탭을 왼쪽 칸 본문에 놓으면 왼쪽 맨 뒤로.
-			// 분할은 탭 오른쪽 클릭으로만 만든다: 예전엔 왼쪽 탭을 오른쪽 절반에 끌면 분할이 생겼는데,
-			// 칸 전체에 건 놓기 처리가 탭바 위 놓기까지 가로채 탭 순서 바꾸기가 안 됐다 (사용자 지적)
-			.dropDestination(for: String.self) { items, _ in
-				guard let d = items.first.flatMap(TabDrag.init), d.side == .right else { return false }
-				return dropToLeft(items, before: nil)
-			}
 		}
 	}
 
@@ -247,7 +240,7 @@ struct TabArea: View {
 
 	private var rightPane: some View {
 		VStack(spacing: 0) {
-			ParkedTabBar(model: model, currentServer: session.server?.id, close: closeRight, drop: dropToRight)
+			ParkedTabBar(model: model, currentServer: session.server?.id, close: closeRight)
 			Divider()
 			ZStack {
 				if let p = model.parkedActive, let s = model.sessions[p.server] {
@@ -261,8 +254,6 @@ struct TabArea: View {
 					}
 				}
 			}
-			// 탭을 오른쪽 칸 본문에 놓으면 오른쪽 맨 뒤로
-			.dropDestination(for: String.self) { items, _ in dropToRight(items, before: nil) }
 		}
 		.background(PaneClickWatcher { model.splitFocus = .right })
 	}
@@ -304,36 +295,6 @@ struct TabArea: View {
 						}
 						.onEnded { _ in dragStartWidth = nil })
 			}
-	}
-
-	// MARK: 끌어 놓기
-
-	/// 왼쪽 탭바에 놓기: 왼쪽 탭이면 순서 바꾸기, 오른쪽 탭이면 왼쪽으로 (before 앞, nil 이면 맨 뒤)
-	@discardableResult
-	private func dropToLeft(_ items: [String], before: String?) -> Bool {
-		guard let d = items.first.flatMap(TabDrag.init) else { return false }
-		if d.side == .left {
-			guard d.parked.server == session.server?.id else { return false }
-			session.moveTab(d.parked.tab, before: before)
-			session.selectTab(d.parked.tab)
-		} else {
-			model.unpark(d.parked, before: before)
-		}
-		return true
-	}
-
-	/// 오른쪽 탭바에 놓기: 오른쪽 탭이면 순서 바꾸기, 왼쪽 탭이면 오른쪽으로
-	@discardableResult
-	private func dropToRight(_ items: [String], before: ParkedTab?) -> Bool {
-		guard let d = items.first.flatMap(TabDrag.init) else { return false }
-		if d.side == .right {
-			model.moveParked(d.parked, before: before)
-			model.focusParked(d.parked)
-		} else {
-			guard d.parked.server == session.server?.id else { return false }
-			model.park(d.parked.tab, from: session, before: before)
-		}
-		return true
 	}
 
 	// MARK: 닫기·옮기기
@@ -378,12 +339,8 @@ struct TabBar: View {
 	let park: (String) -> Void
 	/// 오른쪽 분할에 사본 (같은 테이블을 다른 조건으로)
 	let duplicate: (String) -> Void
-	/// 끌어 온 탭 놓기 (그 탭 앞, nil 이면 맨 뒤)
-	let drop: ([String], String?) -> Bool
-	/// 끌어 온 탭이 놓일 자리 (그 탭 왼쪽에 강조색 세로줄)
-	@State private var dropTarget: String?
-	/// 탭바 빈 곳 위: 맨 뒤에 놓일 자리 (마지막 탭 오른쪽 끝에 세로줄)
-	@State private var dropAtEnd = false
+	/// 끌어서 순서 바꾸기 (편집기 탭처럼 탭이 마우스를 따라오고 옆 탭이 비켜난다)
+	@State private var reorder = TabReorder<String>()
 
 	/// 쿼리 결과 화면이 이 탭바를 덮고 있는지
 	private var covered: Bool {
@@ -411,14 +368,7 @@ struct TabBar: View {
 				} close: {
 					close(id)
 				}
-				.draggable(session.server.map { TabDrag(side: .left, server: $0.id, tab: id).string } ?? "") {
-					TabDragPreview(title: session.table(id)?.name ?? Session.databaseOf(tab: id) ?? id, isDatabase: Session.databaseOf(tab: id) != nil)
-				}
-				.dropDestination(for: String.self) { items, _ in drop(items, id) } isTargeted: { on in
-					if on { dropTarget = id } else if dropTarget == id { dropTarget = nil }
-				}
-				.overlay(alignment: .leading) { if dropTarget == id { DropMarker() } }
-				.overlay(alignment: .trailing) { if dropAtEnd && dropTarget == nil && id == session.tabs.last { DropMarker() } }
+				.reorderable(id, order: session.tabs, state: $reorder) { session.moveTab($0, before: $1) }
 				.id(id)
 			}
 		}
@@ -426,7 +376,6 @@ struct TabBar: View {
 		.animation(.easeOut(duration: 0.18), value: session.tabs)
 		.frame(height: 36)
 		// 탭이 없는 빈 곳에 놓으면 맨 뒤로
-		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		// 색 배경은 기본으로 안전 영역(제목바 밑)까지 번진다. 탭바 안에만 칠한다
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
@@ -450,9 +399,7 @@ struct ParkedTabBar: View {
 	let model: WindowModel
 	let currentServer: UUID?
 	let close: (ParkedTab) -> Void
-	let drop: ([String], ParkedTab?) -> Bool
-	@State private var dropTarget: ParkedTab?
-	@State private var dropAtEnd = false
+	@State private var reorder = TabReorder<ParkedTab>()
 
 	var body: some View {
 		HStack(spacing: 0) {
@@ -476,14 +423,7 @@ struct ParkedTabBar: View {
 				} close: {
 					close(p)
 				}
-				.draggable(TabDrag(side: .right, server: p.server, tab: p.tab).string) {
-					TabDragPreview(title: t?.name ?? Session.databaseOf(tab: p.tab) ?? p.tab, isDatabase: Session.databaseOf(tab: p.tab) != nil)
-				}
-				.dropDestination(for: String.self) { items, _ in drop(items, p) } isTargeted: { on in
-					if on { dropTarget = p } else if dropTarget == p { dropTarget = nil }
-				}
-				.overlay(alignment: .leading) { if dropTarget == p { DropMarker() } }
-				.overlay(alignment: .trailing) { if dropAtEnd && dropTarget == nil && p == model.parkedTabs.last { DropMarker() } }
+				.reorderable(p, order: model.parkedTabs, state: $reorder) { model.moveParked($0, before: $1) }
 				.id(p.key)
 			}
 		}
@@ -506,7 +446,6 @@ struct ParkedTabBar: View {
 			.onChange(of: paused, initial: true) { model.scrollPaused = paused }
 		}
 		.frame(height: 36)
-		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
@@ -523,27 +462,6 @@ struct ParkedTabBar: View {
 			model.sessions[q.server]?.table(q.tab).map { q.server.uuidString + "|" + $0.schema }
 		})
 		return dbs.count > 1
-	}
-}
-
-/// 탭을 끄는 동안 마우스에 붙는 작은 알약 (탭 전체를 찍은 그림은 배경·크기가 어색했다)
-struct TabDragPreview: View {
-	let title: String
-	var isDatabase = false
-
-	var body: some View {
-		HStack(spacing: 6) {
-			Image(systemName: isDatabase ? "cylinder.split.1x2" : "tablecells").foregroundStyle(Color.accentColor)
-			Text(title).lineLimit(1)
-		}
-		// 탭바의 탭 모양 그대로 (네모, 위에 강조색 줄)
-		.font(.system(size: 13, weight: .semibold))
-		.padding(.horizontal, 12)
-		.frame(height: 36)
-		.frame(minWidth: 110, alignment: .leading)
-		.background(Color(nsColor: .windowBackgroundColor))
-		.overlay(alignment: .top) { Rectangle().fill(Color.accentColor).frame(height: 2) }
-		.overlay(Rectangle().strokeBorder(Color.secondary.opacity(0.3)))
 	}
 }
 
@@ -590,13 +508,6 @@ final class ScrollLink {
 		guard target != clip.bounds.origin else { return }
 		clip.setBoundsOrigin(target)
 		b.reflectScrolledClipView(clip)
-	}
-}
-
-/// 끌어 온 탭이 놓일 자리 표시 (탭 왼쪽 가장자리 강조색 세로줄)
-struct DropMarker: View {
-	var body: some View {
-		Rectangle().fill(Color.accentColor).frame(width: 3).padding(.vertical, 4)
 	}
 }
 
