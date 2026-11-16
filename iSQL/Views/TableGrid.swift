@@ -48,6 +48,7 @@ enum GridMenuItem {
 /// 자주 쓰는 것 위, 되돌릴 수 없는 것 맨 아래
 enum TableMenu {
 	static func items(isView: Bool, open: @escaping () -> Void, export: @escaping () -> Void,
+	                  importExcel: (() -> Void)? = nil,
 	                  duplicate: (() -> Void)? = nil, rename: (() -> Void)? = nil,
 	                  truncate: (() -> Void)? = nil, drop: (() -> Void)? = nil) -> [GridMenuItem] {
 		let kind = isView ? "뷰" : "테이블"
@@ -56,6 +57,7 @@ enum TableMenu {
 			.action("열기", open),
 			.separator,
 			.action("\(kind) 내보내기…", export),
+		] + (isView ? [] : [item("엑셀에서 가져오기…", importExcel)]) + [
 			item("\(kind) 복제…", duplicate),
 			item("\(kind) 이름 바꾸기…", rename),
 			.separator,

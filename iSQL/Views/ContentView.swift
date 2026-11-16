@@ -330,5 +330,8 @@ struct MoreSheets: ViewModifier {
 			.sheet(item: Binding(get: { model.current?.importRequest }, set: { model.current?.importRequest = $0 })) { req in
 				if let s = model.current { ImportSheet(request: req, session: s) }
 			}
+			.sheet(item: Binding(get: { model.current?.excelImportRequest }, set: { model.current?.excelImportRequest = $0 })) { req in
+				if model.current != nil { ExcelImportSheet(request: req) }
+			}
 	}
 }

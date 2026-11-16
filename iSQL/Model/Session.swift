@@ -282,6 +282,28 @@ final class Session {
 	/// SQL 파일 가져오기 요청 (창이 제목바 시트로 띄운다)
 	var importRequest: ImportRequest?
 
+	/// 엑셀 가져오기 요청 (창이 제목바 시트로 띄운다)
+	var excelImportRequest: ExcelImportRequest?
+
+	/// 엑셀 가져오기: 먼저 파일을 고르고, 고르면 시트. table 이면 그 테이블에 넣기로 시작
+	@MainActor
+	func requestExcelImport(schema: String, table: String? = nil) {
+		guard let url = Self.pickExcelFile() else { return }
+		excelImportRequest = ExcelImportRequest(schema: schema, table: table,
+		                                        job: ExcelImportJob(url: url, session: self, schema: schema, table: table))
+	}
+
+	@MainActor
+	static func pickExcelFile() -> URL? {
+		let p = NSOpenPanel()
+		p.title = "가져올 엑셀 파일"
+		p.prompt = "고르기"
+		p.allowedContentTypes = [UTType(filenameExtension: "xlsx") ?? .data]
+		p.canChooseDirectories = false
+		p.allowsMultipleSelection = false
+		return p.runModal() == .OK ? p.url : nil
+	}
+
 	/// SQL 파일 가져오기: 먼저 파일을 고르고, 고르면 시트
 	@MainActor
 	func requestImport(schema: String?) {

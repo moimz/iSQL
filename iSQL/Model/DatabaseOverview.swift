@@ -170,6 +170,7 @@ final class DatabaseOverview: GridSource {
 		return TableMenu.items(isView: s.isView,
 		                       open: { [weak self] in self?.activateRow(row) },
 		                       export: { [weak self] in guard let self else { return }; self.session?.requestExport(.table(self.schema, s)) },
+		                       importExcel: { [weak self] in guard let self else { return }; let sess = self.session, schema = self.schema; MainActor.assumeIsolated { sess?.requestExcelImport(schema: schema, table: s.name) } },
 		                       duplicate: { [weak self] in guard let self else { return }; self.session?.tableNameRequest = TableNameRequest(kind: .duplicate, schema: self.schema, table: s) },
 		                       rename: { [weak self] in guard let self else { return }; self.session?.tableNameRequest = TableNameRequest(kind: .rename, schema: self.schema, table: s) },
 		                       truncate: { [weak self] in guard let self else { return }; self.session?.requestTruncate(schema: self.schema, [s]) },
