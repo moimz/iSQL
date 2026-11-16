@@ -259,8 +259,6 @@ final class Session {
 
 	/// 새 데이터베이스 시트 (사이드바 +)
 	var creatingDatabase = false
-	/// 서버 설정 시트 (제목바 톱니)
-	var showSettings = false
 
 	/// 지금 탭(테이블·DB 개요)의 데이터베이스 — 사이드바 − 가 지울 DB
 	var currentSchema: String? {

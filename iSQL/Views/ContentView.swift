@@ -5,6 +5,7 @@ struct ContentView: View {
 	@Environment(ServerStore.self) private var store
 	@State private var model = WindowModel()
 	@State private var confirmDisconnect: UUID?
+	@Environment(\.openSettings) private var openSettings
 
 	var body: some View {
 		NavigationSplitView {
@@ -41,6 +42,8 @@ struct ContentView: View {
 			}
 		}
 		.toolbar(removing: .title)
+		// 설정 창이 보일 서버: 이 창에서 서버를 고르면 그 서버로 (⌘, 로 열어도 마지막으로 고른 창의 서버)
+		.onChange(of: model.currentID, initial: true) { SettingsTarget.shared.session = model.current?.isConnected == true ? model.current : SettingsTarget.shared.session }
 		// 접속이 끝났거나 접속한 서버로 옮기면 테이블 목록으로
 		.onChange(of: model.current?.isConnected == true ? model.currentID : nil) { _, id in
 			if id != nil { model.sidebarMode = .tables }
@@ -58,8 +61,11 @@ struct ContentView: View {
 			// 서버 이름 옆: 이 서버 설정 (접속했을 때만)
 			if model.current?.isConnected == true {
 				ToolbarItem(placement: .navigation) {
-					Button { model.current?.showSettings = true } label: { Image(systemName: "gearshape") }
-						.help("서버 설정")
+					Button {
+						SettingsTarget.shared.session = model.current
+						openSettings()
+					} label: { Image(systemName: "gearshape") }
+						.help("서버 설정 (⌘,)")
 				}
 			}
 
@@ -81,10 +87,6 @@ struct ContentView: View {
 		}
 		// 테이블·데이터베이스 삭제, 테이블 비우기 확인 (어디서 불러도 여기 하나)
 		.modifier(TableActionDialogs(model: model))
-		// 서버 설정: 제목바에 붙는 시트
-		.sheet(isPresented: Binding(get: { model.current?.showSettings ?? false }, set: { model.current?.showSettings = $0 })) {
-			if let s = model.current { ServerSettingsSheet(session: s) }
-		}
 		// 새 데이터베이스: 제목바에 붙는 시트
 		.sheet(isPresented: Binding(get: { model.current?.creatingDatabase ?? false }, set: { model.current?.creatingDatabase = $0 })) {
 			if let s = model.current { CreateDatabaseSheet(session: s) }

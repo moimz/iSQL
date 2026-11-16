@@ -35,5 +35,11 @@ struct iSQLApp: App {
 				}
 		}
 		.windowToolbarStyle(.unified)
+
+		// 서버 설정 창 (제목바 톱니·⌘,): 맥 설정창처럼 위에 아이콘 탭. 내용은 마지막으로 고른 창의 서버
+		Settings {
+			ServerSettingsView()
+				.environment(store)
+		}
 	}
 }
