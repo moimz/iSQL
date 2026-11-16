@@ -647,9 +647,10 @@ struct PaneClickWatcher: NSViewRepresentable {
 			super.viewDidMoveToWindow()
 			if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
 			guard window != nil else { return }
-			// 누르는 순간 초점을 바꾸면 탭바가 다시 그려지며 진행 중인 탭 클릭(떼는 순간에 일어남)이 사라졌다
-			// (오른쪽에 초점이 있을 때 왼쪽 탭을 눌러도 그 탭이 안 골라짐, 사용자 지적) → 뗀 뒤에, 그 이벤트 처리가 끝난 다음 바꾼다
-			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .rightMouseDown]) { [weak self] e in
+			// 누르는 순간 초점을 옮긴다. 예전엔 탭이 떼는 순간 골라져서(탭 제스처) 초점을 뗀 뒤로 미뤘는데,
+			// 표(AppKit)는 누른 뒤 떼기까지 이벤트를 직접 받아 떼기가 여기 안 와서 칸을 눌러도 초점이 안 바뀌었다 (사용자 지적).
+			// 탭도 이제 누르는 순간 고르므로(MouseDownCatcher) 둘 다 누르는 순간에 맞춘다
+			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
 				if let self, e.window === self.window, !self.isHidden,
 				   self.bounds.contains(self.convert(e.locationInWindow, from: nil)) {
 					DispatchQueue.main.async { self.onClick() }
