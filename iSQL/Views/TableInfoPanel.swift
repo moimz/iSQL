@@ -14,16 +14,25 @@ struct AddExportGroup: View {
 	let export: () -> Void
 
 	var body: some View {
-		ControlGroup {
-			Button { add?() } label: { Image(systemName: "plus") }
-				.help(addHelp)
-				.disabled(add == nil)
-			if showsRemove {
-				Button { remove?() } label: { Image(systemName: "minus") }
-					.help(removeHelp)
-					.disabled(remove == nil)
+		// [+ −] 알약 하나(사이 구분선 없이) + 내보내기 따로. ControlGroup 은 칸마다 구분선이 생겨 + | − | 내보내기 가 복잡했다 (사용자)
+		HStack(spacing: 8) {
+			HStack(spacing: 0) {
+				Button { add?() } label: { Image(systemName: "plus").frame(width: 30, height: 28).contentShape(Rectangle()) }
+					.help(addHelp)
+					.disabled(add == nil)
+				if showsRemove {
+					Button { remove?() } label: { Image(systemName: "minus").frame(width: 30, height: 28).contentShape(Rectangle()) }
+						.help(removeHelp)
+						.disabled(remove == nil)
+				}
 			}
-			Button(action: export) { Image(systemName: "square.and.arrow.up") }
+			.buttonStyle(.borderless)
+			.padding(.horizontal, 4)
+			.glassEffect(.regular.interactive(), in: Capsule())
+			Button(action: export) { Image(systemName: "square.and.arrow.up").frame(width: 30, height: 28).contentShape(Rectangle()) }
+				.buttonStyle(.borderless)
+				.padding(.horizontal, 4)
+				.glassEffect(.regular.interactive(), in: Capsule())
 				.help(exportHelp)
 		}
 		.fixedSize()
@@ -207,7 +216,6 @@ struct TableInfoPanel: View {
 				HStack(spacing: 0) {
 					Button { addingIndex = true } label: { Image(systemName: "plus").frame(width: 24, height: 16) }
 						.help("인덱스 추가")
-					Divider().frame(height: 14)
 					Button {
 						if let ix = inspector.indexes.first(where: { $0.name == selectedIndex }) {
 							pending = ("인덱스 \(ix.name) 을(를) 지울까요?", inspector.dropIndexSQL(ix))

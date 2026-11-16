@@ -65,7 +65,7 @@ struct TabArea: View {
 					Divider()
 					TableInfoPanel(session: focusedSession, inspector: focusedSession.inspector(for: t), columns: focusedSession.columns[t.id] ?? [])
 						.id(t.id)
-						.frame(width: 320)
+						.frame(width: 400)
 						.transition(.move(edge: .trailing))
 				}
 			}

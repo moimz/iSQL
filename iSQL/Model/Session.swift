@@ -438,8 +438,11 @@ final class Session {
 
 	// MARK: 테이블 정보 패널 (구조 보기 오른쪽)
 
-	/// 구조 보기에서 테이블 정보 패널을 펼쳤는지 (탭을 바꿔도 그대로)
-	var showTableInfo = false
+	/// 구조 보기에서 테이블 정보 패널을 펼쳤는지 (탭을 바꿔도 그대로).
+	/// 처음엔 펼쳐 두고(사용자: 인덱스가 점점 복잡해진다), 닫으면 닫은 채로 기억한다 (UserDefaults "showTableInfo", 이 맥에만)
+	var showTableInfo = UserDefaults.standard.object(forKey: "showTableInfo") as? Bool ?? true {
+		didSet { UserDefaults.standard.set(showTableInfo, forKey: "showTableInfo") }
+	}
 	/// 엔진·문자셋·콜레이션 목록 (패널을 처음 열 때 읽는다)
 	private(set) var catalog = ServerCatalog()
 	@ObservationIgnored private var catalogLoaded = false
