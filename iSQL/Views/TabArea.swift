@@ -402,7 +402,9 @@ struct TabBar: View {
 				} close: {
 					close(id)
 				}
-				.draggable(session.server.map { TabDrag(side: .left, server: $0.id, tab: id).string } ?? "")
+				.draggable(session.server.map { TabDrag(side: .left, server: $0.id, tab: id).string } ?? "") {
+					TabDragPreview(title: session.table(id)?.name ?? Session.databaseOf(tab: id) ?? id, isDatabase: Session.databaseOf(tab: id) != nil)
+				}
 				.dropDestination(for: String.self) { items, _ in drop(items, id) } isTargeted: { on in
 					if on { dropTarget = id } else if dropTarget == id { dropTarget = nil }
 				}
@@ -410,6 +412,8 @@ struct TabBar: View {
 				.id(id)
 			}
 		}
+		// 탭을 옮기면 탭바 안에서만 짧게 미끄러지게 (바깥 묶음에 animation 을 걸면 표까지 프레임마다 다시 배치된다)
+		.animation(.easeOut(duration: 0.18), value: session.tabs)
 		.frame(height: 36)
 		// 탭이 없는 빈 곳에 놓으면 맨 뒤로
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) }
@@ -453,7 +457,9 @@ struct ParkedTabBar: View {
 				} close: {
 					close(p)
 				}
-				.draggable(TabDrag(side: .right, server: p.server, tab: p.tab).string)
+				.draggable(TabDrag(side: .right, server: p.server, tab: p.tab).string) {
+					TabDragPreview(title: t?.name ?? Session.databaseOf(tab: p.tab) ?? p.tab, isDatabase: Session.databaseOf(tab: p.tab) != nil)
+				}
 				.dropDestination(for: String.self) { items, _ in drop(items, p) } isTargeted: { on in
 					if on { dropTarget = p } else if dropTarget == p { dropTarget = nil }
 				}
@@ -461,6 +467,7 @@ struct ParkedTabBar: View {
 				.id(p.key)
 			}
 		}
+		.animation(.easeOut(duration: 0.18), value: model.parkedTabs)
 		.frame(height: 36)
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) }
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
@@ -471,6 +478,24 @@ struct ParkedTabBar: View {
 		return model.parkedTabs.contains { q in
 			q != p && model.sessions[q.server]?.table(q.tab)?.name == t.name
 		}
+	}
+}
+
+/// 탭을 끄는 동안 마우스에 붙는 작은 알약 (탭 전체를 찍은 그림은 배경·크기가 어색했다)
+struct TabDragPreview: View {
+	let title: String
+	var isDatabase = false
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Image(systemName: isDatabase ? "cylinder.split.1x2" : "tablecells").foregroundStyle(Color.accentColor)
+			Text(title).lineLimit(1)
+		}
+		.font(.system(size: 13, weight: .medium))
+		.padding(.horizontal, 12)
+		.frame(height: 28)
+		.background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+		.overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.6)))
 	}
 }
 
@@ -534,10 +559,12 @@ struct PaneClickWatcher: NSViewRepresentable {
 			super.viewDidMoveToWindow()
 			if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
 			guard window != nil else { return }
-			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
+			// 누르는 순간 초점을 바꾸면 탭바가 다시 그려지며 진행 중인 탭 클릭(떼는 순간에 일어남)이 사라졌다
+			// (오른쪽에 초점이 있을 때 왼쪽 탭을 눌러도 그 탭이 안 골라짐, 사용자 지적) → 뗀 뒤에, 그 이벤트 처리가 끝난 다음 바꾼다
+			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp, .rightMouseDown]) { [weak self] e in
 				if let self, e.window === self.window, !self.isHidden,
 				   self.bounds.contains(self.convert(e.locationInWindow, from: nil)) {
-					self.onClick()
+					DispatchQueue.main.async { self.onClick() }
 				}
 				return e
 			}
