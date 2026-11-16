@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// 설정 창 > 사용자 계정 (Mail 계정 설정 모양): 왼쪽 테두리 목록 + 아래 [+ −] [↻],
 /// 오른쪽 탭 상자 [일반 | 전역 권한 | 데이터베이스별 권한 | SHOW GRANTS]
@@ -134,24 +135,19 @@ struct UserAccountsView: View {
 		.padding(.top, 11)
 	}
 
-	/// 목록 아래: Mail 처럼 표준 [+ | −] 묶음, 오른쪽에 다시 읽기
+	/// 목록 아래: Mail 처럼 AppKit [+ | −] (SwiftUI ControlGroup 은 맥 26 에서 알약 모양이라 위 네모 상자들과 어색했다), 오른쪽에 다시 읽기
 	private var listButtons: some View {
 		HStack(spacing: 8) {
-			ControlGroup {
-				Button { addingUser = true } label: { Image(systemName: "plus") }
-					.help("사용자 추가")
-				Button { confirmDrop = true } label: { Image(systemName: "minus") }
-					.help("고른 사용자 삭제…")
-					.disabled(selected == nil)
-			}
-			.fixedSize()
+			PlusMinusControl(removeEnabled: selected != nil, add: { addingUser = true }, remove: { confirmDrop = true })
+				.fixedSize()
 			Spacer(minLength: 0)
 			Button { Task { await manager.load() } } label: {
 				if manager.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
 			}
+			.buttonStyle(.bordered)
+			.buttonBorderShape(.roundedRectangle)
 			.help("다시 읽기")
 		}
-		.controlSize(.large)
 	}
 
 	// MARK: 고른 계정
@@ -512,5 +508,38 @@ struct AccountTile: View {
 					.foregroundStyle(.white)
 			}
 			.shadow(color: .black.opacity(0.2), radius: 1, y: 0.5)
+	}
+}
+
+/// Mail 계정 목록 아래와 같은 [+ | −] (NSSegmentedControl, 누르는 순간만 눌림)
+struct PlusMinusControl: NSViewRepresentable {
+	var removeEnabled: Bool
+	let add: () -> Void
+	let remove: () -> Void
+
+	func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	func makeNSView(context: Context) -> NSSegmentedControl {
+		let images = ["plus", "minus"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
+		let c = NSSegmentedControl(images: images, trackingMode: .momentary, target: context.coordinator, action: #selector(Coordinator.clicked(_:)))
+		c.setToolTip("사용자 추가", forSegment: 0)
+		c.setToolTip("고른 사용자 삭제…", forSegment: 1)
+		c.setWidth(32, forSegment: 0)
+		c.setWidth(32, forSegment: 1)
+		c.setEnabled(removeEnabled, forSegment: 1)
+		return c
+	}
+
+	func updateNSView(_ c: NSSegmentedControl, context: Context) {
+		context.coordinator.parent = self
+		c.setEnabled(removeEnabled, forSegment: 1)
+	}
+
+	final class Coordinator: NSObject {
+		var parent: PlusMinusControl
+		init(_ p: PlusMinusControl) { parent = p }
+		@objc func clicked(_ sender: NSSegmentedControl) {
+			if sender.selectedSegment == 0 { parent.add() } else { parent.remove() }
+		}
 	}
 }
