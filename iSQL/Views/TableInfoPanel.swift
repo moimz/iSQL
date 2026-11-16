@@ -1,6 +1,23 @@
 import SwiftUI
 
-/// 하단바 맨 앞의 [+ | (−) | 내보내기] 묶음 (DB 개요: + = 테이블 만들기, 구조 보기: + = 컬럼 추가, − = 고른 컬럼 지우기)
+/// 하단바 유리 알약: 아이콘 버튼 여러 개를 구분선 없이 한 알약에 (ControlGroup 은 칸마다 구분선이 들어간다)
+struct PillIcon: View {
+	let systemName: String
+	var body: some View {
+		Image(systemName: systemName).frame(width: 30, height: 28).contentShape(Rectangle())
+	}
+}
+
+extension View {
+	/// 하단바 유리 알약 모양 (안의 버튼은 테두리 없이)
+	func pill() -> some View {
+		buttonStyle(.borderless)
+			.padding(.horizontal, 4)
+			.glassEffect(.regular.interactive(), in: Capsule())
+	}
+}
+
+/// 하단바 맨 앞의 [+ (−)] 알약 + [내보내기] 알약 (DB 개요: + = 테이블 만들기, 구조 보기: + = 컬럼 추가, − = 고른 컬럼 지우기)
 struct AddExportGroup: View {
 	let addHelp: String
 	/// nil 이면 + 는 흐리게 (아직 기능 없음)
@@ -17,23 +34,17 @@ struct AddExportGroup: View {
 		// [+ −] 알약 하나(사이 구분선 없이) + 내보내기 따로. ControlGroup 은 칸마다 구분선이 생겨 + | − | 내보내기 가 복잡했다 (사용자)
 		HStack(spacing: 8) {
 			HStack(spacing: 0) {
-				Button { add?() } label: { Image(systemName: "plus").frame(width: 30, height: 28).contentShape(Rectangle()) }
+				Button { add?() } label: { PillIcon(systemName: "plus") }
 					.help(addHelp)
 					.disabled(add == nil)
 				if showsRemove {
-					Button { remove?() } label: { Image(systemName: "minus").frame(width: 30, height: 28).contentShape(Rectangle()) }
+					Button { remove?() } label: { PillIcon(systemName: "minus") }
 						.help(removeHelp)
 						.disabled(remove == nil)
 				}
 			}
-			.buttonStyle(.borderless)
-			.padding(.horizontal, 4)
-			.glassEffect(.regular.interactive(), in: Capsule())
-			Button(action: export) { Image(systemName: "square.and.arrow.up").frame(width: 30, height: 28).contentShape(Rectangle()) }
-				.buttonStyle(.borderless)
-				.padding(.horizontal, 4)
-				.glassEffect(.regular.interactive(), in: Capsule())
-				.help(exportHelp)
+			.pill()
+			ExportButton(help: exportHelp, action: export)
 		}
 		.fixedSize()
 	}
@@ -216,6 +227,8 @@ struct TableInfoPanel: View {
 				HStack(spacing: 0) {
 					Button { addingIndex = true } label: { Image(systemName: "plus").frame(width: 24, height: 16) }
 						.help("인덱스 추가")
+					// 맥 목록 아래 [+ | −] 는 구분선이 표준
+					Divider().frame(height: 14)
 					Button {
 						if let ix = inspector.indexes.first(where: { $0.name == selectedIndex }) {
 							pending = ("인덱스 \(ix.name) 을(를) 지울까요?", inspector.dropIndexSQL(ix))

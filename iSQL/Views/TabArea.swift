@@ -83,7 +83,7 @@ struct TabArea: View {
 		.onChange(of: session.leftFocusTick) {
 			model.splitFocus = .left
 		}
-		// 제목바 오른쪽 끝: [검색 | 새로 고침] (데이터 보기일 때) + [데이터 | 구조].
+		// 제목바 오른쪽 끝: [검색] (데이터 보기일 때) + [데이터 | 구조]. 다시 읽기는 하단바 맨 오른쪽.
 		// 창 전체가 아니라 detail 본문 뷰에 붙여야 오른쪽 정렬과 묶음 나누기가 된다 (Ai/iSQL.md 툴바 규칙)
 		.toolbar {
 			ToolbarSpacer(.flexible)
@@ -98,13 +98,7 @@ struct TabArea: View {
 								.foregroundStyle(d.showFilter || !d.whereClause.isEmpty ? Color.accentColor : Color.primary)
 						}
 						.help(d.whereClause.isEmpty ? "조건으로 찾기 (⌥⌘F)" : "조건으로 찾기 (⌥⌘F)\nWHERE \(d.whereClause)")
-						Button {
-							// 다시 읽으면 저장 안 한 변경이 사라지므로 그때는 하지 않는다
-							if d.hasChanges { NSSound.beep() } else { Task { await d.load(offset: d.offset) } }
-						} label: {
-							Image(systemName: "arrow.clockwise")
-						}
-						.help(d.hasChanges ? "저장 안 된 변경이 있어 다시 읽지 않습니다" : "데이터 다시 읽기")
+						// 다시 읽기는 하단바 맨 오른쪽으로 옮겼다 (사용자)
 					}
 					ToolbarSpacer(.fixed)
 				}
@@ -533,11 +527,14 @@ struct TabDragPreview: View {
 			Image(systemName: isDatabase ? "cylinder.split.1x2" : "tablecells").foregroundStyle(Color.accentColor)
 			Text(title).lineLimit(1)
 		}
-		.font(.system(size: 13, weight: .medium))
+		// 탭바의 탭 모양 그대로 (네모, 위에 강조색 줄)
+		.font(.system(size: 13, weight: .semibold))
 		.padding(.horizontal, 12)
-		.frame(height: 28)
-		.background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
-		.overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.6)))
+		.frame(height: 36)
+		.frame(minWidth: 110, alignment: .leading)
+		.background(Color(nsColor: .windowBackgroundColor))
+		.overlay(alignment: .top) { Rectangle().fill(Color.accentColor).frame(height: 2) }
+		.overlay(Rectangle().strokeBorder(Color.secondary.opacity(0.3)))
 	}
 }
 
@@ -653,7 +650,7 @@ struct PaneClickWatcher: NSViewRepresentable {
 			monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
 				if let self, e.window === self.window, !self.isHidden,
 				   self.bounds.contains(self.convert(e.locationInWindow, from: nil)) {
-					DispatchQueue.main.async { self.onClick() }
+					self.onClick()
 				}
 				return e
 			}
@@ -698,10 +695,13 @@ struct MouseDownCatcher: NSViewRepresentable {
 				guard let self, self.enabled, e.window === self.window, !self.isHiddenOrHasHiddenAncestor,
 				      !e.modifierFlags.contains(.control) else { return e }
 				let p = self.convert(e.locationInWindow, from: nil)
-				// visibleRect: 탭바 스크롤에 가려진 부분은 빼고
-				if self.visibleRect.contains(p), p.x < self.bounds.maxX - self.excludeTrailing {
-					let run = self.action
-					DispatchQueue.main.async { run() }
+				// 자기 탭 안(bounds)이면서 탭바 스크롤에 가려지지 않은 곳(visibleRect)만.
+				// visibleRect 만 보면 SwiftUI 안에서는 탭바 전체 너비가 나와 한 번 누르면 모든 탭이 반응했다
+				// (마지막에 반응한 탭이 골라져 "씹히는" 것처럼 보였다)
+				if self.bounds.contains(p), self.visibleRect.contains(p), p.x < self.bounds.maxX - self.excludeTrailing {
+					// 바로 실행: 뒤로 미루면(main.async) 탭 끌기 감지가 누르고 있는 동안 실행을 붙잡아
+					// 오래 누르면 안 골라지고 끌어야 골라졌다 (사용자 지적)
+					self.action()
 				}
 				return e
 			}

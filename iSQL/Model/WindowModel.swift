@@ -72,6 +72,7 @@ final class WindowModel {
 		let s = sessions[server.id] ?? Session()
 		let sid = server.id
 		s.focusParked = { [weak self] tab in self?.focusParked(ParkedTab(server: sid, tab: tab)) }
+		s.closeParkedTab = { [weak self] tab in self?.closeParked(ParkedTab(server: sid, tab: tab)) }
 		sessions[server.id] = s
 		Task { await s.connect(server, mysqlPassword: pw.mysql, sshSecret: pw.ssh) }
 	}

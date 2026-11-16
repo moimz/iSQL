@@ -310,6 +310,13 @@ struct StructureBody: View {
 			}
 			Spacer()
 			Text("컬럼 \(editor.rowCount)개").foregroundStyle(.secondary).monospacedDigit()
+			Button {
+				if editor.hasChanges { NSSound.beep() } else { Task { await editor.load() } }
+			} label: {
+				if editor.loading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
+			}
+			.pill()
+			.help("구조 다시 읽기")
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 14)

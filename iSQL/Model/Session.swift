@@ -169,6 +169,8 @@ final class Session {
 	private(set) var leftFocusTick = 0
 	/// 오른쪽에 있는 탭을 사이드바에서 다시 열면: 그 탭에 초점 (창이 넣어 준다)
 	@ObservationIgnored var focusParked: ((String) -> Void)?
+	/// 오른쪽에 있는 이 서버 탭을 닫아 달라 (지운 테이블, 창이 넣어 준다)
+	@ObservationIgnored var closeParkedTab: ((String) -> Void)?
 	/// 사이드바에서 펼친 DB (처음엔 모두 접힘)
 	var expanded: Set<String> = [] { didSet { rememberTabs() } }
 	/// 끊을 때 비우는 동안은 기억하지 않는다 (다음 접속에 복원해야 하니까)
@@ -290,6 +292,13 @@ final class Session {
 		setUnsaved(id, false)
 		if activeTab == id { activeTab = tabs.isEmpty ? nil : tabs[min(i, tabs.count - 1)] }
 		rememberTabs()
+	}
+
+	/// 지운 테이블의 탭(왼쪽·오른쪽, 사본까지)을 닫는다
+	func closeTabs(ofTables ids: Set<String>) {
+		guard !ids.isEmpty else { return }
+		for t in tabs where ids.contains(Self.tableID(ofTab: t)) { closeTab(t) }
+		for t in parked where ids.contains(Self.tableID(ofTab: t)) { closeParkedTab?(t) }
 	}
 
 	/// 왼쪽 탭을 고른다 (탭바 누르기)

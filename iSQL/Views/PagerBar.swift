@@ -23,9 +23,13 @@ protocol Pager: AnyObject {
 	var isEmptyResult: Bool { get }
 }
 
-/// 쪽 줄 오른쪽: ~140,000행 ↻  < [ 3 ] / ~467 >  [300행]
+/// 쪽 줄 오른쪽: ~140,000행 ↻  [‹ 3 / ~467 ›]  [300행 ⌄]  [↻ 다시 읽기]  (모두 유리 알약)
 struct PagerBar: View {
 	let pager: Pager
+	/// 맨 오른쪽 다시 읽기 (nil 이면 없음). 제목바 새로 고침을 여기로 옮겼다 (사용자)
+	var reload: (() -> Void)? = nil
+	var reloadHelp = "다시 읽기"
+	var reloading = false
 
 	var body: some View {
 		HStack(spacing: 10) {
@@ -55,17 +59,44 @@ struct PagerBar: View {
 				Text("행 없음").foregroundStyle(.secondary)
 			}
 			if pager.pageable {
-				Button { Task { await pager.goPage(pager.page - 1) } } label: { Image(systemName: "chevron.left") }
-					.disabled(pager.offset == 0)
-					.help("이전 쪽")
-				PageField(pager: pager)
-				Button { Task { await pager.goPage(pager.page + 1) } } label: { Image(systemName: "chevron.right") }
-					.disabled(!pager.hasMore)
-					.help("다음 쪽")
-				PopUp(selection: Binding(get: { pager.pageSize }, set: { n in Task { await pager.setPageSize(n) } }),
-				      options: TableData.pageSizes.map { ("\($0)행", Optional($0)) })
-					.frame(width: 90)
-					.help("한 쪽에 보일 행 수")
+				HStack(spacing: 0) {
+					Button { Task { await pager.goPage(pager.page - 1) } } label: { PillIcon(systemName: "chevron.left") }
+						.disabled(pager.offset == 0)
+						.help("이전 쪽")
+					PageField(pager: pager)
+					Button { Task { await pager.goPage(pager.page + 1) } } label: { PillIcon(systemName: "chevron.right") }
+						.disabled(!pager.hasMore)
+						.help("다음 쪽")
+				}
+				.pill()
+				Menu {
+					ForEach(TableData.pageSizes, id: \.self) { n in
+						Button { Task { await pager.setPageSize(n) } } label: {
+							if n == pager.pageSize { Label("\(n)행", systemImage: "checkmark") } else { Text("\(n)행") }
+						}
+					}
+				} label: {
+					// 메뉴 라벨은 아이콘을 앞으로 옮겨서, 화살표는 글자에 이어 붙인다
+					(Text("\(pager.pageSize)행 ").monospacedDigit()
+					 + Text(Image(systemName: "chevron.up.chevron.down")).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary))
+					.padding(.horizontal, 8)
+					.frame(height: 28)
+					.contentShape(Rectangle())
+				}
+				.menuIndicator(.hidden)
+				.fixedSize()
+				// 메뉴는 라벨 높이를 무시해서 알약이 낮아졌다 → 메뉴 자체에 높이
+				.padding(.horizontal, 6)
+				.frame(height: 28)
+				.pill()
+				.help("한 쪽에 보일 행 수")
+			}
+			if let reload {
+				Button(action: reload) {
+					if reloading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
+				}
+				.pill()
+				.help(reloadHelp)
 			}
 		}
 	}
@@ -80,10 +111,11 @@ struct PageField: View {
 	var body: some View {
 		HStack(spacing: 5) {
 			TextField("", text: $text)
-				.textFieldStyle(.roundedBorder)
+				.textFieldStyle(.plain)
 				.multilineTextAlignment(.center)
 				.monospacedDigit()
-				.frame(width: 56)
+				.frame(width: 44, height: 20)
+				.background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
 				.focused($focused)
 				.onSubmit {
 					if let p = Int(text.trimmingCharacters(in: .whitespaces)) { Task { await pager.goPage(p) } }

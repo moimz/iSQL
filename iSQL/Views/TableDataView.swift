@@ -159,16 +159,24 @@ struct TableDetailView: View {
 
 	private var footer: some View {
 		HStack(spacing: 10) {
-			ExportButton { session.requestExport(.data(data)) }
+			// [+ −] 알약(행 추가·고른 행 지우기) + [내보내기] 알약. 고칠 수 없는 표는 내보내기만
 			if data.canEdit {
-				Button { data.addRow() } label: { Label("행 추가", systemImage: "plus") }
-				Button { data.toggleDelete(selection) } label: { Label("삭제", systemImage: "minus") }
-					.disabled(selection.isEmpty)
-			} else if let why = data.readOnlyReason {
-				Label(why, systemImage: "lock").foregroundStyle(.secondary)
+				AddExportGroup(addHelp: "행 추가", add: { data.addRow() },
+				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				               remove: selection.isEmpty ? nil : { data.toggleDelete(selection) },
+				               exportHelp: "내보내기") { session.requestExport(.data(data)) }
+			} else {
+				ExportButton { session.requestExport(.data(data)) }
+				if let why = data.readOnlyReason {
+					Label(why, systemImage: "lock").foregroundStyle(.secondary)
+				}
 			}
 			Spacer()
-			PagerBar(pager: data)
+			PagerBar(pager: data, reload: {
+				// 다시 읽으면 저장 안 한 변경이 사라지므로 그때는 하지 않는다
+				if data.hasChanges { NSSound.beep() } else { Task { await data.load(offset: data.offset) } }
+			}, reloadHelp: data.hasChanges ? "저장 안 된 변경이 있어 다시 읽지 않습니다" : "데이터 다시 읽기",
+			   reloading: data.loading)
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 14)

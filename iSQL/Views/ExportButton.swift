@@ -4,15 +4,13 @@ import UniformTypeIdentifiers
 
 /// 하단바 "내보내기" 버튼: 누르면 세션에 요청 → 창이 제목바 시트(ExportSheet)를 띄운다
 struct ExportButton: View {
+	var help = "내보내기"
 	let action: () -> Void
 	var body: some View {
-		Button(action: action) {
-			HStack(spacing: 5) {
-				Image(systemName: "square.and.arrow.up")
-				Text("내보내기")
-			}
-		}
-		.help("내보내기")
+		// 아이콘만, 유리 알약 (하단바 [+ −] 알약과 같은 모양)
+		Button(action: action) { PillIcon(systemName: "square.and.arrow.up") }
+			.pill()
+			.help(help)
 	}
 }
 
