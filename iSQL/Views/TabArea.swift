@@ -264,12 +264,23 @@ struct TabArea: View {
 		return min(max(w, 280), max(280, total - 280))
 	}
 
-	/// 두 칸 사이 경계: 끌어서 오른쪽 칸 너비를 바꾼다
+	/// 두 칸 사이 경계: 끌어서 오른쪽 칸 너비를 바꾼다.
+	/// 1pt 선은 분할이 한눈에 안 보여서(사용자 지적) 양쪽 테두리 + 어두운 띠 + 가운데 손잡이
 	private func splitHandle(total: CGFloat) -> some View {
-		Divider()
+		HStack(spacing: 0) {
+			Divider()
+			// 표 바탕과 확실히 달라 보이게: 글자색을 옅게 깐 띠 (다크면 밝은 회색, 라이트면 어두운 회색).
+			// 창 바탕색·underPageBackground 는 다크 모드 표 줄무늬와 거의 같아 안 보였다 (화면으로 확인)
+			Color.primary.opacity(0.13)
+				.frame(width: 7)
+				.overlay {
+					Capsule().fill(Color.primary.opacity(0.45)).frame(width: 3, height: 36)
+				}
+			Divider()
+		}
 			.overlay {
 				Color.clear
-					.frame(width: 8)
+					.frame(width: 12)
 					.contentShape(Rectangle())
 					.onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
 					.gesture(DragGesture(minimumDistance: 1)
