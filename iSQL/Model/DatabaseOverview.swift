@@ -89,28 +89,6 @@ final class DatabaseOverview: GridSource {
 		return picked.isEmpty ? order.map { stats[$0] } : picked
 	}
 
-	/// 테이블·뷰 삭제 (DB 개요 − 버튼, 물어본 뒤). 열린 탭은 닫고 목록을 다시 읽는다. 실패하면 오류 글자
-	@MainActor
-	func drop(_ list: [TableStat]) async -> String? {
-		guard let session, !list.isEmpty else { return nil }
-		func names(_ l: [TableStat]) -> String { l.map { "\(quoteName(schema)).\(quoteName($0.name))" }.joined(separator: ", ") }
-		let tables = list.filter { !$0.isView }, views = list.filter(\.isView)
-		var failure: String?
-		do {
-			if !views.isEmpty { _ = try await session.query("DROP VIEW \(names(views))") }
-			if !tables.isEmpty { _ = try await session.query("DROP TABLE \(names(tables))") }
-		} catch {
-			failure = error.localizedDescription
-		}
-		// 일부만 지워졌을 수도 있으니 실패해도 다시 읽는다
-		try? await session.loadSchema()
-		let left = Set(session.tables.filter { $0.schema == schema }.map(\.name))
-		session.closeTabs(ofTables: Set(list.map { schema + "." + $0.name }.filter { !left.contains(String($0.dropFirst(schema.count + 1))) }))
-		selection = []
-		await load()
-		return failure
-	}
-
 	/// 보이는 순서의 전체
 	var orderedStats: [TableStat] { order.map { stats[$0] } }
 
@@ -184,14 +162,16 @@ final class DatabaseOverview: GridSource {
 			return [
 				.action("선택 테이블 \(picked.count)개 내보내기…") { [weak self] in self?.requestExportPicked() },
 				.separator,
-				.disabled("선택 테이블 비우기…"),
-				.disabled("선택 테이블 삭제…"),
+				.action("선택 테이블 \(picked.count)개 비우기…") { [weak self] in guard let self else { return }; self.session?.requestTruncate(schema: self.schema, picked) },
+				.action("선택 테이블 \(picked.count)개 삭제…") { [weak self] in guard let self else { return }; self.session?.requestDrop(schema: self.schema, picked) },
 			]
 		}
 		guard let s = stat(at: row) else { return [] }
 		return TableMenu.items(isView: s.isView,
 		                       open: { [weak self] in self?.activateRow(row) },
-		                       export: { [weak self] in guard let self else { return }; self.session?.requestExport(.table(self.schema, s)) })
+		                       export: { [weak self] in guard let self else { return }; self.session?.requestExport(.table(self.schema, s)) },
+		                       truncate: { [weak self] in guard let self else { return }; self.session?.requestTruncate(schema: self.schema, [s]) },
+		                       drop: { [weak self] in guard let self else { return }; self.session?.requestDrop(schema: self.schema, [s]) })
 	}
 
 	var currentSort: (key: String, ascending: Bool)? { sortState }

@@ -72,6 +72,22 @@ struct ContentView: View {
 		.sheet(item: Binding(get: { model.current?.createTableRequest }, set: { model.current?.createTableRequest = $0 })) { req in
 			if let s = model.current { CreateTableSheet(request: req, session: s) }
 		}
+		// 테이블 삭제·비우기 확인 (DB 개요 −·오른쪽 클릭 메뉴 어디서 불러도 여기 하나)
+		.confirmationDialog(model.current?.tableAction?.title ?? "",
+		                    isPresented: Binding(get: { model.current?.tableAction != nil }, set: { if !$0 { model.current?.tableAction = nil } })) {
+			Button(model.current?.tableAction?.kind == .truncate ? "비우기" : "삭제", role: .destructive) {
+				guard let s = model.current, let r = s.tableAction else { return }
+				s.tableAction = nil
+				Task { await s.perform(r) }
+			}
+		} message: {
+			Text(model.current?.tableAction?.message ?? "")
+		}
+		.alert("실행하지 못했습니다", isPresented: Binding(get: { model.current?.tableActionError != nil }, set: { if !$0 { model.current?.tableActionError = nil } })) {
+			Button("확인") { model.current?.tableActionError = nil }
+		} message: {
+			Text(model.current?.tableActionError ?? "")
+		}
 		// 그룹 추가: 제목바에 붙는 시트
 		.sheet(isPresented: $model.addingGroup) {
 			GroupAddSheet { model.onGroupAdded?($0) }

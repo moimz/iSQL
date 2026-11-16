@@ -47,8 +47,10 @@ enum GridMenuItem {
 /// 테이블 하나의 오른쪽 클릭 메뉴 (사이드바 테이블·DB 개요에서 하나 골랐을 때 같은 순서).
 /// 자주 쓰는 것 위, 되돌릴 수 없는 것 맨 아래
 enum TableMenu {
-	static func items(isView: Bool, open: @escaping () -> Void, export: @escaping () -> Void) -> [GridMenuItem] {
+	static func items(isView: Bool, open: @escaping () -> Void, export: @escaping () -> Void,
+	                  truncate: (() -> Void)? = nil, drop: (() -> Void)? = nil) -> [GridMenuItem] {
 		let kind = isView ? "뷰" : "테이블"
+		func item(_ title: String, _ run: (() -> Void)?) -> GridMenuItem { run.map { .action(title, $0) } ?? .disabled(title) }
 		return [
 			.action("열기", open),
 			.separator,
@@ -56,8 +58,8 @@ enum TableMenu {
 			.disabled("\(kind) 복제…"),
 			.disabled("\(kind) 이름 바꾸기…"),
 			.separator,
-		] + (isView ? [] : [GridMenuItem.disabled("테이블 비우기…")]) + [
-			.disabled("\(kind) 삭제…"),
+		] + (isView ? [] : [item("테이블 비우기…", truncate)]) + [
+			item("\(kind) 삭제…", drop),
 		]
 	}
 }

@@ -2,6 +2,27 @@ import Foundation
 import Observation
 
 /// 테이블 하나 (모든 DB 의 테이블을 한 목록으로 보여 주려고 DB 이름을 같이 가진다)
+/// 테이블 삭제·비우기 요청
+struct TableActionRequest: Identifiable {
+	enum Kind { case drop, truncate }
+	let id = UUID()
+	let kind: Kind
+	let schema: String
+	let tables: [TableStat]
+
+	var title: String {
+		let verb = kind == .drop ? "삭제할까요?" : "비울까요?"
+		if tables.count == 1 { return "\(tables[0].isView ? "뷰" : "테이블") \(tables[0].name) 을(를) \(verb)" }
+		return "\(tables.count)개를 \(verb)"
+	}
+
+	var message: String {
+		let names = tables.prefix(10).map(\.name).joined(separator: ", ") + (tables.count > 10 ? " 외 \(tables.count - 10)개" : "")
+		let what = kind == .drop ? "데이터와 구조가 모두 지워지며" : "구조는 남고 모든 행이 지워지며(AUTO_INCREMENT 도 처음으로)"
+		return "\(schema): \(names)\n\(what) 되돌릴 수 없습니다."
+	}
+}
+
 struct TableInfo: Identifiable, Hashable {
 	var schema: String
 	var name: String
@@ -207,6 +228,55 @@ final class Session {
 
 	/// 데이터베이스 복제 요청 (창이 제목바 시트로 띄운다)
 	var duplicateRequest: DuplicateRequest?
+
+	/// 테이블 삭제·비우기 요청 (어디서 부르든 창이 확인 창 하나로 묻는다: DB 개요 −, 오른쪽 클릭 메뉴)
+	var tableAction: TableActionRequest?
+	/// 삭제·비우기 실패 글자 (창이 알림으로 보인다)
+	var tableActionError: String?
+
+	func requestDrop(schema: String, _ tables: [TableStat]) {
+		guard !tables.isEmpty else { return }
+		tableAction = TableActionRequest(kind: .drop, schema: schema, tables: tables)
+	}
+
+	func requestTruncate(schema: String, _ tables: [TableStat]) {
+		let list = tables.filter { !$0.isView }
+		guard !list.isEmpty else { return }
+		tableAction = TableActionRequest(kind: .truncate, schema: schema, tables: list)
+	}
+
+	/// 확인받은 삭제·비우기 실행. 일부만 됐을 수 있으니 실패해도 목록·탭을 맞춘다
+	@MainActor
+	func perform(_ r: TableActionRequest) async {
+		func name(_ t: TableStat) -> String { quoteName(r.schema) + "." + quoteName(t.name) }
+		var failure: String?
+		switch r.kind {
+		case .drop:
+			let views = r.tables.filter(\.isView), bases = r.tables.filter { !$0.isView }
+			do {
+				if !views.isEmpty { _ = try await query("DROP VIEW " + views.map(name).joined(separator: ", ")) }
+				if !bases.isEmpty { _ = try await query("DROP TABLE " + bases.map(name).joined(separator: ", ")) }
+			} catch { failure = error.localizedDescription }
+			try? await loadSchema()
+			// 실제로 지워진 것만 탭을 닫는다
+			let left = Set(tables.filter { $0.schema == r.schema }.map(\.name))
+			closeTabs(ofTables: Set(r.tables.map(\.name).filter { !left.contains($0) }.map { r.schema + "." + $0 }))
+		case .truncate:
+			// TRUNCATE 는 테이블 하나씩. 외래 키로 막히면 거기서 멈춘다
+			for t in r.tables {
+				do { _ = try await query("TRUNCATE TABLE " + name(t)) } catch { failure = "\(t.name): \(error.localizedDescription)"; break }
+			}
+			try? await loadSchema()
+			// 열린 데이터 탭: 저장 안 한 변경이 없으면 다시 읽고, 있으면 "바뀜" 표시
+			let ids = Set(r.tables.map { r.schema + "." + $0.name })
+			for (tab, d) in openData where ids.contains(Self.tableID(ofTab: tab)) {
+				if d.hasChanges { d.stale = true } else if d.loaded { Task { await d.load() } }
+			}
+			for id in ids { if let t = table(id) { await reloadInspector(t) } }
+		}
+		if let o = overviews[r.schema] { o.selection = []; await o.load() }
+		tableActionError = failure
+	}
 
 	/// 새 테이블 만들기 요청 (창이 제목바 시트로 띄운다)
 	var createTableRequest: CreateTableRequest?

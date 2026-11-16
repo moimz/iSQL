@@ -374,10 +374,12 @@ struct SidebarTableMenu: View {
 	var body: some View {
 		let items = TableMenu.items(isView: table.isView,
 		                            open: { session.openTab(table) },
-		                            export: { session.requestExport(.table(table.schema, TableStat(table))) })
+		                            export: { session.requestExport(.table(table.schema, TableStat(table))) },
+		                            truncate: { session.requestTruncate(schema: table.schema, [TableStat(table)]) },
+		                            drop: { session.requestDrop(schema: table.schema, [TableStat(table)]) })
 		ForEach(items.indices, id: \.self) { i in
 			switch items[i] {
-			case .action(let title, let run): Button(title, action: run)
+			case .action(let title, let run): Button(title, role: title.hasSuffix("삭제…") ? .destructive : nil, action: run)
 			case .disabled(let title): Button(title, role: title.hasSuffix("삭제…") ? .destructive : nil) {}.disabled(true)
 			case .separator: Divider()
 			}
