@@ -149,31 +149,14 @@ struct UserAccountsView: View {
 
 	@ViewBuilder private var detail: some View {
 		if let a = selected {
-			// 상자 위 테두리에 걸친 탭 (Mail 계정 설정 모양).
-			// SwiftUI TabView 를 쓰면 설정 창이 안쪽 탭까지 창 위 아이콘 탭줄로 끌어올려서, 세그먼트 + 테두리 상자로 직접 그린다
-			Group {
-				switch detailTab {
-				case 1: page { globalSection(a) }
-				case 2: page { dbSection(a) }
-				case 3: page { grantsSection(a) }
-				default: page { generalTab(a) }
+			// 상자 위 테두리에 걸친 탭 (Mail 계정 설정과 같은 AppKit NSTabView)
+			BoxTabView(titles: ["일반", "전역 권한", "데이터베이스별 권한", "SHOW GRANTS"], selection: $detailTab) { i in
+				switch i {
+				case 1: AnyView(page { globalSection(a) })
+				case 2: AnyView(page { dbSection(a) })
+				case 3: AnyView(page { grantsSection(a) })
+				default: AnyView(page { generalTab(a) })
 				}
-			}
-			.padding(.top, 14)
-			.frame(maxWidth: .infinity, maxHeight: .infinity)
-			.background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.03)))
-			.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
-			.padding(.top, 12)
-			.overlay(alignment: .top) {
-				Picker("", selection: $detailTab) {
-					Text("일반").tag(0)
-					Text("전역 권한").tag(1)
-					Text("데이터베이스별 권한").tag(2)
-					Text("SHOW GRANTS").tag(3)
-				}
-				.pickerStyle(.segmented)
-				.labelsHidden()
-				.fixedSize()
 			}
 		} else {
 			ContentUnavailableView("계정을 고르세요", systemImage: "person.2",

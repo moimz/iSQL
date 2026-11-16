@@ -24,6 +24,8 @@ struct ServerSettingsView: View {
 			Tab("상태", systemImage: "chart.bar.xaxis", value: "status") { page { _ in soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수") }.frame(width: Self.width, height: 440) }
 			Tab("서버 설정", systemImage: "slider.horizontal.3", value: "variables") { page { _ in soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기") }.frame(width: Self.width, height: 440) }
 		}
+		// 맥 앱 설정창처럼 위 아이콘 탭줄에 배경 (맥 26 SwiftUI 설정창은 기본이 투명이었다)
+		.toolbarBackgroundVisibility(.visible, for: .windowToolbar)
 	}
 
 	private func soon(_ title: String, _ icon: String, _ what: String) -> some View {
