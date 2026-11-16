@@ -228,6 +228,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		private var columnSignature = ""
 		private var columns: [GridColumn] = []
 
+		// MARK: 컬럼 고정 (왼쪽 n개)
+		/// 고정 칸만 그리는 표: 스크롤 영역에 가로로만 떠 있다(세로로는 같이 움직인다). 본 표의 같은 컬럼 위를 덮는다
+		private lazy var frozen: GridTableView = makeFrozenTable()
+		private var frozenHeaderMenu: NSMenu?
+		private var frozenMenu: NSMenu?
+		/// 고정한 컬럼 수 (본 표의 보이는 순서로 왼쪽부터). 0 이면 고정 없음
+		private(set) var frozenCount = 0
+		/// 공급자마다 고정 수를 기억한다 (쿼리 결과처럼 표 하나를 돌려 쓰는 곳)
+		private var frozenBySource: [String: Int] = [:]
+		private var syncingSelection = false
+
 		init(source: GridSource) {
 			self.source = source
 			super.init()
@@ -256,11 +267,23 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			scroll.hasVerticalScroller = true
 			scroll.hasHorizontalScroller = true
 			scroll.autohidesScrollers = true
+			// 본 표 컬럼 너비·순서·표 크기가 바뀌면 고정 칸을 맞춘다
+			let nc = NotificationCenter.default
+			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSTableView.columnDidResizeNotification, object: table)
+			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSTableView.columnDidMoveNotification, object: table)
+			table.postsFrameChangedNotifications = true
+			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSView.frameDidChangeNotification, object: table)
+			scroll.postsFrameChangedNotifications = true
+			nc.addObserver(self, selector: #selector(mainColumnsChanged(_:)), name: NSView.frameDidChangeNotification, object: scroll)
 		}
+
+		deinit { NotificationCenter.default.removeObserver(self) }
 
 		/// 표 하나를 다른 공급자가 쓰게 바꾼다 (구조 화면·쿼리 결과). 공급자마다 스크롤 위치를 기억한다
 		func setSource(_ new: GridSource) {
 			if ObjectIdentifier(new) != ObjectIdentifier(source) {
+				frozenBySource[source.gridID] = frozenCount
+				setFrozen(0)
 				source.scrollOrigin = scroll.contentView.bounds.origin
 				table.window?.makeFirstResponder(nil)
 				table.deselectAll(nil)
@@ -269,6 +292,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				refresh()
 				scroll.contentView.scroll(to: new.scrollOrigin)
 				scroll.reflectScrolledClipView(scroll.contentView)
+				setFrozen(frozenBySource[new.gridID] ?? 0)
 			} else {
 				refresh()
 			}
@@ -301,6 +325,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				lastVersion = source.gridVersion
 				// 고치는 중인 칸이 있으면 다시 읽지 않는다 (입력이 날아감)
 				if table.currentEditor() == nil { table.reloadData() }
+				if frozenCount > 0, frozen.currentEditor() == nil { frozen.reloadData() }
 				applySortIndicator()
 			}
 			if let req = source.takeEditRequest(), req.row < table.numberOfRows {
@@ -352,6 +377,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			}
 			applySortIndicator()
 			table.reloadData()
+			if frozenCount > 0 { setFrozen(min(frozenCount, columns.count)) }
 		}
 
 		private func refreshHeaders() {
@@ -361,6 +387,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				cell.tag = (cell.tag & ~GridHeaderCell.keyBit) | (columns[i].isKey ? GridHeaderCell.keyBit : 0)
 			}
 			table.headerView?.needsDisplay = true
+			if frozenCount > 0 { rebuildFrozen() }
 		}
 
 		private static func initialWidth(_ col: GridColumn) -> CGFloat {
@@ -382,6 +409,131 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			return i
 		}
 
+		// MARK: 컬럼 고정
+
+		private func makeFrozenTable() -> GridTableView {
+			let f = GridTableView()
+			f.coordinator = self
+			f.style = .plain
+			f.usesAlternatingRowBackgroundColors = true
+			f.gridStyleMask = [.solidVerticalGridLineMask]
+			f.allowsMultipleSelection = true
+			f.allowsColumnReordering = false
+			f.columnAutoresizingStyle = .noColumnAutoresizing
+			f.rowHeight = table.rowHeight
+			f.intercellSpacing = table.intercellSpacing
+			f.headerView = NSTableHeaderView(frame: NSRect(x: 0, y: 0, width: 0, height: table.headerView?.frame.height ?? 28))
+			let hm = makeMenu()
+			frozenHeaderMenu = hm
+			f.headerView?.menu = hm
+			let m = makeMenu()
+			frozenMenu = m
+			f.menu = m
+			f.target = self
+			f.doubleAction = #selector(doubleClicked(_:))
+			f.verticalMotionCanBeginDrag = false
+			f.isFrozenPart = true
+			// 맥 14 부터 뷰는 기본으로 영역 밖에도 그린다 → 고정 표 배경·경계선이 본 표를 덮었다
+			f.clipsToBounds = true
+			f.headerView?.clipsToBounds = true
+			NotificationCenter.default.addObserver(self, selector: #selector(frozenColumnResized(_:)), name: NSTableView.columnDidResizeNotification, object: f)
+			return f
+		}
+
+		/// 왼쪽 n개 컬럼 고정 (0 = 풀기)
+		func setFrozen(_ n: Int) {
+			let n = max(0, min(n, table.numberOfColumns - 1 < 0 ? 0 : table.numberOfColumns))
+			frozenCount = n
+			if n == 0 {
+				frozen.headerView?.removeFromSuperview()
+				frozen.removeFromSuperview()
+				return
+			}
+			if frozen.superview == nil {
+				scroll.addFloatingSubview(frozen, for: .horizontal)
+			}
+			if let hv = frozen.headerView, hv.superview == nil { scroll.addSubview(hv) }
+			rebuildFrozen()
+		}
+
+		/// 본 표의 왼쪽 n개 컬럼을 고정 표에 그대로 (같은 식별자라 칸 그리기·편집이 같은 길을 탄다)
+		private func rebuildFrozen() {
+			guard frozenCount > 0 else { return }
+			let wanted = Array(table.tableColumns.prefix(frozenCount))
+			let same = frozen.tableColumns.map(\.identifier) == wanted.map(\.identifier)
+			if !same {
+				frozen.dataSource = nil
+				frozen.delegate = nil
+				for c in frozen.tableColumns { frozen.removeTableColumn(c) }
+				for src in wanted {
+					let tc = NSTableColumn(identifier: src.identifier)
+					if let h = src.headerCell as? GridHeaderCell {
+						let cell = GridHeaderCell(textCell: h.stringValue)
+						cell.representedObject = h.representedObject
+						cell.tag = h.tag
+						tc.headerCell = cell
+					}
+					tc.headerToolTip = src.headerToolTip
+					tc.sortDescriptorPrototype = src.sortDescriptorPrototype
+					tc.minWidth = src.minWidth
+					tc.width = src.width
+					frozen.addTableColumn(tc)
+				}
+				frozen.delegate = self
+				frozen.dataSource = self
+				frozen.sortDescriptors = table.sortDescriptors
+				frozen.reloadData()
+			} else {
+				for (f, src) in zip(frozen.tableColumns, wanted) {
+					if f.width != src.width { f.width = src.width }
+					if let fh = f.headerCell as? GridHeaderCell, let sh = src.headerCell as? GridHeaderCell {
+						fh.stringValue = sh.stringValue; fh.representedObject = sh.representedObject; fh.tag = sh.tag
+					}
+				}
+			}
+			syncingSelection = true
+			frozen.selectRowIndexes(table.selectedRowIndexes, byExtendingSelection: false)
+			syncingSelection = false
+			layoutFrozen()
+		}
+
+		/// 고정 표 자리: 스크롤 영역 왼쪽 끝(가로 고정), 높이는 본 표와 같게. 머리는 본 표 머리 위 같은 자리
+		private func layoutFrozen() {
+			guard frozenCount > 0 else { return }
+			let width = frozen.tableColumns.reduce(0) { $0 + $1.width }
+			// 떠 있는 칸의 좌표는 스크롤 영역 안쪽(머리 아래 여백 포함) 기준이라 0 이 아니다
+			// → 본 표의 맨 위와 스크롤 영역의 왼쪽 끝을 그 좌표로 바꿔 맞춘다
+			var origin = NSPoint.zero
+			if let container = frozen.superview {
+				let top = table.convert(NSPoint(x: 0, y: 0), to: container)
+				let left = scroll.contentView.convert(NSPoint(x: scroll.contentView.bounds.minX, y: 0), to: container)
+				origin = NSPoint(x: left.x, y: top.y)
+			}
+			// 표는 스스로 높이를 행 수만큼으로 줄이므로(clip 안이 아니라서) 최소 높이를 따로 준다 → 빈 줄 무늬까지 이어진다
+			// 본 표는 보이는 영역만큼 늘어나 있으니 그 높이면 된다 (clip 높이를 쓰면 머리 높이만큼 하단바로 넘쳤다)
+			frozen.minimumHeight = table.frame.height
+			frozen.superview?.clipsToBounds = true
+			frozen.frame = NSRect(x: origin.x, y: origin.y, width: width, height: frozen.minimumHeight)
+			if let hv = frozen.headerView, let mainHeaderClip = table.headerView?.superview {
+				let r = mainHeaderClip.convert(mainHeaderClip.bounds, to: scroll)
+				hv.frame = NSRect(x: r.minX, y: r.minY, width: width, height: r.height)
+				hv.needsDisplay = true
+			}
+		}
+
+		@objc private func mainColumnsChanged(_ n: Notification) {
+			guard frozenCount > 0 else { return }
+			rebuildFrozen()
+		}
+
+		/// 고정 표에서 너비를 끌면 본 표의 같은 컬럼도 (밑에 깔린 칸과 어긋나지 않게)
+		@objc private func frozenColumnResized(_ n: Notification) {
+			for f in frozen.tableColumns {
+				if let m = table.tableColumns.first(where: { $0.identifier == f.identifier }), m.width != f.width { m.width = f.width }
+			}
+			layoutFrozen()
+		}
+
 		// MARK: 정렬
 
 		private var settingSort = false
@@ -392,7 +544,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			defer { settingSort = false }
 			let sort = source.currentSort
 			table.sortDescriptors = sort.map { [NSSortDescriptor(key: $0.key, ascending: $0.ascending)] } ?? []
-			for tc in table.tableColumns {
+			if frozenCount > 0 { frozen.sortDescriptors = table.sortDescriptors }
+			for tc in table.tableColumns + (frozenCount > 0 ? frozen.tableColumns : []) {
 				let on = sort != nil && tc.sortDescriptorPrototype?.key == sort?.key
 				if let cell = tc.headerCell as? GridHeaderCell {
 					var t = cell.tag & GridHeaderCell.keyBit
@@ -401,6 +554,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				}
 			}
 			table.headerView?.needsDisplay = true
+			if frozenCount > 0 { frozen.headerView?.needsDisplay = true }
 		}
 
 		func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -527,13 +681,34 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		/// 체크박스 칸을 누름: 바로 예/아니오
 		@objc func checkToggled(_ sender: NSButton) {
-			let row = table.row(for: sender), ci = table.column(for: sender)
-			guard row >= 0, ci >= 0, let col = colIndex(table.tableColumns[ci]) else { return }
+			let tv = owner(of: sender)
+			let row = tv.row(for: sender), ci = tv.column(for: sender)
+			guard row >= 0, ci >= 0, let col = colIndex(tv.tableColumns[ci]) else { return }
 			source.setText(row, col, sender.state == .on ? "예" : "아니오")
+			reloadRow(row)
+		}
+
+		/// 칸이 들어 있는 표 (본 표 / 고정 표)
+		private func owner(of view: NSView) -> NSTableView {
+			var v: NSView? = view
+			while let x = v { if let t = x as? NSTableView { return t }; v = x.superview }
+			return table
+		}
+
+		/// 한 줄 다시 그리기 (두 표 모두)
+		private func reloadRow(_ row: Int) {
 			table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+			if frozenCount > 0 { frozen.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<frozen.numberOfColumns)) }
 		}
 
 		func tableViewSelectionDidChange(_ notification: Notification) {
+			// 두 표의 선택을 맞춘다
+			if frozenCount > 0, !syncingSelection, let from = notification.object as? NSTableView {
+				syncingSelection = true
+				let other: NSTableView = from === frozen ? table : frozen
+				if other.selectedRowIndexes != from.selectedRowIndexes { other.selectRowIndexes(from.selectedRowIndexes, byExtendingSelection: false) }
+				syncingSelection = false
+			}
 			guard let cb = onSelection else { return }
 			let sel = table.selectedRowIndexes
 			DispatchQueue.main.async { cb(sel) }
@@ -542,13 +717,24 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		// MARK: 고치기
 
 		@objc func doubleClicked(_ sender: NSTableView) {
-			if source.canEdit { beginEditing(row: sender.clickedRow, column: sender.clickedColumn) }
+			if source.canEdit { beginEditing(row: sender.clickedRow, column: sender.clickedColumn, in: sender) }
 			else if sender.clickedRow >= 0 { source.activateRow(sender.clickedRow) }
 		}
 
 		/// 그 칸만 편집 가능하게 바꾸고 편집을 시작한다
 		/// step: Tab(1)·Shift+Tab(-1) 으로 들어왔으면 그 방향. 고르기 메뉴에서 고르면 그 방향 다음 칸으로 이어 간다
-		func beginEditing(row: Int, column: Int, step: Int = 0) {
+		func beginEditing(row: Int, column: Int, step: Int = 0, in tv: NSTableView? = nil) {
+			var table = tv ?? self.table
+			if frozenCount > 0, table === self.table {
+				// 고정한 컬럼은 고정 칸에서 고친다 (본 표의 그 칸은 고정 칸 밑에 가려져 있다)
+				if column < frozenCount { table = frozen }
+				else {
+					// 고정 칸 밑에 가려진 칸이면 보이게 옆으로
+					let r = self.table.rect(ofColumn: column)
+					let left = scroll.contentView.bounds.minX + frozen.frame.width
+					if r.minX < left { self.table.scroll(NSPoint(x: max(0, r.minX - frozen.frame.width), y: scroll.contentView.bounds.minY)) }
+				}
+			}
 			guard source.canEdit, row >= 0, row < table.numberOfRows, column >= 0, column < table.numberOfColumns else { return }
 			guard let col = colIndex(table.tableColumns[column]), source.cell(row, col).state != .deleted,
 			      source.isEditable(row, col) else { NSSound.beep(); return }
@@ -559,9 +745,9 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				return
 			}
 			if let items = source.choices(row, col) {
-				let picked = showChoices(items, row: row, column: column, col: col)
-				if picked, step != 0, let next = nextTextColumn(row: row, from: column, step: step) {
-					DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: step) }
+				let picked = showChoices(items, row: row, column: column, col: col, in: table)
+				if picked, step != 0, let next = nextTextColumn(row: row, from: column, step: step, in: table) {
+					DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: step, in: table) }
 				}
 				return
 			}
@@ -582,13 +768,18 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			guard let field = obj.object as? NSTextField else { return }
 			field.isEditable = false
 			field.isSelectable = false
+			let table = owner(of: field)
 			let row = table.row(for: field), ci = table.column(for: field)
 			guard row >= 0, ci >= 0, let col = colIndex(table.tableColumns[ci]) else { return }
 			// Tab / Shift+Tab: 옆 칸 편집으로 (옆 칸이 평소 편집 불가라 AppKit 이 알아서 넘어가지 않는다)
 			let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap { NSTextMovement(rawValue: $0) }
 			defer {
-				if movement == .tab, let next = nextTextColumn(row: row, from: ci, step: 1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: 1) } }
-				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: -1) } }
+				if movement == .tab, let next = nextTextColumn(row: row, from: ci, step: 1, in: table) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: 1, in: table) } }
+				// 고정 칸 끝에서 Tab: 본 표의 고정 다음 칸으로
+				else if movement == .tab, table === frozen, let next = nextTextColumn(row: row, from: frozenCount - 1, step: 1, in: self.table) {
+					DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: 1, in: self.table) }
+				}
+				if movement == .backtab, let next = nextTextColumn(row: row, from: ci, step: -1, in: table) { DispatchQueue.main.async { self.beginEditing(row: row, column: next, step: -1, in: table) } }
 			}
 			let old = source.cell(row, col).text
 			// 혹시 남은 첨부 글자(아이콘)는 뺀다
@@ -597,11 +788,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if old == nil && typed.isEmpty { return }
 			if typed == (old?.replacingOccurrences(of: "\n", with: "⏎") ?? "") { return }
 			source.setText(row, col, typed.replacingOccurrences(of: "⏎", with: "\n"))
-			table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+			reloadRow(row)
 		}
 
 		/// Tab 으로 옮겨 갈 옆 칸 (공급자가 정한 Tab 칸만: 못 고치는 칸·예/아니오 칸·시트로 고치는 칸은 건너뛴다)
-		private func nextTextColumn(row: Int, from: Int, step: Int) -> Int? {
+		private func nextTextColumn(row: Int, from: Int, step: Int, in tv: NSTableView? = nil) -> Int? {
+			let table = tv ?? self.table
 			var c = from + step
 			while c >= 0 && c < table.numberOfColumns {
 				if let col = colIndex(table.tableColumns[c]), source.tabStop(row, col) { return c }
@@ -613,7 +805,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// 고르기 칸: 칸 바로 아래에 메뉴
 		/// 고르기 메뉴. 무언가 골랐으면 true (Esc 로 닫으면 false)
 		@discardableResult
-		private func showChoices(_ items: [String?], row: Int, column: Int, col: Int) -> Bool {
+		private func showChoices(_ items: [String?], row: Int, column: Int, col: Int, in table: NSTableView) -> Bool {
 			let menu = NSMenu()
 			let current = source.currentChoice(row, col)
 			for it in items {
@@ -638,7 +830,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		@objc private func choicePicked(_ sender: NSMenuItem) {
 			guard let t = sender.representedObject as? ChoiceTarget, t.row < source.rowCount else { return }
 			source.setText(t.row, t.col, t.value)
-			table.reloadData(forRowIndexes: [t.row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
+			reloadRow(t.row)
 		}
 
 		// MARK: 줄 끌어 옮기기 (구조 편집: 컬럼 순서)
@@ -702,7 +894,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		func menuNeedsUpdate(_ menu: NSMenu) {
 			menu.removeAllItems()
-			if menu === headerMenu {
+			let table: NSTableView = (menu === frozenMenu || menu === frozenHeaderMenu) ? frozen : self.table
+			if menu === headerMenu || menu === frozenHeaderMenu {
 				// 오른쪽 클릭한 위치로 컬럼을 찾는다 (제목 메뉴에서는 clickedColumn 이 안 채워질 수 있다)
 				var index = table.clickedColumn
 				if let header = table.headerView, let event = NSApp.currentEvent {
@@ -718,7 +911,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					.action("내림차순 정렬") { self.sort(key, ascending: false) },
 				] + (source.currentSort != nil ? [.action("정렬 없애기") { self.sort(nil, ascending: true) }] : [])
 				if !items.isEmpty { items.append(.separator) }
-				fill(menu, items + sortItems)
+				// 컬럼 고정: 본 표 보이는 순서로 이 컬럼까지
+				let display = self.table.tableColumns.firstIndex { colIndex($0) == col } ?? 0
+				var freezeItems: [GridMenuItem] = [.separator]
+				if frozenCount != display + 1 { freezeItems.append(.action("‘\(columns[col].title)’ 까지 고정") { self.setFrozen(display + 1) }) }
+				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 풀기") { self.setFrozen(0) }) }
+				fill(menu, items + sortItems + freezeItems)
 				return
 			}
 			guard table.clickedRow >= 0 else { return }
@@ -780,6 +978,16 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 /// ⌫ 로 행 삭제, ⌘C 로 선택 행 복사(탭 구분), 엔터로 고치기
 final class GridTableView: NSTableView {
 	weak var coordinator: GridController?
+	/// 컬럼 고정용 표 (오른쪽 끝에 경계선을 진하게)
+	var isFrozenPart = false
+	/// 고정 표의 최소 높이 (본 표만큼)
+	var minimumHeight: CGFloat = 0
+
+	override func setFrameSize(_ newSize: NSSize) {
+		var s = newSize
+		if isFrozenPart { s.height = max(s.height, minimumHeight) }
+		super.setFrameSize(s)
+	}
 
 	/// 줄을 끌 수 있는 표는 AppKit 이 고르기를 떼는 순간으로 미룬다 → 누르자마자 끌면 안 고른 색으로 끌렸다.
 	/// 고르지 않은 줄을 그냥(⌘·⇧ 없이) 누르면 바로 고른다
@@ -793,14 +1001,25 @@ final class GridTableView: NSTableView {
 		super.mouseDown(with: event)
 	}
 
+	/// 고정 표는 밑에 깔린 본 표가 비치지 않게 불투명하게 (다크 모드 줄무늬 색은 반투명이다)
+	override func drawBackground(inClipRect clipRect: NSRect) {
+		if isFrozenPart {
+			NSColor.controlBackgroundColor.setFill()
+			clipRect.intersection(bounds).fill()
+		}
+		super.drawBackground(inClipRect: clipRect)
+	}
+
 	/// 마지막 컬럼 오른쪽에도 세로선 (없으면 칸이 거기서 잘린 건지 알기 어려웠다)
 	override func drawGrid(inClipRect clipRect: NSRect) {
 		super.drawGrid(inClipRect: clipRect)
 		guard numberOfColumns > 0 else { return }
 		let x = rect(ofColumn: numberOfColumns - 1).maxX
-		let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
+		// 고정 표는 경계를 두 줄 굵기로 (어디까지 고정인지 보이게)
+		let w: CGFloat = isFrozenPart ? 2 : 1
+		let line = NSRect(x: x - w, y: clipRect.minY, width: w, height: clipRect.height)
 		guard line.intersects(clipRect) else { return }
-		gridColor.setFill()
+		(isFrozenPart ? NSColor.separatorColor.withAlphaComponent(1) : gridColor).setFill()
 		line.fill()
 	}
 
@@ -811,8 +1030,8 @@ final class GridTableView: NSTableView {
 		case 36, 76:    // return, enter
 			if selectedRow >= 0, coordinator?.canEdit == true {
 				// 보이는 맨 왼쪽 컬럼부터 고친다 (탭으로 옆 칸으로 간다)
-				let col = max(0, column(at: NSPoint(x: visibleRect.minX + 1, y: visibleRect.minY + 1)))
-				coordinator?.beginEditing(row: selectedRow, column: col)
+				let col = isFrozenPart ? 0 : max(0, column(at: NSPoint(x: visibleRect.minX + 1, y: visibleRect.minY + 1)))
+				coordinator?.beginEditing(row: selectedRow, column: col, in: self)
 			}
 		default:
 			super.keyDown(with: event)
