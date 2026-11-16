@@ -113,23 +113,33 @@ enum SplitSide { case left, right }
 extension WindowModel {
 	var hasSplit: Bool { !parkedTabs.isEmpty }
 
-	/// 왼쪽 탭을 오른쪽으로 옮긴다
-	func park(_ tab: String, from session: Session) {
+	/// 왼쪽 탭을 오른쪽으로 옮긴다 (before 탭 앞에, nil 이면 맨 뒤)
+	func park(_ tab: String, from session: Session, before: ParkedTab? = nil) {
 		guard let id = session.server?.id else { return }
 		let p = ParkedTab(server: id, tab: tab)
 		session.park(tab)
-		if !parkedTabs.contains(p) { parkedTabs.append(p) }
+		if !parkedTabs.contains(p) {
+			if let b = before, let j = parkedTabs.firstIndex(of: b) { parkedTabs.insert(p, at: j) } else { parkedTabs.append(p) }
+		}
 		parkedActive = p
 		splitFocus = .right
 	}
 
-	/// 오른쪽 탭을 왼쪽으로. 다른 서버 탭이면 그 서버로 바꾼 뒤 그 서버 왼쪽 탭에 넣는다
+	/// 오른쪽 탭 순서 바꾸기 (끌어 놓기)
+	func moveParked(_ p: ParkedTab, before: ParkedTab?) {
+		guard p != before, let i = parkedTabs.firstIndex(of: p) else { return }
+		parkedTabs.remove(at: i)
+		if let b = before, let j = parkedTabs.firstIndex(of: b) { parkedTabs.insert(p, at: j) } else { parkedTabs.append(p) }
+	}
+
+	/// 오른쪽 탭을 왼쪽으로. 다른 서버 탭이면 그 서버로 바꾼 뒤 그 서버 왼쪽 탭에 넣는다 (그때 before 는 무시)
 	@MainActor
-	func unpark(_ p: ParkedTab) {
+	func unpark(_ p: ParkedTab, before: String? = nil) {
 		guard let s = sessions[p.server] else { removeParked(p); return }
 		removeParked(p)
-		if currentID != p.server, let server = s.server { open(server) }
-		s.unpark(p.tab)
+		let sameServer = currentID == p.server
+		if !sameServer, let server = s.server { open(server) }
+		s.unpark(p.tab, before: sameServer ? before : nil)
 		splitFocus = .left
 	}
 
@@ -153,4 +163,26 @@ extension WindowModel {
 		if parkedActive == p { parkedActive = parkedTabs.isEmpty ? nil : parkedTabs[min(i, parkedTabs.count - 1)] }
 		if parkedTabs.isEmpty { splitFocus = .left }
 	}
+}
+
+/// 끌어 옮기는 탭: "isql-tab:L|R:<서버 id>:<탭 id>" (L = 왼쪽 탭바, R = 오른쪽 분할)
+struct TabDrag {
+	let side: SplitSide
+	let parked: ParkedTab
+
+	init(side: SplitSide, server: UUID, tab: String) {
+		self.side = side
+		parked = ParkedTab(server: server, tab: tab)
+	}
+
+	init?(_ s: String) {
+		guard s.hasPrefix("isql-tab:") else { return nil }
+		let rest = s.dropFirst(9)
+		let parts = rest.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+		guard parts.count == 3, let id = UUID(uuidString: String(parts[1])) else { return nil }
+		side = parts[0] == "R" ? .right : .left
+		parked = ParkedTab(server: id, tab: String(parts[2]))
+	}
+
+	var string: String { "isql-tab:\(side == .right ? "R" : "L"):\(parked.server.uuidString):\(parked.tab)" }
 }

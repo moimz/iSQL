@@ -245,11 +245,20 @@ final class Session {
 		rememberTabs()
 	}
 
-	/// 오른쪽 탭을 왼쪽으로: 지금 탭 바로 오른쪽에 넣고 고른다
-	func unpark(_ id: String) {
+	/// 왼쪽 탭 순서 바꾸기 (끌어 놓기): before 탭 앞으로, nil 이면 맨 뒤로
+	func moveTab(_ id: String, before: String?) {
+		guard id != before, let i = tabs.firstIndex(of: id) else { return }
+		tabs.remove(at: i)
+		if let b = before, let j = tabs.firstIndex(of: b) { tabs.insert(id, at: j) } else { tabs.append(id) }
+		rememberTabs()
+	}
+
+	/// 오른쪽 탭을 왼쪽으로: before 탭 앞에 (nil 이면 지금 탭 바로 오른쪽) 넣고 고른다
+	func unpark(_ id: String, before: String? = nil) {
 		parked.removeAll { $0 == id }
 		if !tabs.contains(id) {
-			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(id, at: i + 1) } else { tabs.append(id) }
+			if let b = before, let j = tabs.firstIndex(of: b) { tabs.insert(id, at: j) }
+			else if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(id, at: i + 1) } else { tabs.append(id) }
 		}
 		selectTab(id)
 		rememberTabs()
