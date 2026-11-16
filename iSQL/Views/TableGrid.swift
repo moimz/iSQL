@@ -238,8 +238,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			table.dataSource = self
 			table.reloadData()
 			lastVersion = source.gridVersion
-			table.registerForDraggedTypes([Self.rowDragType])
-			table.draggingDestinationFeedbackStyle = .gap
+			syncRowDragging()
 			scroll.documentView = table
 			scroll.hasVerticalScroller = true
 			scroll.hasHorizontalScroller = true
@@ -262,8 +261,28 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			}
 		}
 
+		/// 줄 끌기는 줄을 옮길 수 있는 표(구조 편집)에만 켠다.
+		/// 모든 표에 .gap 을 켰더니 데이터 표에서 줄을 끌면 그 줄이 숨겨진 채 돌아오지 않았다 (사용자 보고)
+		private var rowDragging: Bool?
+		private func syncRowDragging() {
+			let on = source.canMoveRows
+			guard on != rowDragging else { return }
+			rowDragging = on
+			if on {
+				table.registerForDraggedTypes([Self.rowDragType])
+				table.draggingDestinationFeedbackStyle = .gap
+				table.verticalMotionCanBeginDrag = true
+			} else {
+				table.unregisterDraggedTypes()
+				table.draggingDestinationFeedbackStyle = .regular
+				// 위아래로 끌면 줄 고르기만 (끌기를 시작하지 않는다)
+				table.verticalMotionCanBeginDrag = false
+			}
+		}
+
 		/// 컬럼·행이 바뀌었으면 다시 그린다
 		func refresh() {
+			syncRowDragging()
 			syncColumns()
 			if source.gridVersion != lastVersion {
 				lastVersion = source.gridVersion
@@ -570,7 +589,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		static let rowDragType = NSPasteboard.PasteboardType("net.moimz.isql.grid-row")
 
 		func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-			guard source.canMoveRows else { return nil }
+			guard source.canMoveRows, table.currentEditor() == nil else { return nil }
 			let item = NSPasteboardItem()
 			item.setString(String(row), forType: Self.rowDragType)
 			return item
