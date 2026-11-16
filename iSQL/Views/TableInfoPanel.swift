@@ -1,10 +1,15 @@
 import SwiftUI
 
-/// 하단바 맨 앞의 [+ | 내보내기] 묶음 (DB 개요: + = 테이블 만들기, 구조 보기: + = 컬럼 추가)
+/// 하단바 맨 앞의 [+ | (−) | 내보내기] 묶음 (DB 개요: + = 테이블 만들기, 구조 보기: + = 컬럼 추가, − = 고른 컬럼 지우기)
 struct AddExportGroup: View {
 	let addHelp: String
 	/// nil 이면 + 는 흐리게 (아직 기능 없음)
 	var add: (() -> Void)?
+	/// − 버튼을 둘지 (구조 보기)
+	var showsRemove = false
+	var removeHelp = ""
+	/// nil 이면 − 는 흐리게 (고른 것이 없음)
+	var remove: (() -> Void)?
 	let exportHelp: String
 	let export: () -> Void
 
@@ -13,6 +18,11 @@ struct AddExportGroup: View {
 			Button { add?() } label: { Image(systemName: "plus") }
 				.help(addHelp)
 				.disabled(add == nil)
+			if showsRemove {
+				Button { remove?() } label: { Image(systemName: "minus") }
+					.help(removeHelp)
+					.disabled(remove == nil)
+			}
 			Button(action: export) { Image(systemName: "square.and.arrow.up") }
 				.help(exportHelp)
 		}
@@ -63,7 +73,8 @@ struct TableInfoPanel: View {
 			Text(failure ?? "")
 		}
 		.sheet(isPresented: $addingIndex) {
-			AddIndexSheet(table: inspector.table, columns: columns, hasPrimary: inspector.indexes.contains { $0.kind == .primary }) { sql in
+			AddIndexSheet(table: inspector.table, columns: columns, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
+			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize) { sql in
 				Task { failure = await inspector.run(sql) }
 			}
 		}
@@ -228,6 +239,9 @@ struct TableInfoPanel: View {
 			// 한 줄: 컬럼은 왼쪽, 인덱스 이름은 오른쪽 끝에 흐리게 (좁으면 이름부터 줄인다)
 			Text(ix.columns.joined(separator: ", ")).lineLimit(1).truncationMode(.tail)
 				.layoutPriority(1)
+			if let p = ix.parser {
+				Text(p).font(.caption).foregroundStyle(selected ? Color.white.opacity(0.8) : .secondary)
+			}
 			Spacer(minLength: 8)
 			if ix.kind != .primary {
 				Text(ix.name).font(.callout).foregroundStyle(selected ? Color.white.opacity(0.8) : .secondary)
@@ -239,7 +253,8 @@ struct TableInfoPanel: View {
 		.foregroundStyle(selected ? Color.white : Color.primary)
 		.background(selected ? Color.accentColor : Color.clear)
 		// 잘려도 툴팁으로 전부 보인다
-		.help("\(ix.name): \(ix.columns.joined(separator: ", "))\n" + (ix.cardinality.map { "\(ix.method) · 카디널리티 \($0.formatted())" } ?? ix.method))
+		.help("\(ix.name): \(ix.columns.joined(separator: ", "))\n" + (ix.cardinality.map { "\(ix.method) · 카디널리티 \($0.formatted())" } ?? ix.method)
+		      + (ix.parser.map { " · WITH PARSER \($0)" } ?? ""))
 	}
 
 	private func kindColor(_ k: IndexInfo.Kind) -> Color {
@@ -265,12 +280,17 @@ struct AddIndexSheet: View {
 	let table: TableInfo
 	let columns: [ColumnInfo]
 	let hasPrimary: Bool
+	/// 서버의 전문 검색 파서 (ngram 이 있으면 FULLTEXT 에 n-gram 선택)
+	var parsers: [String] = []
+	var ngramTokenSize: Int?
 	let add: (String) -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var kind: IndexInfo.Kind = .index
 	@State private var name = ""
 	@State private var nameEdited = false
 	@State private var picked: [String] = []
+	@State private var ngram = false
+	private var canNgram: Bool { kind == .fulltext && parsers.contains("ngram") }
 
 	private var autoName: String {
 		guard !picked.isEmpty, kind != .primary else { return "" }
@@ -278,7 +298,8 @@ struct AddIndexSheet: View {
 	}
 
 	private var sql: String {
-		TableInspector.addIndexSQL(table: table, kind: kind, name: nameEdited ? name : autoName, columns: picked)
+		TableInspector.addIndexSQL(table: table, kind: kind, name: nameEdited ? name : autoName, columns: picked,
+		                           parser: canNgram && ngram ? "ngram" : nil)
 	}
 
 	var body: some View {
@@ -297,6 +318,15 @@ struct AddIndexSheet: View {
 					                                                             set: { name = $0; nameEdited = !$0.isEmpty }))
 						.textFieldStyle(.roundedBorder)
 						.disabled(kind == .primary)
+				}
+			}
+			if canNgram {
+				VStack(alignment: .leading, spacing: 3) {
+					Toggle("n-gram 파서 (WITH PARSER ngram)", isOn: $ngram).toggleStyle(.checkbox)
+					Text("한글·중국어·일본어처럼 띄어쓰기로 낱말이 안 나뉘는 글을 \(ngramTokenSize ?? 2)글자 조각으로 찾습니다")
+						.font(.callout).foregroundStyle(.secondary)
+						.fixedSize(horizontal: false, vertical: true)
+						.padding(.leading, 20)
 				}
 			}
 			VStack(alignment: .leading, spacing: 6) {

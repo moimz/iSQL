@@ -12,6 +12,10 @@ struct ServerCatalog {
 	func charset(of collation: String) -> String? { collations.first { $0.name == collation }?.charset }
 	func collations(for charset: String) -> [String] { collations.filter { $0.charset == charset }.map(\.name) }
 	func defaultCollation(for charset: String) -> String? { charsets.first { $0.name == charset }?.defaultCollation }
+	/// 켜져 있는 전문 검색 파서 (MySQL 5.7.6+ 는 ngram 이 기본으로 들어 있다. MariaDB 는 없음)
+	var fulltextParsers: [String] = []
+	/// @@ngram_token_size (n-gram 한 조각 글자 수)
+	var ngramTokenSize: Int?
 }
 
 /// 인덱스 하나 (SHOW INDEX 의 여러 줄을 이름으로 묶은 것)
@@ -22,6 +26,8 @@ struct IndexInfo: Identifiable, Hashable {
 	/// 컬럼 (접두 길이가 있으면 "name(10)")
 	var columns: [String]
 	var method: String
+	/// FULLTEXT 파서 (WITH PARSER ngram). SHOW INDEX 에는 안 나와 SHOW CREATE TABLE 에서 읽는다
+	var parser: String? = nil
 	var cardinality: Int64?
 	var id: String { name }
 }
@@ -133,6 +139,16 @@ final class TableInspector {
 			list.append(IndexInfo(name: name, kind: kind, columns: [column], method: method,
 			                      cardinality: iCard.flatMap { row[$0].string }.flatMap { Int64($0) }))
 		}
+		// FULLTEXT 파서: SHOW CREATE TABLE 의 "FULLTEXT KEY `이름` (…) /*!50100 WITH PARSER `ngram` */"
+		if list.contains(where: { $0.kind == .fulltext }),
+		   let ddl = try? await session.query("SHOW CREATE TABLE \(table.quoted)").last?.rows.first?[safe: 1]?.string {
+			for line in ddl.split(separator: "\n") where line.contains("WITH PARSER") {
+				guard let name = Self.firstQuoted(line.drop { $0 != "`" }),
+				      let r = line.range(of: "WITH PARSER "),
+				      let parser = Self.firstQuoted(line[r.upperBound...].drop { $0 != "`" }) else { continue }
+				if let k = list.firstIndex(where: { $0.name == name }) { list[k].parser = parser }
+			}
+		}
 		// 기본 키가 맨 위
 		indexes = list.filter { $0.kind == .primary } + list.filter { $0.kind != .primary }
 	}
@@ -182,17 +198,34 @@ final class TableInspector {
 			: "ALTER TABLE \(table.quoted) DROP INDEX \(Self.ident(index.name))"
 	}
 
-	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String]) -> String {
+	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String? = nil) -> String {
 		let cols = columns.map(ident).joined(separator: ", ")
 		let n = name.trimmingCharacters(in: .whitespaces)
 		let named = n.isEmpty ? "" : " " + ident(n)
 		switch kind {
 		case .primary: return "ALTER TABLE \(table.quoted) ADD PRIMARY KEY (\(cols))"
 		case .unique: return "ALTER TABLE \(table.quoted) ADD UNIQUE INDEX\(named) (\(cols))"
-		case .fulltext: return "ALTER TABLE \(table.quoted) ADD FULLTEXT INDEX\(named) (\(cols))"
+		case .fulltext: return "ALTER TABLE \(table.quoted) ADD FULLTEXT INDEX\(named) (\(cols))" + (parser.map { " WITH PARSER \(ident($0))" } ?? "")
 		case .spatial: return "ALTER TABLE \(table.quoted) ADD SPATIAL INDEX\(named) (\(cols))"
 		case .index: return "ALTER TABLE \(table.quoted) ADD INDEX\(named) (\(cols))"
 		}
+	}
+
+	/// "`a``b` …" → a`b (맨 앞 백틱 이름)
+	static func firstQuoted(_ s: Substring) -> String? {
+		guard s.first == "`" else { return nil }
+		var out = ""
+		var i = s.index(after: s.startIndex)
+		while i < s.endIndex {
+			if s[i] == "`" {
+				let n = s.index(after: i)
+				if n < s.endIndex, s[n] == "`" { out.append("`"); i = s.index(after: n); continue }
+				return out
+			}
+			out.append(s[i])
+			i = s.index(after: i)
+		}
+		return nil
 	}
 
 	static func ident(_ s: String) -> String { "`" + s.replacingOccurrences(of: "`", with: "``") + "`" }

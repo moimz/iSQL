@@ -470,6 +470,12 @@ final class Session {
 		c.charsets = cs.rows.map { ($0[0].string ?? "", $0[safe: 1]?.string ?? "") }
 		let co = try await query("SELECT COLLATION_NAME, CHARACTER_SET_NAME FROM information_schema.COLLATIONS ORDER BY COLLATION_NAME").last ?? QueryResult()
 		c.collations = co.rows.map { ($0[0].string ?? "", $0[safe: 1]?.string ?? "") }
+		// 전문 검색 파서·n-gram 조각 크기 (없는 서버면 비워 둔다)
+		c.fulltextParsers = (try? await query("SELECT PLUGIN_NAME FROM information_schema.PLUGINS WHERE PLUGIN_TYPE = 'FTPARSER' AND PLUGIN_STATUS = 'ACTIVE'").last)?
+			.rows.compactMap { $0.first?.string } ?? []
+		if c.fulltextParsers.contains("ngram") {
+			c.ngramTokenSize = (try? await query("SELECT @@ngram_token_size").last)?.rows.first?.first?.string.flatMap { Int($0) }
+		}
 		catalog = c
 		catalogLoaded = true
 	}

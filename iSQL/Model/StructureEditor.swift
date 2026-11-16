@@ -502,6 +502,20 @@ final class StructureEditor: GridSource {
 		}
 	}
 
+	/// − 버튼: 고른 줄을 지우기로 표시 (새 줄은 바로 뺀다). 이미 지울 표시인 줄은 그대로
+	func markDeleted(_ sel: IndexSet) {
+		guard canEdit else { return }
+		for i in sel.sorted(by: >) where rows.indices.contains(i) {
+			if rows[i].isNew { rows.remove(at: i) } else { rows[i].deleted = true }
+		}
+		changed()
+	}
+
+	/// 고른 줄 중에 아직 지울 표시가 안 된 것이 있는지 (− 버튼 켜기)
+	func canMarkDeleted(_ sel: IndexSet) -> Bool {
+		canEdit && sel.contains { rows.indices.contains($0) && !rows[$0].deleted }
+	}
+
 	func deleteRows(_ sel: IndexSet) -> Bool {
 		guard canEdit else { return false }
 		// 새 줄은 바로 빼고, 있던 줄은 지울 표시를 켜고 끈다

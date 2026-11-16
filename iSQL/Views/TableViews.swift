@@ -290,10 +290,18 @@ struct StructureBody: View {
 		}
 	}
 
+	/// − : 고른 컬럼에 지울 표시 (고른 게 없거나 모두 이미 지울 표시면 꺼짐)
+	private var removeAction: (() -> Void)? {
+		guard editor.canMarkDeleted(selection) else { return nil }
+		let sel = selection
+		return { editor.markDeleted(sel) }
+	}
+
 	private var footer: some View {
 		HStack(spacing: 10) {
 			AddExportGroup(addHelp: table.isView ? "뷰에는 컬럼을 추가할 수 없습니다" : "컬럼 추가 (고른 줄 아래에)",
 			               add: table.isView ? nil : { editor.addColumn(after: selection.last) },
+			               showsRemove: !table.isView, removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction,
 			               exportHelp: "테이블 내보내기") {
 				session.requestExport(.table(table.schema, TableStat(table)))
 			}
@@ -319,6 +327,7 @@ struct StructureBody: View {
 			}
 			HStack(spacing: 10) {
 				AddExportGroup(addHelp: "컬럼 추가 (고른 줄 아래에)", add: { editor.addColumn(after: selection.last) },
+				               showsRemove: true, removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction,
 				               exportHelp: "테이블 내보내기") {
 					session.requestExport(.table(table.schema, TableStat(table)))
 				}
