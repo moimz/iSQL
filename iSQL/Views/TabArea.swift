@@ -486,9 +486,9 @@ struct ParkedTabBar: View {
 		}
 		.animation(.easeOut(duration: 0.18), value: model.parkedTabs)
 			Divider()
-			// 양쪽 표 스크롤 맞추기 (같은 테이블을 DB·서버끼리 비교할 때)
+			// 양쪽 표 세로 스크롤 맞추기 (같은 테이블을 DB·서버끼리 비교할 때)
 			Button { model.scrollSync.toggle() } label: {
-				Image(systemName: "link")
+				Image(systemName: "arrow.up.and.down.and.sparkles")
 					.font(.system(size: 12, weight: .semibold))
 					.foregroundStyle(model.scrollSync ? Color.accentColor : Color.secondary)
 					.frame(width: 30, height: 30)
@@ -496,7 +496,7 @@ struct ParkedTabBar: View {
 			}
 			.buttonStyle(.plain)
 			.padding(.horizontal, 3)
-			.help(model.scrollSync ? "양쪽 스크롤 맞추기 켜짐 (누르면 끔)" : "양쪽 스크롤 맞추기: 왼쪽·오른쪽 표를 같이 스크롤")
+			.help(model.scrollSync ? "양쪽 세로 스크롤 맞추기 켜짐 (누르면 끔)" : "양쪽 세로 스크롤 맞추기: 왼쪽·오른쪽 표를 같이 위아래로")
 		}
 		.frame(height: 36)
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
@@ -531,7 +531,8 @@ struct TabDragPreview: View {
 	}
 }
 
-/// 양쪽 표의 스크롤을 맞춘다: 왼쪽·오른쪽 칸에서 지금 보이는 표를 기억하고, 한쪽이 움직이면 다른 쪽을 같은 위치로
+/// 양쪽 표의 세로 스크롤을 맞춘다: 왼쪽·오른쪽 칸에서 지금 보이는 표를 기억하고, 한쪽이 움직이면 다른 쪽을 같은 높이로.
+/// 가로는 맞추지 않는다 (양쪽 칸 너비·컬럼이 다를 수 있다, 사용자 결정)
 final class ScrollLink {
 	var enabled = false
 	private(set) weak var left: NSScrollView?
@@ -567,20 +568,12 @@ final class ScrollLink {
 		syncing = true
 		defer { syncing = false }
 		let clip = b.contentView
-		// 제목 줄 여백(contentInsets)·문서 크기는 constrainBoundsRect 가 맞춰 준다
-		let target = clip.constrainBoundsRect(NSRect(origin: a.contentView.bounds.origin, size: clip.bounds.size)).origin
+		// 세로만: x 는 그대로. 제목 줄 여백(contentInsets)·문서 크기는 constrainBoundsRect 가 맞춰 준다
+		let want = NSPoint(x: clip.bounds.origin.x, y: a.contentView.bounds.origin.y)
+		let target = clip.constrainBoundsRect(NSRect(origin: want, size: clip.bounds.size)).origin
 		guard target != clip.bounds.origin else { return }
 		clip.setBoundsOrigin(target)
 		b.reflectScrolledClipView(clip)
-		Self.syncHeader(b)
-	}
-
-	/// 본문만 옮기면 컬럼 제목 줄은 가로로 따라오지 않는다 (화면으로 확인) → 제목 줄 클립도 같은 x 로
-	static func syncHeader(_ scroll: NSScrollView) {
-		guard let header = (scroll.documentView as? NSTableView)?.headerView,
-		      let hclip = header.superview as? NSClipView else { return }
-		let x = scroll.contentView.bounds.origin.x
-		if hclip.bounds.origin.x != x { hclip.setBoundsOrigin(NSPoint(x: x, y: hclip.bounds.origin.y)) }
 	}
 }
 
