@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import UniformTypeIdentifiers
 import Observation
 
 /// 테이블 하나 (모든 DB 의 테이블을 한 목록으로 보여 주려고 DB 이름을 같이 가진다)
@@ -255,6 +257,38 @@ final class Session {
 
 	/// 데이터베이스 복제 요청 (창이 제목바 시트로 띄운다)
 	var duplicateRequest: DuplicateRequest?
+
+	/// SQL 파일 가져오기 요청 (창이 제목바 시트로 띄운다)
+	var importRequest: ImportRequest?
+
+	/// SQL 파일 가져오기: 먼저 파일을 고르고, 고르면 시트
+	@MainActor
+	func requestImport(schema: String?) {
+		guard let url = Self.pickSQLFile() else { return }
+		importRequest = ImportRequest(schema: schema, job: SQLImportJob(url: url, session: self))
+	}
+
+	@MainActor
+	static func pickSQLFile() -> URL? {
+		let p = NSOpenPanel()
+		p.title = "가져올 SQL 파일"
+		p.prompt = "고르기"
+		p.allowedContentTypes = [UTType(filenameExtension: "sql") ?? .plainText, .plainText]
+		p.allowsOtherFileTypes = true
+		p.canChooseDirectories = false
+		p.allowsMultipleSelection = false
+		return p.runModal() == .OK ? p.url : nil
+	}
+
+	/// 가져오기가 끝난 뒤 (멈춘 경우도): 목록·DB 개요 다시 읽기, 열린 데이터 탭은 다시 읽거나 "바뀜" 표시
+	@MainActor
+	func dataImported(schema: String?) async {
+		try? await loadSchema()
+		for (key, o) in overviews where schema == nil || key == schema { Task { await o.load() } }
+		for (tab, d) in openData where schema == nil || Self.tableID(ofTab: tab).hasPrefix(schema! + ".") {
+			if d.hasChanges { d.stale = true } else if d.loaded { Task { await d.load() } }
+		}
+	}
 
 	/// 테이블 삭제·비우기 요청 (어디서 부르든 창이 확인 창 하나로 묻는다: DB 개요 −, 오른쪽 클릭 메뉴)
 	var tableAction: TableActionRequest?

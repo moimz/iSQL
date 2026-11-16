@@ -60,6 +60,7 @@ struct TableSidebar: View {
 								Button("새 테이블 만들기…") { session.createTableRequest = CreateTableRequest(schema: schema) }
 								Divider()
 								Button("데이터베이스 내보내기…") { session.requestExport(schema: schema) }
+								Button("SQL 파일 가져오기…") { session.requestImport(schema: schema) }
 								Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }
 								Button("데이터베이스 이름 바꾸기…") {}.disabled(true)
 								Divider()

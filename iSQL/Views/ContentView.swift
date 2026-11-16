@@ -84,6 +84,10 @@ struct ContentView: View {
 		.sheet(item: Binding(get: { model.current?.duplicateRequest }, set: { model.current?.duplicateRequest = $0 })) { req in
 			if let s = model.current { DuplicateDatabaseSheet(request: req, session: s) }
 		}
+		// SQL 파일 가져오기: 제목바에 붙는 시트
+		.sheet(item: Binding(get: { model.current?.importRequest }, set: { model.current?.importRequest = $0 })) { req in
+			if let s = model.current { ImportSheet(request: req, session: s) }
+		}
 		// 새 테이블 만들기: 제목바에 붙는 시트
 		.sheet(item: Binding(get: { model.current?.createTableRequest }, set: { model.current?.createTableRequest = $0 })) { req in
 			if let s = model.current { CreateTableSheet(request: req, session: s) }

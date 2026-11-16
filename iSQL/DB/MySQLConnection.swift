@@ -38,6 +38,11 @@ final class MySQLConnection: @unchecked Sendable {
 		try await run { try self.querySync(sql) }
 	}
 
+	/// 바이트 그대로 실행 (SQL 파일 가져오기: 덤프 안 문자열이 UTF-8 이 아닐 수도 있어 String 으로 바꾸지 않는다)
+	func query(bytes: [UInt8]) async throws -> [QueryResult] {
+		try await run { try self.querySync(bytes: bytes) }
+	}
+
 	/// 결과 하나만 필요할 때 (마지막 결과)
 	func rows(_ sql: String) async throws -> QueryResult {
 		try await query(sql).last ?? QueryResult()
@@ -186,9 +191,13 @@ final class MySQLConnection: @unchecked Sendable {
 	// MARK: - 쿼리
 
 	private func querySync(_ sql: String) throws -> [QueryResult] {
+		try querySync(bytes: Array(sql.utf8))
+	}
+
+	private func querySync(bytes: [UInt8]) throws -> [QueryResult] {
 		guard fd >= 0 else { throw MySQLError.closed }
 		seq = 0
-		try writePacket([0x03] + Array(sql.utf8))
+		try writePacket([0x03] + bytes)
 		var results: [QueryResult] = []
 		while true {
 			let (result, more) = try readResult()
