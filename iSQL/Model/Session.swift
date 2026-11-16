@@ -258,6 +258,27 @@ final class Session {
 	/// 데이터베이스 복제 요청 (창이 제목바 시트로 띄운다)
 	var duplicateRequest: DuplicateRequest?
 
+	/// 테이블 이름 바꾸기·복제 요청 (창이 제목바 시트로 띄운다)
+	var tableNameRequest: TableNameRequest?
+
+	/// 이름을 바꾼 뒤: 목록을 다시 읽고, 열린 탭(왼쪽)은 새 이름으로 옮겨 다시 읽는다. 오른쪽 분할 탭은 닫는다
+	@MainActor
+	func tableRenamed(schema: String, from old: String, to new: String) async {
+		let oldID = schema + "." + old, newID = schema + "." + new
+		try? await loadSchema()
+		for i in tabs.indices where Self.tableID(ofTab: tabs[i]) == oldID {
+			let t = tabs[i]
+			let moved = newID + t.dropFirst(oldID.count)
+			openData[t] = nil
+			setUnsaved(t, false)
+			tabs[i] = String(moved)
+			if activeTab == t { activeTab = String(moved) }
+		}
+		for t in parked where Self.tableID(ofTab: t) == oldID { closeParkedTab?(t) }
+		if let o = overviews[schema] { Task { await o.load() } }
+		rememberTabs()
+	}
+
 	/// SQL 파일 가져오기 요청 (창이 제목바 시트로 띄운다)
 	var importRequest: ImportRequest?
 

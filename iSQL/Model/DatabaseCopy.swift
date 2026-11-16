@@ -129,6 +129,51 @@ final class DatabaseCopyJob {
 		try? await session.loadSchema()
 	}
 
+	/// 같은 DB 안에서 테이블(또는 뷰) 하나 복제 (오른쪽 클릭 → 테이블 복제…).
+	/// 테이블: CREATE TABLE 새 LIKE 원본 (컬럼·인덱스·AUTO_INCREMENT 설정, 외래 키·트리거는 안 옮겨짐) + 데이터는 DB 복제와 같은 방식.
+	/// 뷰: 정의(VIEW_DEFINITION)로 CREATE VIEW 새 AS …
+	@MainActor
+	func duplicateTable(_ name: String, isView: Bool, to newName: String, data: Bool) async {
+		guard let session, !running else { return }
+		running = true
+		finished = false
+		cancelled = false
+		message = nil
+		isError = false
+		done = 0
+		total = 1
+		current = newName
+		rowsDone = 0
+		defer { running = false; finished = true }
+		let q = TableInspector.ident
+		let db = q(source)
+		do {
+			if isView {
+				let r = try await session.query("SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = \(literal(.text(source))) AND TABLE_NAME = \(literal(.text(name)))").last
+				guard let def = r?.rows.first?.first?.string else { throw CopyError.noDDL(name) }
+				_ = try await session.query("CREATE VIEW \(db).\(q(newName)) AS \(def)")
+			} else {
+				_ = try await session.query("CREATE TABLE \(db).\(q(newName)) LIKE \(db).\(q(name))")
+				if data, let meta = try await tableList().first(where: { $0.name == name && !$0.isView }) {
+					mode = try await pickMode()
+					rowsTotal = meta.approxRows
+					try await copyData(meta, src: db, dst: db, dstName: newName)
+				}
+			}
+			done = 1
+			if cancelled {
+				message = "그만뒀습니다 · \(newName) 는 비어 있습니다"
+				isError = true
+			} else {
+				message = data && !isView ? "\(newName) 만듦 · \(rowsDone.formatted())행 복사" : "\(newName) 만듦"
+			}
+		} catch {
+			message = error.localizedDescription
+			isError = true
+		}
+		await session.tableCreated(schema: source, name: newName)
+	}
+
 	/// 테이블 먼저, 뷰는 나중 (뷰가 테이블을 본다). 컬럼·기본 키·어림 행도 한 번에
 	@MainActor
 	private func tableList() async throws -> [TableMeta] {
@@ -172,11 +217,12 @@ final class DatabaseCopyJob {
 	/// 원본은 잠그지 않는다 (server: READ COMMITTED 의 INSERT … SELECT 는 원본을 잠금 없이 읽는다, client: 일반 SELECT).
 	/// 그만두면 그 테이블은 되돌린다(비어 있는 채로 남는다)
 	@MainActor
-	private func copyData(_ t: TableMeta, src: String, dst: String) async throws {
+	private func copyData(_ t: TableMeta, src: String, dst: String, dstName: String? = nil) async throws {
 		guard let session, !t.columns.isEmpty else { return }
 		let q = TableInspector.ident
 		let cols = t.columns.map(q).joined(separator: ", ")
-		let from = "\(src).\(q(t.name))", into = "\(dst).\(q(t.name)) (\(cols))"
+		let target = "\(dst).\(q(dstName ?? t.name))"
+		let from = "\(src).\(q(t.name))", into = "\(target) (\(cols))"
 		// 기본 키가 컬럼 목록에 다 있어야 이어 읽기를 할 수 있다
 		let keyIdx = t.primaryKey.compactMap { t.columns.firstIndex(of: $0) }
 		let keyed = !t.primaryKey.isEmpty && keyIdx.count == t.primaryKey.count
@@ -209,7 +255,7 @@ final class DatabaseCopyJob {
 					if keyed, n > 0 {
 						let keys = t.primaryKey.map(q).joined(separator: ", ")
 						let desc = t.primaryKey.map { q($0) + " DESC" }.joined(separator: ", ")
-						last = try await session.query("SELECT \(keys) FROM \(dst).\(q(t.name)) ORDER BY \(desc) LIMIT 1").last?.rows.first
+						last = try await session.query("SELECT \(keys) FROM \(target) ORDER BY \(desc) LIMIT 1").last?.rows.first
 					}
 				case .client:
 					let rows = try await session.query("SELECT \(cols) FROM \(from)\(cond)\(order)\(limit)").last?.rows ?? []

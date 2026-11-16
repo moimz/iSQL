@@ -382,6 +382,8 @@ struct SidebarTableMenu: View {
 		let items = TableMenu.items(isView: table.isView,
 		                            open: { session.openTab(table) },
 		                            export: { session.requestExport(.table(table.schema, TableStat(table))) },
+		                            duplicate: { session.tableNameRequest = TableNameRequest(kind: .duplicate, schema: table.schema, table: TableStat(table)) },
+		                            rename: { session.tableNameRequest = TableNameRequest(kind: .rename, schema: table.schema, table: TableStat(table)) },
 		                            truncate: { session.requestTruncate(schema: table.schema, [TableStat(table)]) },
 		                            drop: { session.requestDrop(schema: table.schema, [TableStat(table)]) })
 		ForEach(items.indices, id: \.self) { i in

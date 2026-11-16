@@ -84,10 +84,8 @@ struct ContentView: View {
 		.sheet(item: Binding(get: { model.current?.duplicateRequest }, set: { model.current?.duplicateRequest = $0 })) { req in
 			if let s = model.current { DuplicateDatabaseSheet(request: req, session: s) }
 		}
-		// SQL 파일 가져오기: 제목바에 붙는 시트
-		.sheet(item: Binding(get: { model.current?.importRequest }, set: { model.current?.importRequest = $0 })) { req in
-			if let s = model.current { ImportSheet(request: req, session: s) }
-		}
+		// 테이블 이름 바꾸기·복제, SQL 파일 가져오기 (시트가 많아 묶음으로 — 한 식이 길면 타입 검사가 끝나지 않는다)
+		.modifier(MoreSheets(model: model))
 		// 새 테이블 만들기: 제목바에 붙는 시트
 		.sheet(item: Binding(get: { model.current?.createTableRequest }, set: { model.current?.createTableRequest = $0 })) { req in
 			if let s = model.current { CreateTableSheet(request: req, session: s) }
@@ -319,3 +317,18 @@ struct TableActionDialogs: ViewModifier {
 	}
 }
 
+
+/// 제목바에 붙는 시트 묶음: 테이블 이름 바꾸기·복제, SQL 파일 가져오기
+struct MoreSheets: ViewModifier {
+	let model: WindowModel
+
+	func body(content: Content) -> some View {
+		content
+			.sheet(item: Binding(get: { model.current?.tableNameRequest }, set: { model.current?.tableNameRequest = $0 })) { req in
+				if let s = model.current { TableNameSheet(request: req, session: s) }
+			}
+			.sheet(item: Binding(get: { model.current?.importRequest }, set: { model.current?.importRequest = $0 })) { req in
+				if let s = model.current { ImportSheet(request: req, session: s) }
+			}
+	}
+}
