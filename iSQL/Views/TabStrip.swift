@@ -72,13 +72,18 @@ struct TabStrip<ID: Hashable, Content: View>: View {
 /// 굵기가 바뀌어도 너비가 그대로인 탭 이름: 굵은 글자 너비를 늘 잡아 둔다
 /// (고른 탭만 semibold 라 탭을 바꿀 때마다 탭 너비가 달라져 옆 탭들이 움직였다)
 struct TabTitle: View {
+	/// 앞에 흐리게 붙는 글자 (DB 이름 "html.")
+	var prefix: String? = nil
 	let text: String
 	let active: Bool
 
 	var body: some View {
-		ZStack(alignment: .leading) {
-			Text(text).fontWeight(.semibold).lineLimit(1).hidden()
-			Text(text).fontWeight(active ? .semibold : .regular).lineLimit(1)
+		HStack(spacing: 0) {
+			if let prefix { Text(prefix).foregroundStyle(.secondary).lineLimit(1).fixedSize() }
+			ZStack(alignment: .leading) {
+				Text(text).fontWeight(.semibold).lineLimit(1).hidden()
+				Text(text).fontWeight(active ? .semibold : .regular).lineLimit(1)
+			}
 		}
 	}
 }

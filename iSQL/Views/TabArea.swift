@@ -424,10 +424,11 @@ struct TabBar: View {
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
-	/// 같은 이름의 테이블이 다른 DB 에도 열려 있으면 DB 이름을 같이 보여 준다
+	/// 이 탭바에 서로 다른 DB 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름을 붙인다
+	/// (같은 이름 테이블만 붙이면 어느 탭은 붙고 어느 탭은 안 붙어 헷갈렸다, 사용자 지적)
 	private func needsSchema(_ id: String) -> Bool {
-		guard let t = session.table(id) else { return false }
-		return session.tabs.contains { $0 != id && session.table($0)?.name == t.name }
+		guard session.table(id) != nil else { return false }
+		return Set(session.tabs.compactMap { session.table($0)?.schema }).count > 1
 	}
 }
 
@@ -478,11 +479,13 @@ struct ParkedTabBar: View {
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
+	/// 오른쪽도 같은 규칙: 서로 다른 (서버, DB) 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름
 	private func needsSchema(_ p: ParkedTab, _ t: TableInfo?) -> Bool {
-		guard let t else { return false }
-		return model.parkedTabs.contains { q in
-			q != p && model.sessions[q.server]?.table(q.tab)?.name == t.name
-		}
+		guard t != nil else { return false }
+		let dbs = Set(model.parkedTabs.compactMap { q in
+			model.sessions[q.server]?.table(q.tab).map { q.server.uuidString + "|" + $0.schema }
+		})
+		return dbs.count > 1
 	}
 }
 
@@ -627,10 +630,9 @@ struct TabItem: View {
 				Circle().fill(srv.color ?? .secondary).frame(width: 7, height: 7)
 				if let n = srv.name { Text(n).foregroundStyle(.secondary).lineLimit(1) }
 			}
-			if showSchema, let s = table?.schema {
-				Text(s + ".").foregroundStyle(.secondary)
-			}
-			TabTitle(text: table?.name ?? Session.databaseOf(tab: id) ?? id, active: active && focused)
+			// DB 이름은 테이블 이름에 붙여서 ("html.im_core…", 사이 띄어쓰기 없이)
+			TabTitle(prefix: showSchema ? table.map { $0.schema + "." } : nil,
+			         text: table?.name ?? Session.databaseOf(tab: id) ?? id, active: active && focused)
 			if stale {
 				Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 11)).foregroundStyle(.orange)
 					.help("쿼리로 바뀌었습니다. 다시 읽으세요")
@@ -659,7 +661,8 @@ struct TabItem: View {
 		.padding(.trailing, 6)
 		.frame(height: 36)
 		// 최소 너비 안에서 가운데 정렬되면 짧은 이름 탭만 아이콘·X 가 밀려 보였다 → 왼쪽부터
-		.frame(minWidth: 110, maxWidth: 240, alignment: .leading)
+		// 오른쪽 칸은 서버 이름·DB 이름까지 붙으니 조금 넉넉하게
+		.frame(minWidth: 110, maxWidth: 300, alignment: .leading)
 		.background(active ? Color(nsColor: .windowBackgroundColor) : (hover ? Color.primary.opacity(0.05) : .clear), ignoresSafeAreaEdges: [])
 		.overlay(alignment: .top) { if active && focused { Rectangle().fill(Color.accentColor).frame(height: 2) } }
 		.overlay(alignment: .trailing) { Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 1) }
