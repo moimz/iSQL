@@ -130,6 +130,8 @@ struct TableGridHost: NSViewRepresentable {
 	let active: GridSource
 	/// 열려 있는 탭들의 공급자 (닫힌 탭의 표는 정리한다)
 	let alive: [GridSource]
+	/// 지금 보이는 표의 스크롤 뷰 (양쪽 스크롤 맞추기용)
+	var onVisibleScroll: ((NSScrollView) -> Void)? = nil
 	var onSelection: ((IndexSet) -> Void)?
 
 	final class Coordinator {
@@ -170,6 +172,7 @@ struct TableGridHost: NSViewRepresentable {
 			other.scroll.isHidden = !show
 		}
 		ctl.refresh()
+		onVisibleScroll?(ctl.scroll)
 	}
 }
 

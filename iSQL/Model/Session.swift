@@ -46,9 +46,34 @@ final class Session {
 	/// 테이블 id → 컬럼
 	private(set) var columns: [String: [ColumnInfo]] = [:]
 	private(set) var loadingSchema = false
-	/// 연 테이블의 데이터 (다른 테이블로 옮겨도 저장 안 한 변경이 남게).
+	/// 연 탭의 데이터 (탭 id → 데이터, 다른 탭으로 옮겨도 저장 안 한 변경이 남게).
+	/// 같은 테이블을 두 탭에 열면 탭마다 따로(행·필터·쪽·수정) 가진다.
 	/// 화면을 그리는 중에 채워지므로 관찰하지 않는다. 변경 여부는 각 TableData 가 관찰된다
 	@ObservationIgnored private(set) var openData: [String: TableData] = [:]
+
+	// MARK: 탭 id
+	// 탭 id = 테이블 id ("db.table"), 같은 테이블의 두 번째 탭부터 "db.table␟2" (DB 개요 탭은 "db:<스키마>", 사본 없음)
+
+	static let copySeparator: Character = "\u{1F}"
+
+	/// 탭 id 에서 테이블 id (사본 번호를 뗀다)
+	static func tableID(ofTab id: String) -> String {
+		id.firstIndex(of: copySeparator).map { String(id[..<$0]) } ?? id
+	}
+
+	/// 이 테이블의 새 탭 id (왼쪽·오른쪽 어디에도 안 쓰인 것)
+	private func newTabID(for tableID: String) -> String {
+		let used = Set(tabs + parked)
+		if !used.contains(tableID) { return tableID }
+		var n = 2
+		while used.contains(tableID + String(Self.copySeparator) + String(n)) { n += 1 }
+		return tableID + String(Self.copySeparator) + String(n)
+	}
+
+	/// 이 테이블을 연 탭 중 저장 안 한 변경이 있는 것이 있는지 (사이드바 주황 점)
+	func isUnsaved(table id: String) -> Bool {
+		unsavedTables.contains { Self.tableID(ofTab: $0) == id }
+	}
 
 	/// 서버마다 하나인 쿼리 패널 (접속하면 만든다, 입력 내용은 서버별로 남는다)
 	private(set) var queryPanel: QueryPanel?
@@ -59,7 +84,9 @@ final class Session {
 	func markStale(_ names: [String], defaultDB: String) {
 		for n in names {
 			let id = n.contains(".") ? n : (defaultDB.isEmpty ? "" : defaultDB + "." + n)
-			for (tid, d) in openData where tid == id || (!n.contains(".") && tid.hasSuffix("." + n) && defaultDB.isEmpty) {
+			for (tab, d) in openData {
+				let tid = Self.tableID(ofTab: tab)
+				guard tid == id || (!n.contains(".") && tid.hasSuffix("." + n) && defaultDB.isEmpty) else { continue }
 				d.stale = true
 			}
 		}
@@ -120,10 +147,12 @@ final class Session {
 		holdMemory = false
 	}
 
-	func data(for table: TableInfo) -> TableData {
-		if let d = openData[table.id] { return d }
-		let d = TableData(table: table, session: self)
-		openData[table.id] = d
+	/// 그 탭의 데이터 (테이블 탭이 아니면 nil)
+	func data(tab id: String) -> TableData? {
+		if let d = openData[id] { return d }
+		guard let t = table(id) else { return nil }
+		let d = TableData(table: t, tab: id, session: self)
+		openData[id] = d
 		return d
 	}
 
@@ -156,7 +185,12 @@ final class Session {
 		guard let id = server?.id, let m = TabMemory.load(server: id) else { return }
 		holdMemory = true
 		let existing = Set(tables.map(\.id)).union(databases.map(Self.databaseTabID))
-		tabs = m.tabs.filter { existing.contains($0) }
+		// 오른쪽에 있던 사본까지 왼쪽으로 되살리므로, 같은 테이블은 하나만 (사용자 결정)
+		var seen = Set<String>()
+		tabs = m.tabs.filter { tab in
+			let tid = Self.tableID(ofTab: tab)
+			return existing.contains(tid) && seen.insert(tid).inserted
+		}
 		activeTab = m.active.flatMap { tabs.contains($0) ? $0 : nil } ?? tabs.first
 		expanded = m.expanded.intersection(databases)
 		holdMemory = false
@@ -208,15 +242,31 @@ final class Session {
 		rememberTabs()
 	}
 
+	/// 사이드바에서 테이블 열기: 왼쪽에 이미 있으면 그 탭, 없으면 새 탭 (오른쪽에 같은 테이블이 있어도 왼쪽에 따로 연다)
 	func openTab(_ t: TableInfo) {
-		if parked.contains(t.id) { focusParked?(t.id); return }
 		leftFocusTick += 1
-		if !tabs.contains(t.id) {
+		let id = tabs.first { Self.tableID(ofTab: $0) == t.id } ?? newTabID(for: t.id)
+		if !tabs.contains(id) {
 			// 지금 탭 바로 오른쪽에 연다
-			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(t.id, at: i + 1) } else { tabs.append(t.id) }
+			if let a = activeTab, let i = tabs.firstIndex(of: a) { tabs.insert(id, at: i + 1) } else { tabs.append(id) }
 		}
-		activeTab = t.id
+		activeTab = id
 		rememberTabs()
+	}
+
+	/// 왼쪽에 이 탭과 같은 테이블(또는 같은 DB 개요)이 열려 있는지
+	func leftHasSame(as tab: String) -> Bool {
+		let tid = Self.tableID(ofTab: tab)
+		return tabs.contains { Self.tableID(ofTab: $0) == tid }
+	}
+
+	/// 왼쪽 탭의 사본을 만들어 오른쪽에 둔다 (데이터는 새로 읽는다). 새 탭 id
+	func duplicateToParked(_ tab: String) -> String? {
+		guard table(tab) != nil else { return nil }
+		let id = newTabID(for: Self.tableID(ofTab: tab))
+		parked.append(id)
+		rememberTabs()
+		return id
 	}
 
 	func closeTab(_ id: String) {
@@ -272,7 +322,11 @@ final class Session {
 		rememberTabs()
 	}
 
-	func table(_ id: String) -> TableInfo? { tables.first { $0.id == id } }
+	/// 탭 id(또는 테이블 id)의 테이블
+	func table(_ id: String) -> TableInfo? {
+		let tid = Self.tableID(ofTab: id)
+		return tables.first { $0.id == tid }
+	}
 
 	func setUnsaved(_ id: String, _ on: Bool) {
 		if on != unsavedTables.contains(id) { if on { unsavedTables.insert(id) } else { unsavedTables.remove(id) } }

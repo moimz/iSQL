@@ -34,8 +34,8 @@ struct TableSidebar: View {
 								ForEach(items) { t in
 									TableRow(table: t,
 									         matched: session.matchedColumns(t, searchText),
-									         selected: session.activeTab == t.id,
-									         unsaved: session.unsavedTables.contains(t.id))
+									         selected: session.activeTab.map(Session.tableID(ofTab:)) == t.id,
+									         unsaved: session.isUnsaved(table: t.id))
 										.onTapGesture { session.openTab(t) }
 										.contextMenu {
 											SidebarTableMenu(session: session, table: t)
@@ -46,7 +46,7 @@ struct TableSidebar: View {
 							}
 						} header: {
 							SchemaHeader(name: schema, count: items.count, open: open,
-							             unsaved: items.contains { session.unsavedTables.contains($0.id) },
+							             unsaved: items.contains { session.isUnsaved(table: $0.id) },
 							             selected: session.activeTab == Session.databaseTabID(schema),
 							             scrollY: scrollY) {
 								if session.expanded.contains(schema) { session.expanded.remove(schema) } else { session.expanded.insert(schema) }
@@ -82,7 +82,7 @@ struct TableSidebar: View {
 				guard let id, let t = session.table(id) else { return }
 				if searchText.isEmpty && !session.expanded.contains(t.schema) { session.expanded.insert(t.schema) }
 				DispatchQueue.main.async {
-					withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id) }
+					withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(t.id) }
 				}
 			}
 			}

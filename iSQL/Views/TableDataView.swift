@@ -14,12 +14,17 @@ struct TableDetailView: View {
 	/// 이 칸의 표 호스트가 살려 둘 표들 (nil 이면 서버의 왼쪽 탭들). 오른쪽 분할 칸은 그 칸의 탭들을 준다
 	var alive: [GridSource]?
 
-	init(session: Session, table: TableInfo, isActive: Bool = true, alive: [GridSource]? = nil) {
+	/// 보이는 표의 스크롤 뷰를 알려 준다 (양쪽 스크롤 맞추기)
+	var onGridScroll: ((NSScrollView) -> Void)?
+
+	init(session: Session, tab: String, table: TableInfo, isActive: Bool = true, alive: [GridSource]? = nil,
+	     onGridScroll: ((NSScrollView) -> Void)? = nil) {
 		self.session = session
 		self.table = table
 		self.isActive = isActive
 		self.alive = alive
-		data = session.data(for: table)
+		self.onGridScroll = onGridScroll
+		data = session.data(tab: tab) ?? TableData(table: table, tab: tab, session: session)
 	}
 
 	var body: some View {
@@ -40,11 +45,11 @@ struct TableDetailView: View {
 			}
 		}
 		// 화면을 탭끼리 돌려 쓰므로 테이블이 바뀔 때마다 (처음이면) 읽는다
-		.task(id: table.id) {
+		.task(id: data.tab) {
 			data.prepareFilters()
 			if isActive && !data.loaded && !data.loading { await data.load() }
 		}
-		.onChange(of: table.id) { selection = [] }
+		.onChange(of: data.tab) { selection = [] }
 		.sheet(isPresented: Bindable(data).showSQL) { SQLPreview(statements: data.changeSQL()) }
 	}
 
@@ -58,7 +63,8 @@ struct TableDetailView: View {
 		ZStack {
 			// 탭마다 AppKit 표를 살려 두고 보이는 것만 보인다 (탭 전환이 보이기/숨기기 한 번)
 			TableGridHost(active: data,
-			              alive: alive ?? session.tabs.compactMap { id in session.table(id).map { session.data(for: $0) } }) { selection = $0 }
+			              alive: alive ?? session.tabs.compactMap { session.data(tab: $0) },
+			              onVisibleScroll: onGridScroll) { selection = $0 }
 			if data.loading {
 				if data.rows.isEmpty {
 					// 처음 읽을 때: 제목은 이미 보이고 가운데에 로딩

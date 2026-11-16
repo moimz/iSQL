@@ -7,6 +7,8 @@ import Observation
 @Observable
 final class TableData {
 	let table: TableInfo
+	/// 이 데이터가 붙은 탭 id (같은 테이블을 두 탭에 열면 탭마다 따로)
+	let tab: String
 	let session: Session
 
 	private(set) var columns: [Column] = []
@@ -204,13 +206,14 @@ final class TableData {
 	/// 다시 그리게 하고, 저장 안 한 변경 여부를 세션에 알린다 (사이드바 표시)
 	private func bump() {
 		version += 1
-		session.setUnsaved(table.id, hasChanges)
+		session.setUnsaved(tab, hasChanges)
 	}
 
 	/// 한 번이라도 읽었는지 (제목은 구조로 먼저 만들어 두므로 columns 로는 알 수 없다)
 	private(set) var loaded = false
 
-	init(table: TableInfo, session: Session) {
+	init(table: TableInfo, tab: String, session: Session) {
+		self.tab = tab
 		self.table = table
 		self.session = session
 		// 컬럼 제목은 접속 때 읽어 둔 구조로 바로 만든다. 행은 받아오는 대로 채운다
@@ -416,7 +419,7 @@ func literal(_ v: Value) -> String {
 // MARK: - 공용 표(TableGrid)에 대기
 
 extension TableData: GridSource {
-	var gridID: String { table.id }
+	var gridID: String { tab }
 
 	var gridColumns: [GridColumn] {
 		let comments = Dictionary((session.columns[table.id] ?? []).map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a })

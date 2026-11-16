@@ -13,6 +13,11 @@ final class WindowModel {
 	var parkedTabs: [ParkedTab] = []
 	var parkedActive: ParkedTab?
 	var splitFocus: SplitSide = .left
+	/// 양쪽 표 스크롤 맞추기 (오른쪽 탭바 끝 버튼)
+	var scrollSync = false {
+		didSet { scrollLink.enabled = scrollSync; if scrollSync { scrollLink.alignRightToLeft() } }
+	}
+	@ObservationIgnored let scrollLink = ScrollLink()
 
 	/// 왼쪽 사이드바가 서버 목록인지 테이블 목록인지 (접속한 서버가 있을 때 위쪽 [서버 | 테이블] 로 바꾼다)
 	var sidebarMode: SidebarMode = .servers
@@ -123,6 +128,21 @@ extension WindowModel {
 		}
 		parkedActive = p
 		splitFocus = .right
+	}
+
+	/// 왼쪽 탭의 사본을 오른쪽에 (같은 테이블을 다른 조건으로 나란히 보기)
+	func duplicateToRight(_ tab: String, from session: Session) {
+		guard let id = session.server?.id, let copy = session.duplicateToParked(tab) else { return }
+		let p = ParkedTab(server: id, tab: copy)
+		parkedTabs.append(p)
+		parkedActive = p
+		splitFocus = .right
+	}
+
+	/// 오른쪽 탭을 그 서버의 왼쪽 탭으로 돌려놓는다 (서버는 바꾸지 않는다). 오른쪽 탭 닫기에서
+	func returnParked(_ p: ParkedTab) {
+		removeParked(p)
+		sessions[p.server]?.unpark(p.tab)
 	}
 
 	/// 오른쪽 탭 순서 바꾸기 (끌어 놓기)

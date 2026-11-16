@@ -29,7 +29,7 @@ struct TabArea: View {
 	private var focusedSession: Session { focused?.session ?? session }
 
 	private var active: TableData? {
-		focused.flatMap { f in f.session.table(f.tab).map { f.session.data(for: $0) } }
+		focused.flatMap { f in f.session.data(tab: f.tab) }
 	}
 
 	private var activeTable: TableInfo? { focused.flatMap { $0.session.table($0.tab) } }
@@ -231,7 +231,8 @@ struct TabArea: View {
 		VStack(spacing: 0) {
 			if !session.tabs.isEmpty {
 				TabBar(session: session, paneFocused: !model.hasSplit || model.splitFocus == .left,
-				       close: closeLeft, park: { model.park($0, from: session) }, drop: dropToLeft)
+				       close: closeLeft, park: { model.park($0, from: session) },
+				       duplicate: { model.duplicateToRight($0, from: session) }, drop: dropToLeft)
 				Divider()
 			}
 			ZStack {
@@ -239,7 +240,8 @@ struct TabArea: View {
 				// 탭을 다 살려 두면 애니메이션 프레임마다 숨은 탭까지 다시 배치하고(패널 열기 472ms),
 				// 탭마다 화면을 새로 만들면 표를 버리고 새로 만들어 느리다(탭 전환 159ms). 둘 다 Time Profiler 로 확인 (Ai/iSQL.md)
 				if let id = session.activeTab, let t = session.table(id) {
-					TableDetailView(session: session, table: t)
+					TableDetailView(session: session, tab: id, table: t,
+					                onGridScroll: { model.scrollLink.register(.left, $0) })
 				} else if let id = session.activeTab, let schema = Session.databaseOf(tab: id) {
 					// DB 개요 탭
 					DatabaseOverviewView(session: session, overview: session.overview(schema)).id(id)
@@ -261,7 +263,8 @@ struct TabArea: View {
 			ZStack {
 				if let p = model.parkedActive, let s = model.sessions[p.server] {
 					if let t = s.table(p.tab) {
-						TableDetailView(session: s, table: t, alive: parkedSources)
+						TableDetailView(session: s, tab: p.tab, table: t, alive: parkedSources,
+						                onGridScroll: { model.scrollLink.register(.right, $0) })
 					} else if let schema = Session.databaseOf(tab: p.tab) {
 						DatabaseOverviewView(session: s, overview: s.overview(schema)).id(p.key)
 					} else {
@@ -277,9 +280,7 @@ struct TabArea: View {
 
 	/// 오른쪽에 둔 테이블 탭들의 표 공급자 (오른쪽 칸의 표 호스트가 살려 둘 것)
 	private var parkedSources: [GridSource] {
-		model.parkedTabs.compactMap { p in
-			model.sessions[p.server].flatMap { s in s.table(p.tab).map { s.data(for: $0) } }
-		}
+		model.parkedTabs.compactMap { p in model.sessions[p.server]?.data(tab: p.tab) }
 	}
 
 	private func rightWidth(total: CGFloat) -> CGFloat {
@@ -352,8 +353,14 @@ struct TabArea: View {
 		if session.unsavedTables.contains(id) { pendingClose = .left(id) } else { session.closeTab(id) }
 	}
 
+	/// 오른쪽 탭 닫기: 그 서버 왼쪽에 같은 테이블이 이미 있으면 닫고, 없으면 왼쪽으로 돌려놓는다 (사용자 결정)
 	private func closeRight(_ p: ParkedTab) {
-		if model.sessions[p.server]?.unsavedTables.contains(p.tab) == true { pendingClose = .right(p) } else { model.closeParked(p) }
+		guard let s = model.sessions[p.server] else { model.closeParked(p); return }
+		if s.leftHasSame(as: p.tab) {
+			if s.unsavedTables.contains(p.tab) { pendingClose = .right(p) } else { model.closeParked(p) }
+		} else {
+			model.returnParked(p)
+		}
 	}
 
 	private func closeFocused() {
@@ -380,6 +387,8 @@ struct TabBar: View {
 	let close: (String) -> Void
 	/// 오른쪽 분할로 옮기기
 	let park: (String) -> Void
+	/// 오른쪽 분할에 사본 (같은 테이블을 다른 조건으로)
+	let duplicate: (String) -> Void
 	/// 끌어 온 탭 놓기 (그 탭 앞, nil 이면 맨 뒤)
 	let drop: ([String], String?) -> Bool
 	/// 끌어 온 탭이 놓일 자리 (그 탭 왼쪽에 강조색 세로줄)
@@ -393,13 +402,14 @@ struct TabBar: View {
 				TabItem(table: session.table(id), id: id,
 				        active: session.activeTab == id,
 				        // data(for:) 로 만들어 두고 읽어야 loading 이 관찰된다
-				        loading: session.table(id).map { session.data(for: $0).loading }
+				        loading: session.data(tab: id)?.loading
 				            ?? Session.databaseOf(tab: id).map { session.overview($0).loading } ?? false,
-				        stale: session.table(id).map { session.data(for: $0).stale } ?? false,
+				        stale: session.data(tab: id)?.stale ?? false,
 				        unsaved: session.unsavedTables.contains(id),
 				        showSchema: needsSchema(id),
 				        focused: paneFocused,
-				        menu: [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]) {
+				        menu: [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
+				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])) {
 					session.selectTab(id)
 				} close: {
 					close(id)
@@ -442,15 +452,16 @@ struct ParkedTabBar: View {
 	@State private var dropAtEnd = false
 
 	var body: some View {
+		HStack(spacing: 0) {
 		TabStrip(selected: model.parkedActive?.key) {
 			ForEach(model.parkedTabs, id: \.key) { p in
 				let s = model.sessions[p.server]
 				let t = s?.table(p.tab)
 				TabItem(table: t, id: p.tab,
 				        active: model.parkedActive == p,
-				        loading: t.flatMap { tt in s.map { $0.data(for: tt).loading } }
+				        loading: s?.data(tab: p.tab)?.loading
 				            ?? Session.databaseOf(tab: p.tab).flatMap { db in s.map { $0.overview(db).loading } } ?? false,
-				        stale: t.flatMap { tt in s.map { $0.data(for: tt).stale } } ?? false,
+				        stale: s?.data(tab: p.tab)?.stale ?? false,
 				        unsaved: s?.unsavedTables.contains(p.tab) ?? false,
 				        showSchema: needsSchema(p, t),
 				        focused: model.splitFocus == .right,
@@ -474,6 +485,19 @@ struct ParkedTabBar: View {
 			}
 		}
 		.animation(.easeOut(duration: 0.18), value: model.parkedTabs)
+			Divider()
+			// 양쪽 표 스크롤 맞추기 (같은 테이블을 DB·서버끼리 비교할 때)
+			Button { model.scrollSync.toggle() } label: {
+				Image(systemName: "link")
+					.font(.system(size: 12, weight: .semibold))
+					.foregroundStyle(model.scrollSync ? Color.accentColor : Color.secondary)
+					.frame(width: 30, height: 30)
+					.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.padding(.horizontal, 3)
+			.help(model.scrollSync ? "양쪽 스크롤 맞추기 켜짐 (누르면 끔)" : "양쪽 스크롤 맞추기: 왼쪽·오른쪽 표를 같이 스크롤")
+		}
 		.frame(height: 36)
 		.dropDestination(for: String.self) { items, _ in drop(items, nil) } isTargeted: { dropAtEnd = $0 }
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
@@ -504,6 +528,59 @@ struct TabDragPreview: View {
 		.frame(height: 28)
 		.background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
 		.overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.6)))
+	}
+}
+
+/// 양쪽 표의 스크롤을 맞춘다: 왼쪽·오른쪽 칸에서 지금 보이는 표를 기억하고, 한쪽이 움직이면 다른 쪽을 같은 위치로
+final class ScrollLink {
+	var enabled = false
+	private(set) weak var left: NSScrollView?
+	private(set) weak var right: NSScrollView?
+	private var observed = Set<ObjectIdentifier>()
+	private var syncing = false
+
+	func register(_ side: SplitSide, _ scroll: NSScrollView) {
+		if side == .left { if left === scroll { return }; left = scroll } else { if right === scroll { return }; right = scroll }
+		let clip = scroll.contentView
+		if observed.insert(ObjectIdentifier(clip)).inserted {
+			clip.postsBoundsChangedNotifications = true
+			NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self, weak scroll] _ in
+				guard let self, let scroll else { return }
+				MainActor.assumeIsolated { self.follow(scroll) }
+			}
+		}
+		// 새로 보이게 된 표는 반대쪽 위치에 맞춘다
+		if enabled, let other = side == .left ? right : left { copy(from: other, to: scroll) }
+	}
+
+	func alignRightToLeft() {
+		if let l = left, let r = right { copy(from: l, to: r) }
+	}
+
+	private func follow(_ s: NSScrollView) {
+		guard enabled, !syncing else { return }
+		guard let other = s === left ? right : (s === right ? left : nil) else { return }
+		copy(from: s, to: other)
+	}
+
+	private func copy(from a: NSScrollView, to b: NSScrollView) {
+		syncing = true
+		defer { syncing = false }
+		let clip = b.contentView
+		// 제목 줄 여백(contentInsets)·문서 크기는 constrainBoundsRect 가 맞춰 준다
+		let target = clip.constrainBoundsRect(NSRect(origin: a.contentView.bounds.origin, size: clip.bounds.size)).origin
+		guard target != clip.bounds.origin else { return }
+		clip.setBoundsOrigin(target)
+		b.reflectScrolledClipView(clip)
+		Self.syncHeader(b)
+	}
+
+	/// 본문만 옮기면 컬럼 제목 줄은 가로로 따라오지 않는다 (화면으로 확인) → 제목 줄 클립도 같은 x 로
+	static func syncHeader(_ scroll: NSScrollView) {
+		guard let header = (scroll.documentView as? NSTableView)?.headerView,
+		      let hclip = header.superview as? NSClipView else { return }
+		let x = scroll.contentView.bounds.origin.x
+		if hclip.bounds.origin.x != x { hclip.setBoundsOrigin(NSPoint(x: x, y: hclip.bounds.origin.y)) }
 	}
 }
 
