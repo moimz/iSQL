@@ -1153,13 +1153,22 @@ final class GridTableView: NSTableView {
 		super.mouseDown(with: event)
 	}
 
-	/// 고정 표는 밑에 깔린 본 표가 비치지 않게 불투명하게 (다크 모드 줄무늬 색은 반투명이다)
+	/// 줄무늬·세로선을 직접 그린다 (행이 없는 아래쪽도 같은 줄무늬로 이어서).
+	/// 불투명하게: 고정 표 밑에 깔린 본 표가 비치지 않게 (다크 모드 둘째 줄무늬 색은 반투명이다)
 	override func drawBackground(inClipRect clipRect: NSRect) {
-		if isFrozenPart {
-			NSColor.controlBackgroundColor.setFill()
-			clipRect.intersection(bounds).fill()
+		let colors = NSColor.alternatingContentBackgroundColors
+		let r = clipRect.intersection(bounds)
+		colors[0].setFill()
+		r.fill()
+		let h = rowHeight + intercellSpacing.height
+		if h > 0, colors.count > 1 {
+			colors[1].setFill()
+			var i = Int(floor(r.minY / h))
+			while CGFloat(i) * h < r.maxY {
+				if i % 2 == 1 { NSRect(x: r.minX, y: CGFloat(i) * h, width: r.width, height: h).fill(using: .sourceOver) }
+				i += 1
+			}
 		}
-		super.drawBackground(inClipRect: clipRect)
 		drawColumnLines(in: clipRect)
 	}
 
@@ -1210,9 +1219,17 @@ final class GridTableView: NSTableView {
 final class GridRowView: NSTableRowView {
 	weak var controller: GridController?
 
-	/// 행 배경은 그리지 않는다: 줄무늬·세로선은 표(GridTableView.drawBackground)가 한 번에 그린다.
-	/// 행마다 배경을 칠하면 그 행이 표의 세로선을 덮었고, 컬럼 너비를 바꿔도 행은 다시 그려지지 않아 예전 자리 선이 남았다
+	/// 행 배경은 그리지 않는다: 줄무늬·세로선은 표(GridTableView.drawBackground)와 칸(GridCell.drawBackground)이 그린다.
+	/// 행 전체를 칠하면 그 행이 표의 세로선을 덮었고, 컬럼 너비를 바꿔도 행은 다시 그려지지 않아 예전 자리 선이 남았다
 	override func drawBackground(in dirtyRect: NSRect) {}
+
+	// 고름·줄무늬 색이 바뀌면 칸들이 배경을 다시 칠한다
+	override var isSelected: Bool {
+		didSet { if isSelected != oldValue { subviews.forEach { $0.needsDisplay = true } } }
+	}
+	override var backgroundColor: NSColor {
+		didSet { subviews.forEach { $0.needsDisplay = true } }
+	}
 
 	override var isEmphasized: Bool {
 		get { super.isEmphasized }
@@ -1358,6 +1375,27 @@ final class GridTextCell: NSTextFieldCell {
 	}
 }
 
+/// 칸 배경: 줄무늬 색(불투명) + 오른쪽 세로선. 칸이 직접 칠해야 컬럼을 끌 때 끄는 칸(고스트)이 비치지 않고,
+/// 밀려나는 칸의 세로선도 칸과 같이 움직인다 (표 배경에 그린 선은 놓을 때까지 제자리였다).
+/// 고른 행이면 줄무늬는 칠하지 않는다 (밑의 선택색이 보이게)
+enum GridCellBackground {
+	static func draw(in view: NSView, fill: NSColor?) {
+		let b = view.bounds
+		if let rv = view.superview as? NSTableRowView, !rv.isSelected {
+			NSColor.alternatingContentBackgroundColors[0].setFill()
+			b.fill()
+			rv.backgroundColor.setFill()
+			b.fill(using: .sourceOver)
+		}
+		if let fill {
+			fill.setFill()
+			b.fill(using: .sourceOver)
+		}
+		NSColor.gridColor.setFill()
+		NSRect(x: b.maxX - 1, y: b.minY, width: 1, height: b.height).fill()
+	}
+}
+
 /// 표 칸 하나. 상태 배경(고친 칸 노랑·새 행 초록·지울 행 빨강)을 칸 전체에 칠한다.
 /// 글자 칸(NSTextFieldCell)의 배경은 세로 가운데 맞춘 글자 높이만 칠해서 따로 그린다
 final class GridField: NSTextField {
@@ -1366,10 +1404,7 @@ final class GridField: NSTextField {
 	}
 
 	override func draw(_ dirtyRect: NSRect) {
-		if let fill {
-			fill.setFill()
-			bounds.fill(using: .sourceOver)
-		}
+		GridCellBackground.draw(in: self, fill: fill)
 		super.draw(dirtyRect)
 	}
 }
@@ -1395,9 +1430,6 @@ final class GridCheckView: NSView {
 	required init?(coder: NSCoder) { fatalError() }
 
 	override func draw(_ dirtyRect: NSRect) {
-		if let fill {
-			fill.setFill()
-			bounds.fill(using: .sourceOver)
-		}
+		GridCellBackground.draw(in: self, fill: fill)
 	}
 }
