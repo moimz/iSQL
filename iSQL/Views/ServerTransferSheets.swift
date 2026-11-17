@@ -46,6 +46,8 @@ struct ExportServersSheet: View {
 	@State private var password = ""
 	@State private var confirm = ""
 	@State private var result: (ok: Bool, text: String)?
+	/// 서버 고르기 목록 한 줄 높이
+	static let rowHeight: CGFloat = 26
 
 	init(store: ServerStore) {
 		self.store = store
@@ -65,15 +67,16 @@ struct ExportServersSheet: View {
 			}
 			.buttonStyle(.link)
 			ScrollView {
-				VStack(alignment: .leading, spacing: 2) {
+				// 줄 높이는 모두 같게 (그룹 줄·서버 줄, 키 아이콘 있는 줄)
+				VStack(alignment: .leading, spacing: 0) {
 					ForEach(store.grouped, id: \.group) { g in
 						if !g.group.isEmpty {
 							let ids = Set(g.servers.map(\.id))
 							Toggle(isOn: Binding(get: { !ids.isEmpty && ids.isSubset(of: picked) },
 							                     set: { on in if on { picked.formUnion(ids) } else { picked.subtract(ids) } })) {
-								Label(g.group, systemImage: "folder").font(.callout.weight(.semibold))
+								Label(g.group, systemImage: "folder").fontWeight(.semibold)
 							}
-							.padding(.top, 6)
+							.frame(height: Self.rowHeight)
 						}
 						ForEach(g.servers) { s in
 							Toggle(isOn: Binding(get: { picked.contains(s.id) },
@@ -87,6 +90,7 @@ struct ExportServersSheet: View {
 									}
 								}
 							}
+							.frame(height: Self.rowHeight)
 							.padding(.leading, g.group.isEmpty ? 0 : 20)
 						}
 					}
@@ -109,8 +113,6 @@ struct ExportServersSheet: View {
 					SecureField("", text: $confirm).textFieldStyle(.roundedBorder)
 				}
 			}
-			Text("MySQL·SSH 비밀번호와 SSH 키 파일이 이 암호로 AES-256 암호화되어 들어갑니다. SSH 키에 걸린 암호는 넣지 않습니다 — 가져오는 사람이 직접 넣습니다.")
-				.font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 			if !confirm.isEmpty && password != confirm {
 				Label("암호가 서로 다릅니다", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
 			}
