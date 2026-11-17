@@ -481,9 +481,46 @@ extension TableData: GridSource {
 		let comments = Dictionary((session.columns[table.id] ?? []).map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a })
 		return columns.enumerated().map { i, c in
 			let key = c.orgName.isEmpty ? c.name : c.orgName
+			let chars = Self.charLength(types[key])
 			return GridColumn(key: key, title: c.name, comment: comments[key] ?? "", isKey: keyIndices.contains(i),
-			                  numeric: c.isNumeric, long: c.length > 255)
+			                  numeric: c.isNumeric, mono: chars != nil, long: c.length > 255, monoChars: chars)
 		}
+	}
+
+	/// 컬럼 이름 → 정의된 타입 (`enum('a','b')`, `char(32)` …)
+	private var types: [String: String] {
+		Dictionary((session.columns[table.id] ?? []).map { ($0.name, $0.type) }, uniquingKeysWith: { a, _ in a })
+	}
+
+	private func columnType(_ col: Int) -> String? {
+		guard columns.indices.contains(col) else { return nil }
+		let c = columns[col]
+		return types[c.orgName.isEmpty ? c.name : c.orgName]
+	}
+
+	/// CHAR(n) 이면 n: 고정 길이 글자(해시·코드 등)는 고정폭 글꼴로 보이고 그 너비에 맞춘다 (사용자 2026-11-17)
+	static func charLength(_ type: String?) -> Int? {
+		guard let t = type?.lowercased(), t.hasPrefix("char("), let end = t.firstIndex(of: ")") else { return nil }
+		return Int(t[t.index(t.startIndex, offsetBy: 5)..<end])
+	}
+
+	/// `enum('a','b''c')` 의 값들 (아니면 nil)
+	static func enumValues(_ type: String?) -> [String]? {
+		guard let t = type, t.lowercased().hasPrefix("enum(") else { return nil }
+		var out: [String] = []
+		var cur = ""
+		var inQuote = false
+		var it = Array(t.dropFirst(5))[...]
+		while let ch = it.popFirst() {
+			if inQuote {
+				if ch == "\\", let n = it.popFirst() { cur.append(n) }
+				else if ch == "'" {
+					if it.first == "'" { it.removeFirst(); cur.append("'") } else { inQuote = false; out.append(cur); cur = "" }
+				} else { cur.append(ch) }
+			} else if ch == "'" { inQuote = true }
+			else if ch == ")" { break }
+		}
+		return out
 	}
 
 	var gridVersion: Int { version }
@@ -518,6 +555,13 @@ extension TableData: GridSource {
 		set(row, col, .bytes(data))
 		return true
 	}
+
+	/// ENUM 칸은 글자 입력 대신 값 고르기 메뉴 (사용자 2026-11-17)
+	func choices(_ row: Int, _ col: Int) -> [String?]? {
+		Self.enumValues(columnType(col)).map { $0.map(Optional.some) }
+	}
+
+	func currentChoice(_ row: Int, _ col: Int) -> String? { value(row, col).display }
 
 	/// 바이너리(BLOB·BINARY) 칸은 고치지 않는다: 보이는 글자는 "(6 바이트)" 같은 표시라 고치면 그 글자로 덮어썼다
 	func isEditable(_ row: Int, _ col: Int) -> Bool { !(columns.indices.contains(col) && columns[col].isBinary) }

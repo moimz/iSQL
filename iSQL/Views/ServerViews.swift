@@ -39,6 +39,8 @@ struct ServerSidebar: View {
 				Section {
 					ForEach(g.servers) { s in
 						ServerRow(server: s, state: model.state(s.id), auto: autoIDs.contains(s.id)).tag(s.id)
+							// 이미 고른 줄을 다시 눌러도(선택이 안 바뀌어 onChange 가 안 온다) 서버 정보로
+							.simultaneousGesture(TapGesture().onEnded { if model.currentID != nil { model.goHome() } })
 							.draggable(DragItem.server(s.id)) {
 								DragGhost { ServerRow(server: s, state: model.state(s.id), auto: autoIDs.contains(s.id)) }
 							}
@@ -82,22 +84,14 @@ struct ServerSidebar: View {
 				Button("지우기…", role: .destructive) { deleting = s }
 			}
 		} primaryAction: { ids in
-			// 두 번 누르면 접속
+			// 두 번 누르면 접속 (접속한 서버면 그 서버로 옮긴다)
 			if let id = ids.first, let s = store.servers.first(where: { $0.id == id }) { model.open(s) }
 		}
 		}
-		// 한 번 누르기: 접속한 서버면 그 서버로 옮기고(사이드바는 테이블 목록으로),
-		// 아니면 다른 서버를 보고 있더라도 퀵 커넥트 화면에 그 서버 설정을 띄운다 (보던 접속은 그대로)
+		// 한 번 누르기: 접속했든 안 했든 퀵 커넥트 화면에 그 서버 정보를 띄운다 (보던 접속은 그대로).
+		// 접속한 서버로 옮기는 것은 두 번 누르기 (사용자 2026-11-17: 접속 안 한 서버와 같게)
 		.onChange(of: model.selectedServerID) { _, id in
-			if id == WindowModel.newConnectionID {
-				if model.currentID != nil { model.goHome() }
-				return
-			}
-			guard let id, let s = store.servers.first(where: { $0.id == id }) else { return }
-			switch model.state(id) {
-			case .connected?, .connecting?: model.open(s)
-			default: if model.currentID != nil { model.goHome() }
-			}
+			if id != nil, model.currentID != nil { model.goHome() }
 		}
 		// ⌘F 로 검색칸
 		.background { Button("") { searchFocused = true }.keyboardShortcut("f").hidden() }

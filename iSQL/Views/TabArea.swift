@@ -299,7 +299,8 @@ struct TabArea: View {
 					.frame(width: 12)
 					.contentShape(Rectangle())
 					.onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-					.gesture(DragGesture(minimumDistance: 1)
+					.gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+						// 손잡이가 끄는 동안 함께 움직이므로 제 좌표로 재면 이동량이 되먹여 떨린다 → 창 좌표로 잰다
 						.onChanged { v in
 							if dragStartWidth == nil { dragStartWidth = Double(rightWidth(total: total)) }
 							let w = (dragStartWidth ?? 0) - Double(v.translation.width)
@@ -372,7 +373,9 @@ struct TabBar: View {
 				        unsaved: session.unsavedTables.contains(id),
 				        showSchema: needsSchema(id),
 				        focused: paneFocused,
-				        menu: [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
+				        structure: session.data(tab: id)?.mode == .structure,
+				        menu: TabMenuAction.table(session.table(id), in: session)
+				            + [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
 				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])
 				            + Self.orderMenu(session.data(tab: id)),
 				        clickable: !covered) {
@@ -430,7 +433,9 @@ struct ParkedTabBar: View {
 				        server: s?.server.map { srv in
 				            TabServer(name: p.server == currentServer ? nil : srv.displayName, color: srv.color.swiftUI)
 				        },
-				        menu: [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }] + TabBar.orderMenu(s?.data(tab: p.tab))) {
+				        structure: s?.data(tab: p.tab)?.mode == .structure,
+				        menu: TabMenuAction.table(t, in: s)
+				            + [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }] + TabBar.orderMenu(s?.data(tab: p.tab))) {
 					model.focusParked(p)
 				} close: {
 					close(p)
@@ -527,6 +532,25 @@ final class ScrollLink {
 struct TabMenuAction {
 	let title: String
 	let run: () -> Void
+
+	/// 메뉴 구분선 (제목이 빈 것)
+	static let separator = TabMenuAction(title: "") {}
+
+	/// 테이블 탭 공통: 이름 복사 · 이름 바꾸기 (사용자 2026-11-17)
+	static func table(_ t: TableInfo?, in s: Session?) -> [TabMenuAction] {
+		guard let t, let s else { return [] }
+		let kind = t.isView ? "뷰" : "테이블"
+		return [
+			TabMenuAction(title: "테이블 이름 복사") {
+				NSPasteboard.general.clearContents()
+				NSPasteboard.general.setString(t.name, forType: .string)
+			},
+			TabMenuAction(title: "\(kind) 이름 바꾸기…") {
+				s.tableNameRequest = TableNameRequest(kind: .rename, schema: t.schema, table: TableStat(t))
+			},
+			.separator,
+		]
+	}
 }
 
 /// 오른쪽 칸 탭의 서버 표시: 색 점 (+ 지금 서버가 아니면 이름)
@@ -650,6 +674,8 @@ struct TabItem: View {
 	var focused = true
 	/// 오른쪽 칸: 서버 색 점 (+ 이름)
 	var server: TabServer? = nil
+	/// 구조 보기 중인 테이블 탭 (아이콘을 제목바 [표|구조] 의 구조 아이콘으로)
+	var structure = false
 	/// 오른쪽 클릭 메뉴에 더할 항목 (분할로 옮기기 등)
 	var menu: [TabMenuAction] = []
 	/// 누를 수 있는지 (쿼리 결과 화면이 왼쪽 탭바를 덮고 있으면 꺼서 가려진 탭이 같이 눌리지 않게)
@@ -665,7 +691,8 @@ struct TabItem: View {
 				if loading {
 					ProgressView().controlSize(.mini)
 				} else {
-					Image(systemName: Session.databaseOf(tab: id) != nil ? "cylinder.split.1x2" : (table?.isView == true ? "eye" : "tablecells"))
+					Image(systemName: Session.databaseOf(tab: id) != nil ? "cylinder.split.1x2"
+					      : structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells"))
 						.font(.system(size: 11))
 						.foregroundStyle(active && focused ? Color.accentColor : .secondary)
 				}
@@ -717,7 +744,9 @@ struct TabItem: View {
 		.onMouseDown(excludeTrailing: 24, enabled: clickable, perform: select)
 		.help(table.map { $0.comment.isEmpty ? $0.id : "\($0.id)\n\($0.comment)" } ?? Session.databaseOf(tab: id).map { "DB \($0)" } ?? id)
 		.contextMenu {
-			ForEach(menu.indices, id: \.self) { i in Button(menu[i].title, action: menu[i].run) }
+			ForEach(menu.indices, id: \.self) { i in
+				if menu[i].title.isEmpty { Divider() } else { Button(menu[i].title, action: menu[i].run) }
+			}
 			if !menu.isEmpty { Divider() }
 			Button("탭 닫기", action: close)
 		}

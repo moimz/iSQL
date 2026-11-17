@@ -9,6 +9,11 @@ struct TableSidebar: View {
 	@FocusState private var searchFocused: Bool
 	/// 사이드바 스크롤 위치 (DB 머리가 붙었는지 판단)
 	@State private var scrollY: CGFloat = 0
+	/// 탭을 바꿀 때 보이는 곳까지만 스크롤하려고: 보이는 영역·위 여백(내용 좌표), 화면에 있는 줄의 자리
+	@State private var visible: CGRect = .zero
+	@State private var insetTop: CGFloat = 0
+	@State private var rowFrames = RowFrames()
+	@State private var position = ScrollPosition()
 
 	var body: some View {
 		let found = session.search(searchText)
@@ -38,10 +43,16 @@ struct TableSidebar: View {
 									         matched: session.matchedColumns(t, searchText),
 									         selected: session.activeTab.map(Session.tableID(ofTab:)) == t.id,
 									         unsaved: session.isUnsaved(table: t.id))
-										.onTapGesture { session.openTab(t) }
+										.onTapGesture {
+											// 쿼리 패널이 떠 있으면 숨기고 테이블을 보인다 (사용자 2026-11-17)
+											session.queryPanel?.open = false
+											session.openTab(t)
+										}
 										.contextMenu {
 											SidebarTableMenu(session: session, table: t)
 										}
+										.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("sidebarContent")) }) { rowFrames.map[t.id] = $0 }
+										.onDisappear { rowFrames.map[t.id] = nil }
 										.id(t.id)
 								}
 								Color.clear.frame(height: 6)
@@ -53,6 +64,7 @@ struct TableSidebar: View {
 							             scrollY: scrollY) {
 								if session.expanded.contains(schema) { session.expanded.remove(schema) } else { session.expanded.insert(schema) }
 							} openOverview: {
+								session.queryPanel?.open = false
 								session.openDatabase(schema)
 							}
 							.contextMenu {
@@ -74,6 +86,12 @@ struct TableSidebar: View {
 				}
 				.coordinateSpace(.named("sidebarContent"))
 			}
+			.scrollPosition($position)
+			.onScrollGeometryChange(for: [CGFloat].self, of: { g in
+				[g.contentOffset.y + g.contentInsets.top, g.containerSize.height - g.contentInsets.top - g.contentInsets.bottom, g.contentInsets.top, g.containerSize.width]
+			}) { _, v in
+				visible = CGRect(x: 0, y: v[0], width: v[3], height: v[1]); insetTop = v[2]
+			}
 			// DB 머리가 맨 위에 "붙었는지" 알려고 스크롤 위치를 지켜본다 (SwiftUI 에는 CSS :stuck 이 없다)
 			.onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y + $0.contentInsets.top }) { _, y in scrollY = y }
 			.overlay {
@@ -85,9 +103,7 @@ struct TableSidebar: View {
 			.onChange(of: session.activeTab) { _, id in
 				guard let id, let t = session.table(id) else { return }
 				if searchText.isEmpty && !session.expanded.contains(t.schema) { session.expanded.insert(t.schema) }
-				DispatchQueue.main.async {
-					withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(t.id) }
-				}
+				DispatchQueue.main.async { reveal(t, proxy: proxy) }
 			}
 			}
 
@@ -121,6 +137,30 @@ struct TableSidebar: View {
 			Button("") { searchFocused = true }.keyboardShortcut("f").hidden()
 		}
 	}
+
+	/// DB 머리 높이 (맨 위에 붙어서 그 아래 줄을 가린다)
+	private static let headerHeight: CGFloat = 34
+
+	/// 그 테이블 줄이 보이게: 이미 보이면 그대로, 위로 가려졌으면 붙은 DB 머리 바로 아래까지, 아래로 가려졌으면 맨 아래까지만.
+	/// proxy.scrollTo 는 붙은 DB 머리를 모르고 줄을 맨 위에 맞춰 머리 밑에 숨겼다 (사용자 2026-11-17)
+	private func reveal(_ t: TableInfo, proxy: ScrollViewProxy) {
+		guard let f = rowFrames.map[t.id], visible.height > 0 else {
+			// 화면 밖이라 아직 안 그린 줄: 가운데로
+			withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(t.id, anchor: .center) }
+			return
+		}
+		let top = visible.minY + Self.headerHeight
+		var y: CGFloat?
+		if f.minY < top { y = f.minY - Self.headerHeight }
+		else if f.maxY > visible.maxY { y = f.maxY - visible.height }
+		guard let y else { return }
+		withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(y: max(0, y) - insetTop) }
+	}
+}
+
+/// 사이드바에 그려진 테이블 줄 자리 (바뀌어도 다시 그리지 않게 관찰하지 않는 상자)
+final class RowFrames {
+	var map: [String: CGRect] = [:]
 }
 
 /// 사이드바 맨 위 검색칸 (서버 목록·테이블 목록 공용)

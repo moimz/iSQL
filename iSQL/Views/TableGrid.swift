@@ -20,6 +20,8 @@ struct GridColumn: Equatable {
 	var width: CGFloat?
 	/// 긴 글자 컬럼 (처음 너비를 넓게)
 	var long = false
+	/// 고정폭 글꼴로 이 글자 수가 다 보이게 처음 너비를 맞춘다 (CHAR(n))
+	var monoChars: Int? = nil
 }
 
 /// 칸 하나
@@ -456,6 +458,11 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let nameW = (oneLine(col.title) as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width
 			let commentW = col.comment.isEmpty ? 0 : (col.comment as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width + 14
 			let w = nameW + commentW + 34
+			if let n = col.monoChars {
+				// 고정폭 글자 n개 + 칸 여백. 짧은 코드(char(2))는 제목 너비까지, 긴 것은 480 까지
+				let charW = ("0" as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize - 1, weight: .regular)]).width
+				return min(480, max(w, ceil(CGFloat(n) * charW) + 24))
+			}
 			let byType: CGFloat = col.numeric ? 80 : (col.long ? 260 : 150)
 			return min(320, max(w, byType))
 		}
