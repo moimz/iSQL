@@ -405,7 +405,12 @@ struct TabBar: View {
 				            + [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
 				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])
 				            + Self.orderMenu(session.data(tab: id)),
-				        clickable: !covered) {
+				        clickable: !covered,
+				        // 다른 탭 닫기: 저장 안 한 변경이 있는 탭은 남긴다 (묻는 창을 여러 번 띄우지 않게)
+				        closeOthers: session.tabs.count > 1 ? {
+				            for other in session.tabs where other != id && !session.unsavedTables.contains(other) { session.closeTab(other) }
+				            session.selectTab(id)
+				        } : nil) {
 					session.selectTab(id)
 				} close: {
 					close(id)
@@ -462,7 +467,11 @@ struct ParkedTabBar: View {
 				        },
 				        structure: s?.data(tab: p.tab)?.mode == .structure,
 				        menu: TabMenuAction.table(t, in: s)
-				            + [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }] + TabBar.orderMenu(s?.data(tab: p.tab))) {
+				            + [TabMenuAction(title: "왼쪽으로 옮기기") { model.unpark(p) }] + TabBar.orderMenu(s?.data(tab: p.tab)),
+				        closeOthers: model.parkedTabs.count > 1 ? {
+				            for q in model.parkedTabs where q != p && !(model.sessions[q.server]?.unsavedTables.contains(q.tab) ?? false) { close(q) }
+				            model.focusParked(p)
+				        } : nil) {
 					model.focusParked(p)
 				} close: {
 					close(p)
@@ -707,6 +716,8 @@ struct TabItem: View {
 	var menu: [TabMenuAction] = []
 	/// 누를 수 있는지 (쿼리 결과 화면이 왼쪽 탭바를 덮고 있으면 꺼서 가려진 탭이 같이 눌리지 않게)
 	var clickable = true
+	/// 오른쪽 클릭 "다른 탭 닫기" (탭이 하나뿐이면 nil → 흐리게)
+	var closeOthers: (() -> Void)? = nil
 	let select: () -> Void
 	let close: () -> Void
 	@State private var hover = false
@@ -777,6 +788,9 @@ struct TabItem: View {
 			}
 			if !menu.isEmpty { Divider() }
 			Button("탭 닫기", action: close)
+			Button("다른 탭 닫기") { closeOthers?() }
+				.disabled(closeOthers == nil)
+				.help("저장 안 한 변경이 있는 탭은 남깁니다")
 		}
 	}
 }
