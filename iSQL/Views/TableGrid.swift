@@ -1197,6 +1197,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					items.append(.action("INSERT 문으로 복사 (PK 없이)") { self.copyInsert(t, skipAuto: true) })
 				}
 			}
+			items.append(.action("JSON 으로 복사") { self.copyJSON() })
 			if let col {
 				let name = columns[col].key
 				items.append(.separator)
@@ -1262,6 +1263,44 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let v = source.sqlValue(row, col) ?? (source.cell(row, col).text.map(Value.text) ?? .null)
 			if case .text(let t) = v, columns[col].numeric, Double(t) != nil, !t.isEmpty { return t }
 			return literal(v)
+		}
+
+		/// 고른 행을 JSON 으로: 한 행이면 객체 하나, 여러 행이면 배열. 컬럼 순서 그대로,
+		/// 숫자 컬럼의 숫자는 숫자로, NULL 은 null, 바이너리는 base64 글자
+		func copyJSON() {
+			let rows = table.selectedRowIndexes.sorted()
+			guard !rows.isEmpty else { return }
+			func str(_ t: String) -> String {
+				var o = "\""
+				for u in t.unicodeScalars {
+					switch u {
+					case "\"": o += "\\\""
+					case "\\": o += "\\\\"
+					case "\n": o += "\\n"
+					case "\r": o += "\\r"
+					case "\t": o += "\\t"
+					default:
+						if u.value < 0x20 { o += String(format: "\\u%04x", u.value) } else { o.unicodeScalars.append(u) }
+					}
+				}
+				return o + "\""
+			}
+			func value(_ r: Int, _ c: Int) -> String {
+				let v = source.sqlValue(r, c) ?? (source.cell(r, c).text.map(Value.text) ?? .null)
+				switch v {
+				case .null: return "null"
+				case .bytes(let d): return str(d.base64EncodedString())
+				case .text(let t):
+					if columns[c].numeric, let n = Double(t), n.isFinite, !t.isEmpty, t.filter(\.isNumber).count <= 15 { return t }
+					return str(t)
+				}
+			}
+			let objects = rows.map { r in
+				"{" + columns.indices.map { "\(str(columns[$0].key)): \(value(r, $0))" }.joined(separator: ", ") + "}"
+			}
+			let json = objects.count == 1 ? objects[0] : "[\n  " + objects.joined(separator: ",\n  ") + "\n]"
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(json, forType: .string)
 		}
 
 		/// 고른 행을 INSERT 문 하나로 (VALUES 를 줄마다). skipKey 면 기본 키 컬럼은 빼서 새 키로 들어가게
