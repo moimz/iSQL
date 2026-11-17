@@ -83,6 +83,16 @@ final class WindowModel {
 		let sid = server.id
 		s.focusParked = { [weak self] tab in self?.focusParked(ParkedTab(server: sid, tab: tab)) }
 		s.closeParkedTab = { [weak self] tab in self?.closeParked(ParkedTab(server: sid, tab: tab)) }
+		// 사이드바 "오른쪽 분할에 열기": 왼쪽에 열려 있으면 그 탭의 사본을, 아니면 새로 열어 오른쪽으로
+		s.openInSplit = { [weak self, weak s] t in
+			guard let self, let s else { return }
+			if let tab = s.tabs.first(where: { Session.tableID(ofTab: $0) == t.id }) {
+				self.duplicateToRight(tab, from: s)
+			} else {
+				s.openTab(t)
+				if let tab = s.activeTab { self.park(tab, from: s) }
+			}
+		}
 		sessions[server.id] = s
 		Task { await s.connect(server, mysqlPassword: pw.mysql, sshSecret: pw.ssh) }
 	}

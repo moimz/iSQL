@@ -209,6 +209,7 @@ final class Session {
 		parked = []
 		activeTab = nil
 		expanded = []
+		pinned = []
 		holdMemory = false
 	}
 
@@ -238,13 +239,17 @@ final class Session {
 	@ObservationIgnored var closeParkedTab: ((String) -> Void)?
 	/// 사이드바에서 펼친 DB (처음엔 모두 접힘)
 	var expanded: Set<String> = [] { didSet { rememberTabs() } }
+	/// 고정한 테이블 (테이블 id). 사이드바에서 그 DB 맨 위에 (서버별로 기억)
+	var pinned: Set<String> = [] { didSet { rememberTabs() } }
+	/// 사이드바 "오른쪽 분할에 열기" (창이 넣어 준다)
+	@ObservationIgnored var openInSplit: ((TableInfo) -> Void)?
 	/// 끊을 때 비우는 동안은 기억하지 않는다 (다음 접속에 복원해야 하니까)
 	@ObservationIgnored private var holdMemory = false
 
 	/// 서버별로 열린 탭·지금 탭·펼친 DB 를 기억한다 (이 맥에만)
 	private func rememberTabs() {
 		guard !holdMemory, let id = server?.id, state == .connected else { return }
-		TabMemory.save(server: id, tabs: tabs + parked, active: activeTab, expanded: expanded)
+		TabMemory.save(server: id, tabs: tabs + parked, active: activeTab, expanded: expanded, pinned: pinned)
 	}
 
 	/// 접속 뒤: 지난번 탭을 되살린다 (지금 없는 테이블은 뺀다)
@@ -260,6 +265,7 @@ final class Session {
 		}
 		activeTab = m.active.flatMap { tabs.contains($0) ? $0 : nil } ?? tabs.first
 		expanded = m.expanded.intersection(databases)
+		pinned = (m.pinned ?? []).intersection(tables.map(\.id))
 		holdMemory = false
 	}
 
@@ -736,12 +742,14 @@ enum TabMemory {
 		var tabs: [String]
 		var active: String?
 		var expanded: Set<String>
+		/// 고정한 테이블 (예전 기록엔 없다)
+		var pinned: Set<String>?
 	}
 
 	private static func key(_ id: UUID) -> String { "tabs.\(id.uuidString)" }
 
-	static func save(server: UUID, tabs: [String], active: String?, expanded: Set<String>) {
-		if let data = try? JSONEncoder().encode(Saved(tabs: tabs, active: active, expanded: expanded)) {
+	static func save(server: UUID, tabs: [String], active: String?, expanded: Set<String>, pinned: Set<String>) {
+		if let data = try? JSONEncoder().encode(Saved(tabs: tabs, active: active, expanded: expanded, pinned: pinned)) {
 			UserDefaults.standard.set(data, forKey: key(server))
 		}
 	}

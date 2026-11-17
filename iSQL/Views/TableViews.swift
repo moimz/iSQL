@@ -23,7 +23,9 @@ struct TableSidebar: View {
 			ScrollView {
 				LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
 					ForEach(schemas, id: \.self) { schema in
-						let items = bySchema[schema] ?? []
+						// 고정한 테이블이 맨 위 (나머지는 원래 순서)
+						let all = bySchema[schema] ?? []
+						let items = all.filter { session.pinned.contains($0.id) } + all.filter { !session.pinned.contains($0.id) }
 						let open = !searchText.isEmpty || session.expanded.contains(schema)
 						Section {
 							if open {
@@ -32,7 +34,7 @@ struct TableSidebar: View {
 										.padding(.leading, 36).frame(height: 26)
 								}
 								ForEach(items) { t in
-									TableRow(table: t,
+									TableRow(table: t, pinned: session.pinned.contains(t.id),
 									         matched: session.matchedColumns(t, searchText),
 									         selected: session.activeTab.map(Session.tableID(ofTab:)) == t.id,
 									         unsaved: session.isUnsaved(table: t.id))
@@ -215,6 +217,7 @@ struct SchemaHeader: View {
 /// 테이블 한 줄: 이름 ··· 코멘트 (자리가 모자라면 이름만, 코멘트는 툴팁)
 struct TableRow: View {
 	let table: TableInfo
+	var pinned = false
 	let matched: [String]
 	var selected = false
 	var unsaved = false
@@ -227,6 +230,11 @@ struct TableRow: View {
 					.font(.system(size: 11))
 					.foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
 				NameAndComment(name: table.name, comment: table.comment, selected: selected)
+				if pinned {
+					Image(systemName: "pin.fill").font(.system(size: 9)).rotationEffect(.degrees(45))
+						.foregroundStyle(selected ? Color.white.opacity(0.85) : .orange)
+						.help("맨 위에 고정함")
+				}
 				if unsaved { Circle().fill(.orange).frame(width: 7, height: 7) }
 			}
 			if !matched.isEmpty {
@@ -380,7 +388,14 @@ struct SidebarTableMenu: View {
 	let table: TableInfo
 
 	var body: some View {
+		let pinned = session.pinned.contains(table.id)
 		let items = TableMenu.items(isView: table.isView, name: table.name,
+		                            extra: [
+		                            	.action("오른쪽 분할에 열기") { session.openInSplit?(table) },
+		                            	.action(pinned ? "고정 풀기" : "맨 위에 고정") {
+		                            		if pinned { session.pinned.remove(table.id) } else { session.pinned.insert(table.id) }
+		                            	},
+		                            ],
 		                            open: { session.openTab(table) },
 		                            export: { session.requestExport(.table(table.schema, TableStat(table))) },
 		                            importExcel: { session.requestExcelImport(schema: table.schema, table: table.name) },

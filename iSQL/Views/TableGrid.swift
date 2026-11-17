@@ -49,7 +49,7 @@ enum GridMenuItem {
 /// 테이블 하나의 오른쪽 클릭 메뉴 (사이드바 테이블·DB 개요에서 하나 골랐을 때 같은 순서).
 /// 자주 쓰는 것 위, 되돌릴 수 없는 것 맨 아래
 enum TableMenu {
-	static func items(isView: Bool, name: String? = nil, open: @escaping () -> Void, export: @escaping () -> Void,
+	static func items(isView: Bool, name: String? = nil, extra: [GridMenuItem] = [], open: @escaping () -> Void, export: @escaping () -> Void,
 	                  importExcel: (() -> Void)? = nil,
 	                  duplicate: (() -> Void)? = nil, rename: (() -> Void)? = nil,
 	                  truncate: (() -> Void)? = nil, drop: (() -> Void)? = nil) -> [GridMenuItem] {
@@ -60,7 +60,7 @@ enum TableMenu {
 		] + (name.map { n in [GridMenuItem.action("테이블 이름 복사") {
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(n, forType: .string)
-		}] } ?? []) + [
+		}] } ?? []) + extra + [
 			.separator,
 			.action("\(kind) 내보내기…", export),
 		] + (isView ? [] : [item("엑셀에서 가져오기…", importExcel)]) + [
