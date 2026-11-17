@@ -299,6 +299,8 @@ final class Session {
 
 	/// 데이터베이스 복제 요청 (창이 제목바 시트로 띄운다)
 	var duplicateRequest: DuplicateRequest?
+	/// 데이터베이스 이름 바꾸기 요청 (창이 제목바 시트로 띄운다)
+	var renameDatabaseRequest: RenameDatabaseRequest?
 
 	/// 테이블 이름 바꾸기·복제 요청 (창이 제목바 시트로 띄운다)
 	var tableNameRequest: TableNameRequest?
@@ -318,6 +320,31 @@ final class Session {
 		}
 		for t in parked where Self.tableID(ofTab: t) == oldID { closeParkedTab?(t) }
 		if let o = overviews[schema] { Task { await o.load() } }
+		rememberTabs()
+	}
+
+	/// DB 이름을 바꾼 뒤: 그 DB 의 탭·DB 개요 탭은 새 이름으로 바꿔 달고, 펼침·고정·쿼리 패널 기본 DB 도 따라간다.
+	/// 오른쪽 분할에 둔 그 DB 탭은 닫는다 (테이블 이름 바꾸기와 같게)
+	func databaseRenamed(from old: String, to new: String, droppedOld: Bool) async {
+		try? await loadSchema()
+		func move(_ id: String) -> String? {
+			if id == Self.databaseTabID(old) { return Self.databaseTabID(new) }
+			return id.hasPrefix(old + ".") ? new + "." + id.dropFirst(old.count + 1) : nil
+		}
+		for i in tabs.indices {
+			let t = tabs[i]
+			guard let moved = move(t) else { continue }
+			openData[t] = nil
+			setUnsaved(t, false)
+			tabs[i] = moved
+			if activeTab == t { activeTab = moved }
+		}
+		for t in parked where move(t) != nil { closeParkedTab?(t) }
+		if expanded.contains(old) { expanded.remove(old); expanded.insert(new) }
+		pinned = Set(pinned.map { move($0) ?? $0 })
+		overviews[old] = nil
+		if queryPanel?.database == old { queryPanel?.database = new }
+		if currentDB == old { currentDB = droppedOld ? "" : old }
 		rememberTabs()
 	}
 

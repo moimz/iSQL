@@ -77,7 +77,7 @@ struct TableSidebar: View {
 								Button("SQL 파일 가져오기…") { session.requestImport(schema: schema) }
 								Button("엑셀 파일 가져오기…") { session.requestExcelImport(schema: schema) }
 								Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }
-								Button("데이터베이스 이름 바꾸기…") {}.disabled(true)
+								Button("데이터베이스 이름 바꾸기…") { session.renameDatabaseRequest = RenameDatabaseRequest(schema: schema) }
 								Divider()
 								Button("데이터베이스 삭제…", role: .destructive) { session.requestDropDatabase(schema) }
 							}

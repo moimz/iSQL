@@ -337,5 +337,8 @@ struct MoreSheets: ViewModifier {
 			.sheet(item: Binding(get: { model.current?.excelImportRequest }, set: { model.current?.excelImportRequest = $0 })) { req in
 				if model.current != nil { ExcelImportSheet(request: req) }
 			}
+			.sheet(item: Binding(get: { model.current?.renameDatabaseRequest }, set: { model.current?.renameDatabaseRequest = $0 })) { req in
+				if let s = model.current { RenameDatabaseSheet(request: req, session: s) }
+			}
 	}
 }

@@ -1,0 +1,136 @@
+import Foundation
+import Observation
+
+/// 데이터베이스 이름 바꾸기 (사이드바 DB 오른쪽 클릭 → 데이터베이스 이름 바꾸기…).
+/// MySQL 에는 DB 이름을 바로 바꾸는 명령이 없다: 같은 문자셋·콜레이션으로 새 DB 를 만들고
+/// `RENAME TABLE 옛.t TO 새.t, …` 한 문장으로 테이블을 옮긴다 (데이터를 복사하지 않고 소속·파일 위치만 바꿔 크기와 상관없이 빠르다, 하나라도 실패하면 모두 되돌아간다).
+/// 뷰는 다른 DB 로 RENAME 할 수 없어 정의를 읽어 새 DB 에 다시 만들고 옛 것을 지운다.
+/// 트리거가 있으면 MySQL 이 옮기기를 거부하므로 시작하지 않는다. 프로시저·함수·이벤트는 옮기지 않고 옛 DB 에 남긴다 (사용자 2026-11-17)
+@Observable
+final class DatabaseRenameJob {
+	let source: String
+	@ObservationIgnored private weak var session: Session?
+
+	private(set) var loaded = false
+	private(set) var charset = ""
+	private(set) var collation = ""
+	private(set) var tables: [String] = []
+	private(set) var views: [String] = []
+	private(set) var triggers = 0
+	/// 프로시저·함수·이벤트 수 (옮기지 않는다)
+	private(set) var routines = 0
+	private(set) var events = 0
+
+	private(set) var running = false
+	private(set) var finished = false
+	private(set) var step = ""
+	private(set) var message: String?
+	private(set) var isError = false
+
+	init(source: String, session: Session) {
+		self.source = source
+		self.session = session
+	}
+
+	private func lit(_ s: String) -> String { literal(.text(s)) }
+
+	@MainActor
+	func load() async {
+		guard let session else { return }
+		let s = lit(source)
+		let set = try? await session.query("SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(s)").last
+		charset = set?.rows.first?[safe: 0]?.string ?? ""
+		collation = set?.rows.first?[safe: 1]?.string ?? ""
+		let t = (try? await session.query("SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(s) ORDER BY TABLE_NAME").last)?.rows ?? []
+		tables = t.filter { $0[safe: 1]?.string != "VIEW" }.compactMap { $0[safe: 0]?.string }
+		views = t.filter { $0[safe: 1]?.string == "VIEW" }.compactMap { $0[safe: 0]?.string }
+		func count(_ sql: String) async -> Int {
+			Int((try? await session.query(sql).last)?.rows.first?.first?.string ?? "") ?? 0
+		}
+		triggers = await count("SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = \(s) OR TRIGGER_SCHEMA = \(s)")
+		routines = await count("SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = \(s)")
+		events = await count("SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = \(s)")
+		loaded = true
+	}
+
+	@MainActor
+	func run(to target: String) async {
+		guard let session, !running, triggers == 0 else { return }
+		running = true
+		message = nil
+		isError = false
+		defer { running = false }
+		let q = TableInspector.ident
+		let src = q(source), dst = q(target)
+		do {
+			// 뷰 정의는 테이블을 옮기기 전에 읽는다: 옮긴 뒤에는 옛 뷰가 없는 테이블을 가리켜 SHOW CREATE VIEW 가 거부된다(오류 1356)
+			var ddls: [String: String] = [:]
+			for v in views {
+				step = "뷰 \(v) 읽는 중…"
+				let r = try await session.query("SHOW CREATE VIEW \(src).\(q(v))").last
+				if let d = r?.rows.first?[safe: 1]?.string { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target) }
+			}
+			step = "데이터베이스 만드는 중…"
+			var create = "CREATE DATABASE \(dst)"
+			if !charset.isEmpty { create += " CHARACTER SET \(charset)" }
+			if !collation.isEmpty { create += " COLLATE \(collation)" }
+			_ = try await session.query(create)
+			if !tables.isEmpty {
+				step = "테이블 \(tables.count)개 옮기는 중…"
+				let pairs = tables.map { "\(src).\(q($0)) TO \(dst).\(q($0))" }.joined(separator: ", ")
+				do {
+					_ = try await session.query("RENAME TABLE \(pairs)")
+				} catch {
+					// 한 문장이라 테이블은 모두 제자리 → 만든 빈 DB 만 지운다
+					_ = try? await session.query("DROP DATABASE \(dst)")
+					throw error
+				}
+			}
+			// 뷰: 다른 뷰를 쓰는 뷰가 있어 순서를 모른다 → 되는 것부터 만들고, 더 만들어지지 않을 때까지 되풀이
+			var left = views
+			var lastError: Error?
+			while !left.isEmpty {
+				var made: [String] = []
+				for v in left {
+					guard let ddl = ddls[v] else { continue }
+					step = "뷰 \(v) 만드는 중…"
+					do { _ = try await session.query(ddl); made.append(v) } catch { lastError = error }
+				}
+				if made.isEmpty { break }
+				left.removeAll { made.contains($0) }
+			}
+			for v in views where !left.contains(v) { _ = try? await session.query("DROP VIEW \(src).\(q(v))") }
+			// 옛 DB 가 비었으면 지운다 (프로시저·이벤트가 있으면 남긴다)
+			let remain = Int((try? await session.query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(lit(source))").last)?.rows.first?.first?.string ?? "") ?? 1
+			var dropped = false
+			if remain == 0 && routines == 0 && events == 0 {
+				step = "옛 데이터베이스 지우는 중…"
+				_ = try await session.query("DROP DATABASE \(src)")
+				dropped = true
+			}
+			await session.databaseRenamed(from: source, to: target, droppedOld: dropped)
+			if !left.isEmpty {
+				isError = true
+				message = "테이블은 옮겼지만 뷰 \(left.count)개(\(left.joined(separator: ", ")))를 만들지 못해 \(source) 에 남겼습니다: \(lastError?.localizedDescription ?? "")"
+			} else {
+				var parts = ["이름을 \(target)(으)로 바꿨습니다 (테이블 \(tables.count)개" + (views.isEmpty ? "" : ", 뷰 \(views.count)개") + ")"]
+				if !dropped { parts.append("프로시저·함수·이벤트가 있어 \(source) 는 남겼습니다") }
+				message = parts.joined(separator: ". ")
+			}
+		} catch {
+			isError = true
+			message = error.localizedDescription
+		}
+		step = ""
+		finished = !isError || message?.hasPrefix("테이블은 옮겼지만") == true
+	}
+
+	/// SHOW CREATE VIEW 를 새 DB 용으로: DEFINER·ALGORITHM 을 빼고(권한 오류 방지), `옛`. 참조를 `새`. 로
+	/// DB 를 붙여 읽으면 "VIEW `db`.`v` AS …", 안 붙이면 "VIEW `v` AS …" 로 온다 → 둘 다 " AS " 뒤 본문만 쓴다
+	static func rewriteView(_ ddl: String, name: String, from: String, to: String) -> String {
+		let q = TableInspector.ident
+		guard let v = ddl.range(of: " VIEW "), let asAt = ddl.range(of: " AS ", range: v.upperBound..<ddl.endIndex) else { return ddl }
+		let body = ddl[asAt.lowerBound...].replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
+		return "CREATE VIEW \(q(to)).\(q(name))" + body
+	}
+}

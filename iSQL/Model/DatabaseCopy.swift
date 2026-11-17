@@ -107,7 +107,7 @@ final class DatabaseCopyJob {
 					rowsDone = 0
 					rowsTotal = data && !t.isView ? t.approxRows : 0
 					if t.isView {
-						try await copyView(t.name, src: src, dst: dst)
+						try await copyView(t.name, src: src, target: target)
 					} else {
 						try await copyTable(t.name, src: src, dst: dst)
 						if data { try await copyData(t, src: src, dst: dst) }
@@ -309,14 +309,13 @@ final class DatabaseCopyJob {
 
 	/// 뷰는 원본 DB 를 `원본`. 으로 가리키므로 새 DB 로 바꾸고, DEFINER 는 뺀다 (권한 오류 방지)
 	@MainActor
-	private func copyView(_ name: String, src: String, dst: String) async throws {
+	private func copyView(_ name: String, src: String, target: String) async throws {
 		guard let session else { return }
 		let q = TableInspector.ident
 		let r = try await session.query("SHOW CREATE VIEW \(src).\(q(name))").last ?? QueryResult()
-		guard var ddl = r.rows.first?[safe: 1]?.string, let viewAt = ddl.range(of: " VIEW \(q(name))") else { throw CopyError.noDDL(name) }
-		let body = ddl[viewAt.upperBound...].replacingOccurrences(of: src + ".", with: dst + ".")
-		ddl = "CREATE VIEW \(dst).\(q(name))" + body
-		_ = try await session.query(ddl)
+		guard let ddl = r.rows.first?[safe: 1]?.string, ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
+		// "VIEW `원본`.`v` AS …" 처럼 DB 가 붙어 와서 " VIEW `v`" 로 찾으면 못 찾았다 → 이름 바꾸기와 같은 고치기
+		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target))
 	}
 
 	enum CopyError: LocalizedError {
