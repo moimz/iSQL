@@ -39,11 +39,13 @@ struct ServerSidebar: View {
 				Section {
 					ForEach(g.servers) { s in
 						ServerRow(server: s, state: model.state(s.id), auto: autoIDs.contains(s.id)).tag(s.id)
-							.draggable(DragItem.server(s.id))
-							// 서버 위에 놓으면 그 서버 앞으로
-							.dropDestination(for: String.self) { items, _ in
-								drop(items, group: g.group, before: s.id)
+							.draggable(DragItem.server(s.id)) {
+								DragGhost { ServerRow(server: s, state: model.state(s.id), auto: autoIDs.contains(s.id)) }
 							}
+					}
+					// 줄 사이에 놓기: List 가 놓일 자리에 맥 기본 삽입선(앞에 동그라미)을 그린다 (사용자: 줄 위에 놓는 강조는 어디로 들어가는지 모르겠고 겹쳐 보였다)
+					.onInsert(of: [.utf8PlainText, .plainText]) { index, providers in
+						insert(providers, group: g.group, servers: g.servers, at: index)
 					}
 					if g.servers.isEmpty && searchText.isEmpty {
 						Text("서버를 여기로 끌어 놓으세요").font(.caption).foregroundStyle(.tertiary)
@@ -52,9 +54,9 @@ struct ServerSidebar: View {
 					}
 				} header: {
 					GroupHeader(name: g.group, count: g.servers.count)
-						.draggable(DragItem.group(g.group))
-						// 그룹 머리에 놓으면: 서버는 그 그룹 맨 뒤로, 그룹은 그 그룹 앞으로
-						.dropDestination(for: String.self) { items, _ in drop(items, group: g.group, before: nil) }
+						.draggable(DragItem.group(g.group)) {
+							DragGhost { Label(g.group.isEmpty ? "그룹 없음" : g.group, systemImage: "folder").fontWeight(.semibold) }
+						}
 						.contextMenu {
 							if !g.group.isEmpty {
 								Button("그룹 지우기…", role: .destructive) { deletingGroup = g.group }
@@ -133,6 +135,31 @@ struct ServerSidebar: View {
 		}
 	}
 
+	/// 삽입선 자리에 놓았을 때. index = 그 그룹(보이는 목록)에서 들어갈 자리.
+	/// 서버 = 그 그룹의 그 자리로, 그룹 = 맨 앞 자리면 이 그룹 앞, 아니면 이 그룹 뒤(다음 그룹 앞)
+	private func insert(_ providers: [NSItemProvider], group: String, servers: [Server], at index: Int) {
+		guard let p = providers.first else { return }
+		_ = p.loadTransferable(type: String.self) { result in
+			guard case .success(let text) = result else { return }
+			DispatchQueue.main.async {
+				guard let item = DragItem(text) else { return }
+				switch item {
+				case .server(let id):
+					store.moveServer(id, toGroup: group, before: index < servers.count ? servers[index].id : nil)
+				case .group(let name):
+					guard !name.isEmpty else { return }
+					if index == 0 && !group.isEmpty {
+						store.moveGroup(name, before: group)
+					} else {
+						let order = store.grouped.map(\.group).filter { !$0.isEmpty && $0 != name }
+						let next = group.isEmpty ? order.first : order.firstIndex(of: group).flatMap { $0 + 1 < order.count ? order[$0 + 1] : nil }
+						store.moveGroup(name, before: next)
+					}
+				}
+			}
+		}
+	}
+
 	@discardableResult
 	private func drop(_ items: [String], group: String, before: UUID?) -> Bool {
 		guard let item = items.first.flatMap(DragItem.init) else { return false }
@@ -145,6 +172,18 @@ struct ServerSidebar: View {
 			store.moveGroup(name, before: group.isEmpty ? store.grouped.first { !$0.group.isEmpty }?.group : group)
 		}
 		return true
+	}
+}
+
+/// 끌 때 커서에 붙는 그림: 바탕 없이 글자만 떠서 알아보기 힘들었다 (사용자) → 창 바탕색 둥근 상자 + 테두리
+struct DragGhost<Content: View>: View {
+	@ViewBuilder var content: Content
+	var body: some View {
+		content
+			.padding(.horizontal, 10).padding(.vertical, 6)
+			.frame(width: 240, alignment: .leading)
+			.background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+			.overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.6)))
 	}
 }
 
