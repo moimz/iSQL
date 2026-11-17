@@ -42,12 +42,17 @@ private struct PrivateViewRow: View {
 	@State private var hover = false
 
 	var body: some View {
-		HStack(spacing: 9) {
-			PrivateViewIcon(selected: selected).frame(width: 14)
+		// 일반 뷰 줄(TableRow)과 같은 자리: 눈 아이콘·간격 같게, 자물쇠는 고정 핀처럼 오른쪽에
+		HStack(spacing: 6) {
+			Image(systemName: "eye")
+				.font(.system(size: 11))
+				.foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
 			Text(view.name).lineLimit(1).truncationMode(.middle)
 				.foregroundStyle(selected ? Color.white : .primary)
 			Spacer(minLength: 8)
-			Text("나만").font(.caption).foregroundStyle(selected ? Color.white.opacity(0.8) : .orange)
+			Image(systemName: "lock.fill").font(.system(size: 9))
+				.foregroundStyle(selected ? Color.white.opacity(0.85) : .orange)
+				.help("나만 보는 뷰 (서버에 없음)")
 		}
 		.padding(.leading, 30)
 		.padding(.trailing, 10)

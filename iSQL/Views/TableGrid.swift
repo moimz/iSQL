@@ -176,6 +176,8 @@ extension GridSource {
 protocol ColumnOrderTracking: AnyObject {
 	var columnsMoved: Bool { get set }
 	var restoreColumns: (() -> Void)? { get set }
+	/// 보이는 컬럼(공급자 번호)을 보이는 순서로. 처음 그대로면 nil (뷰 만들기가 이 순서·숨김을 따른다)
+	var visibleColumns: [Int]? { get set }
 }
 
 // MARK: - 공용 표
@@ -566,6 +568,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					tc.sortDescriptorPrototype = src.sortDescriptorPrototype
 					tc.minWidth = src.minWidth
 					tc.width = src.width
+					tc.isHidden = src.isHidden
 					frozen.addTableColumn(tc)
 				}
 				// 너비를 끄는 동안에도 바로 본 표를 맞춘다 (끝날 때만 맞추면 끄는 동안 고정 칸 뒤의 본 표 제목·칸이 비어져 나왔다)
@@ -595,7 +598,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// 고정 표 자리: 스크롤 영역 왼쪽 끝(가로 고정), 높이는 본 표와 같게. 머리는 본 표 머리 위 같은 자리
 		private func layoutFrozen() {
 			guard frozenCount > 0 else { return }
-			let width = frozen.tableColumns.reduce(0) { $0 + $1.width }
+			let width = frozen.tableColumns.filter { !$0.isHidden }.reduce(0) { $0 + $1.width }
 			// 떠 있는 칸의 좌표는 스크롤 영역 안쪽(머리 아래 여백 포함) 기준이라 0 이 아니다
 			// → 본 표의 맨 위와 스크롤 영역의 왼쪽 끝을 그 좌표로 바꿔 맞춘다
 			var origin = NSPoint.zero
@@ -686,6 +689,10 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		/// 고정 칸 경계를 넘는 컬럼 끌기는 막는다 (고정 칸 안으로 끌어 넣으면 두 표의 컬럼이 꼬였다)
 		func tableView(_ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int) -> Bool {
+			// 숨김 안내 칸은 늘 맨 끝 (끌 수 없고, 그 뒤로 넣을 수도 없다)
+			if tableView === table, let info = table.tableColumns.firstIndex(where: { $0.identifier == Self.hiddenInfoID }) {
+				if columnIndex == info || newColumnIndex == info { return false }
+			}
 			guard tableView === table, frozenCount > 0 else { return true }
 			if columnIndex < frozenCount { return false }
 			return newColumnIndex < 0 || newColumnIndex >= frozenCount
@@ -715,7 +722,13 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		func moveCursor(_ step: Int) {
 			let n = table.numberOfColumns
 			guard n > 0, table.selectedRow >= 0 else { NSSound.beep(); return }
-			let i = cursorIndex.map { min(max($0 + step, 0), n - 1) } ?? leftmostVisible
+			var i = cursorIndex.map { min(max($0 + step, 0), n - 1) } ?? leftmostVisible
+			// 숨긴 컬럼·안내 칸은 건너뛴다
+			while i > 0, i < n, table.tableColumns[i].isHidden || table.tableColumns[i].identifier == Self.hiddenInfoID {
+				let next = i + (step < 0 ? -1 : 1)
+				if next < 0 || next >= n { i = cursorIndex ?? leftmostVisible; break }
+				i = next
+			}
 			setCursor(table.tableColumns[i].identifier.rawValue)
 			revealColumn(i)
 		}
@@ -758,19 +771,74 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			(source as? ColumnOrderTracking)?.restoreColumns = { [weak self] in self?.restoreColumnOrder() }
 		}
 
-		/// 처음 순서와 다른지 (식별자가 공급자 컬럼 번호)
+		/// 처음 순서와 다른지 (식별자가 공급자 컬럼 번호) 또는 숨긴 컬럼이 있는지
 		private var columnsOutOfOrder: Bool {
-			table.tableColumns.enumerated().contains { $0.element.identifier.rawValue != String($0.offset) }
+			let real = table.tableColumns.filter { $0.identifier != Self.hiddenInfoID }
+			return real.enumerated().contains { $0.element.identifier.rawValue != String($0.offset) } || real.contains(where: \.isHidden)
 		}
 
 		private func noteColumnOrder() {
 			guard let t = source as? ColumnOrderTracking else { return }
 			let moved = columnsOutOfOrder
 			if t.columnsMoved != moved { t.columnsMoved = moved }
+			let visible = moved ? table.tableColumns.filter { !$0.isHidden }.compactMap { colIndex($0) } : nil
+			if t.visibleColumns != visible { t.visibleColumns = visible }
 		}
 
-		/// 컬럼을 처음 순서로 (고정은 잠깐 풀었다가 같은 수로 다시)
+		// MARK: 컬럼 숨기기 (끝에 "(N개 컬럼 숨겨짐)" 칸, 오른쪽 클릭으로 하나씩 다시 보이기)
+
+		static let hiddenInfoID = NSUserInterfaceItemIdentifier("__hidden")
+
+		private var hiddenCols: [NSTableColumn] { table.tableColumns.filter { $0.isHidden && $0.identifier != Self.hiddenInfoID } }
+
+		func hideColumn(_ col: Int) {
+			guard let tc = table.tableColumns.first(where: { colIndex($0) == col }),
+			      table.tableColumns.filter({ !$0.isHidden && $0.identifier != Self.hiddenInfoID }).count > 1 else { NSSound.beep(); return }
+			// 고정 칸 안 컬럼을 숨기면 두 표가 어긋나서 고정은 푼다
+			if frozenCount > 0 { setFrozen(0) }
+			if cursorKey == tc.identifier.rawValue { setCursor(nil) }
+			tc.isHidden = true
+			hiddenChanged()
+		}
+
+		func showColumn(_ id: NSUserInterfaceItemIdentifier) {
+			table.tableColumns.first { $0.identifier == id }?.isHidden = false
+			hiddenChanged()
+		}
+
+		func showAllColumns() {
+			for tc in hiddenCols { tc.isHidden = false }
+			hiddenChanged()
+		}
+
+		/// 숨김이 바뀌면 끝의 안내 칸을 만들거나 고치거나 뺀다
+		private func hiddenChanged() {
+			let n = hiddenCols.count
+			let info = table.tableColumns.first { $0.identifier == Self.hiddenInfoID }
+			if n == 0 {
+				if let info { table.removeTableColumn(info) }
+			} else {
+				let title = "(\(n)개 컬럼 숨겨짐)"
+				let tc = info ?? {
+					let c = NSTableColumn(identifier: Self.hiddenInfoID)
+					c.headerCell = GridHeaderCell(textCell: title)
+					c.headerToolTip = "오른쪽 클릭으로 숨긴 컬럼을 다시 보이게"
+					c.minWidth = 60
+					table.addTableColumn(c)
+					return c
+				}()
+				tc.headerCell.stringValue = title
+				tc.width = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width + 30
+				if let i = table.tableColumns.firstIndex(of: tc), i != table.numberOfColumns - 1 { table.moveColumn(i, toColumn: table.numberOfColumns - 1) }
+			}
+			table.headerView?.needsDisplay = true
+			refreshGridLines()
+			noteColumnOrder()
+		}
+
+		/// 컬럼을 처음 순서로 + 숨긴 컬럼 다시 보이기 (고정은 잠깐 풀었다가 같은 수로 다시)
 		func restoreColumnOrder() {
+			if !hiddenCols.isEmpty { showAllColumns() }
 			let f = frozenCount
 			if f > 0 { setFrozen(0) }
 			for i in 0..<table.numberOfColumns {
@@ -1126,7 +1194,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let table = tv ?? self.table
 			var c = from + step
 			while c >= 0 && c < table.numberOfColumns {
-				if let col = colIndex(table.tableColumns[c]), source.tabStop(row, col) { return c }
+				if !table.tableColumns[c].isHidden, let col = colIndex(table.tableColumns[c]), source.tabStop(row, col) { return c }
 				c += step
 			}
 			return nil
@@ -1232,6 +1300,14 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					let i = header.column(at: header.convert(event.locationInWindow, from: nil))
 					if i >= 0 { index = i }
 				}
+				// 숨김 안내 칸: 숨긴 컬럼을 하나씩 다시 보이기
+				if index >= 0, index < table.tableColumns.count, table.tableColumns[index].identifier == Self.hiddenInfoID {
+					let list: [GridMenuItem] = hiddenCols.map { tc in
+						.action("‘\(tc.headerCell.stringValue)’ 숨김 해제") { self.showColumn(tc.identifier) }
+					}
+					fill(menu, list + [.separator, .action("모두 보이기") { self.showAllColumns() }])
+					return
+				}
 				guard index >= 0, index < table.tableColumns.count, let col = colIndex(table.tableColumns[index]) else { return }
 				var items = source.headerMenu(col)
 				// 정렬은 모든 표에 공통 (공급자가 정렬을 못 하면 메뉴만 빠진다)
@@ -1251,7 +1327,9 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					NSPasteboard.general.clearContents()
 					NSPasteboard.general.setString(name, forType: .string)
 				}, .separator]
-				fill(menu, copyItems + items + sortItems + freezeItems)
+				let hideItems: [GridMenuItem] = menu === headerMenu && source is ColumnOrderTracking
+					? [.separator, .action("‘\(columns[col].title)’ 컬럼 숨기기") { self.hideColumn(col) }] : []
+				fill(menu, copyItems + items + sortItems + freezeItems + hideItems)
 				return
 			}
 			guard table.clickedRow >= 0 else { return }
@@ -1513,7 +1591,7 @@ final class GridTableView: NSTableView {
 	func drawColumnLines(in clipRect: NSRect) {
 		Self.lineColor.setFill()
 		var x: CGFloat = 0
-		for c in tableColumns {
+		for c in tableColumns where !c.isHidden {
 			x += c.width + intercellSpacing.width
 			let line = NSRect(x: x - 1, y: clipRect.minY, width: 1, height: clipRect.height)
 			if line.minX > clipRect.maxX { break }

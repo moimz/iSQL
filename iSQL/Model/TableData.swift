@@ -46,6 +46,7 @@ final class TableData: ColumnOrderTracking {
 	var columnsMoved = false
 	/// 표가 걸어 두는 순서 되돌리기
 	@ObservationIgnored var restoreColumns: (() -> Void)?
+	@ObservationIgnored var visibleColumns: [Int]?
 
 	/// 구조 편집 (구조 화면을 처음 볼 때 만든다)
 	@ObservationIgnored private var structureStore: StructureEditor?
@@ -452,7 +453,9 @@ final class TableData: ColumnOrderTracking {
 
 	/// 지금 보는 상태의 SELECT (뷰로 만들기): DB 까지 붙인 테이블 + 적용한 찾기 조건 + 정렬
 	var viewSQL: String {
-		var s = "SELECT * FROM \(quoteName(table.schema)).\(quoteName(table.name))"
+		// 컬럼을 옮기거나 숨겼으면 보이는 순서대로 이름을 적는다
+		let cols = visibleColumns.map { $0.filter { columns.indices.contains($0) }.map { quoteName(columnName($0)) }.joined(separator: ", ") }
+		var s = "SELECT \(cols.flatMap { $0.isEmpty ? nil : $0 } ?? "*") FROM \(quoteName(table.schema)).\(quoteName(table.name))"
 		if !appliedWhere.isEmpty { s += " WHERE " + appliedWhere }
 		if let sort { s += " ORDER BY " + quoteName(sort.column) + (sort.ascending ? " ASC" : " DESC") }
 		return s

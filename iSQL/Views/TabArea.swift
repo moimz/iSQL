@@ -432,10 +432,10 @@ struct TabBar: View {
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
-	/// 컬럼을 끌어 순서를 바꾼 탭이면 "컬럼 순서 복원"
+	/// 컬럼을 끌어 순서를 바꿨거나 숨긴 탭이면 "컬럼 복원" (순서·숨김을 원래 테이블대로)
 	static func orderMenu(_ d: TableData?) -> [TabMenuAction] {
 		guard let d, d.columnsMoved else { return [] }
-		return [TabMenuAction(title: "컬럼 순서 복원") { d.restoreColumns?() }]
+		return [TabMenuAction(title: "컬럼 복원") { d.restoreColumns?() }]
 	}
 
 	/// 이 탭바에 서로 다른 DB 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름을 붙인다
