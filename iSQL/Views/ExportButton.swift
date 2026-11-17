@@ -31,10 +31,11 @@ struct ExportSheet: View {
 	@State private var sql = SQLExportOptions()
 	@State private var db = DatabaseExportOptions()
 	@State private var excel = ExcelExportOptions()
+	@State var imodules = IModulesExportOptions()
 	/// 고른 탭 (SQL / Excel)
 	/// 고른 탭은 다음에도 (이 맥에만)
 	@AppStorage("exportFormat") private var format = Format.sql
-	enum Format: String, Hashable { case sql, excel }
+	enum Format: String, Hashable { case sql, excel, imodules }
 	@State private var tabsReady = false
 	/// 고르기 목록에서 체크한 테이블 이름
 	@State private var picked: Set<String> = []
@@ -46,6 +47,7 @@ struct ExportSheet: View {
 			TabView(selection: $format) {
 				sqlTab.tabItem { Text("SQL") }.tag(Format.sql)
 				excelTab.tabItem { Text("Excel") }.tag(Format.excel)
+				imodulesTab.tabItem { Text("iModules") }.tag(Format.imodules)
 			}
 			// 시트 창은 처음에 크기 0 으로 만들어져 NSTabView 가 그때 탭 너비를 재고 다시 안 잰다(탭 이름이 "S…" 로 잘림).
 			// → 시트가 뜬 뒤 한 번 다시 만든다 (tabsReady). 크기는 옵션 줄 수만큼 직접 준다
@@ -58,7 +60,7 @@ struct ExportSheet: View {
 				Button("내보내기…", action: chooseFile)
 					.buttonStyle(.borderedProminent)
 					.keyboardShortcut(.defaultAction)
-					.disabled(isDatabase && (picked.isEmpty || (format == .sql && !db.includeStructure && !db.includeData)))
+					.disabled((format == .imodules && !isDatabase) || (isDatabase && (picked.isEmpty || (format == .sql && !db.includeStructure && !db.includeData))))
 			}
 			.controlSize(.large)
 		}
@@ -67,7 +69,9 @@ struct ExportSheet: View {
 		.onAppear {
 			switch request.target {
 			case .data(let src): sql.tableName = src.exportTableName ?? "query_result"
-			case .database(_, _, let p, _): picked = p
+			case .database(_, let tables, let p, _):
+				picked = p
+				imodules.prefix = Self.commonPrefix(tables.filter { p.contains($0.name) }.map(\.name))
 			}
 			DispatchQueue.main.async { tabsReady = true }
 		}
@@ -75,6 +79,7 @@ struct ExportSheet: View {
 
 	/// 탭 상자 높이: 고른 탭의 옵션 줄 수만큼
 	private var tabHeight: CGFloat {
+		if format == .imodules { return isDatabase ? 190 : 120 }
 		if format == .excel {
 			// 첫 행·코멘트 / 형식 유지(설명 두 줄) / 화면에 보이는 것만 또는 여러 테이블 묶기
 			var h: CGFloat = 164
@@ -85,7 +90,7 @@ struct ExportSheet: View {
 		return 162
 	}
 
-	private var isDatabase: Bool { if case .database = request.target { return true }; return false }
+	var isDatabase: Bool { if case .database = request.target { return true }; return false }
 
 	/// 고르기 목록을 보일 때 그 후보들
 	private var pickerTables: [TableStat]? {
@@ -94,7 +99,7 @@ struct ExportSheet: View {
 	}
 
 	/// 실제로 내보낼 테이블 (후보 순서 그대로)
-	private var chosenTables: [TableStat] {
+	var chosenTables: [TableStat] {
 		guard case .database(_, let tables, _, _) = request.target else { return [] }
 		return tables.filter { picked.contains($0.name) }
 	}
@@ -220,6 +225,7 @@ struct ExportSheet: View {
 
 	private func chooseFile() {
 		if format == .excel { chooseExcel(); return }
+		if format == .imodules { chooseIModules(); return }
 		let panel = NSSavePanel()
 		switch request.target {
 		case .data(let src): panel.nameFieldStringValue = "\(src.exportFileBase).sql"
@@ -378,5 +384,52 @@ struct ExportProgressView: View {
 			return "\(job.written.formatted()) / \(job.totalApprox ? "약 " : "")\(t.formatted())행"
 		}
 		return "\(job.written.formatted())행"
+	}
+}
+
+extension ExportSheet {
+	/// iModules 탭: 접두어 빼기, 데이터(datas) 넣기. 테이블·DB 를 내보낼 때만
+	@ViewBuilder var imodulesTab: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			if isDatabase {
+				HStack(spacing: 6) {
+					Text("뺄 접두어:")
+					TextField("없음", text: $imodules.prefix).textFieldStyle(.roundedBorder).frame(width: 140)
+				}
+				Toggle("데이터 넣기 (datas)", isOn: $imodules.includeData).toggleStyle(.checkbox)
+				Text("package.json 의 databases 자리에 붙여 넣는 { \"테이블\": { columns, indexes, auto_increment, comment } } 형식입니다. UNSIGNED·외래 키처럼 iModules 형식에 없는 것은 빠집니다 (끝나면 알려 줍니다).")
+					.font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+			} else {
+				Text("iModules 형식은 테이블이나 데이터베이스를 내보낼 때 씁니다 (사이드바 오른쪽 클릭 → 내보내기).")
+					.foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+			}
+		}
+		.padding(14)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	/// 고른 테이블들의 공통 접두어 (마지막 _ 까지): im_core_assignments, im_core_files → im_core_
+	static func commonPrefix(_ names: [String]) -> String {
+		guard var p = names.first else { return "" }
+		for n in names.dropFirst() { while !n.hasPrefix(p) { p.removeLast() } }
+		if names.count == 1 { p = String(p.dropLast()) }
+		guard let i = p.lastIndex(of: "_") else { return "" }
+		return String(p[...i])
+	}
+
+	func chooseIModules() {
+		guard case .database(let schema, _, _, _) = request.target else { return }
+		let chosen = chosenTables, session = session, options = imodules
+		dismiss()
+		let panel = NSSavePanel()
+		panel.nameFieldStringValue = (chosen.count == 1 ? chosen[0].name : schema) + ".json"
+		panel.allowedContentTypes = [.json]
+		panel.canCreateDirectories = true
+		panel.begin { resp in
+			guard resp == .OK, let url = panel.url else { return }
+			let job = ExportJob()
+			ExportProgressWindow.show(job: job)
+			Task { @MainActor in await job.exportIModules(session: session, schema: schema, tables: chosen, options: options, to: url) }
+		}
 	}
 }

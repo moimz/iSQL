@@ -210,6 +210,19 @@ final class ExportJob {
 
 	func cancel() { cancelled = true }
 
+	// iModules 내보내기(아래 확장)가 쓰는 시작·끝·진행
+	var cancelledFlag: Bool { cancelled }
+	var writtenCount: Int { written }
+	@MainActor func begin(url: URL, total t: Int?) -> Bool {
+		guard !running else { return false }
+		running = true; cancelled = false; written = 0; message = nil; isError = false; finished = false
+		fileName = url.lastPathComponent; total = t; totalApprox = t != nil
+		return true
+	}
+	@MainActor func end() { running = false; finished = true }
+	@MainActor func addWritten(_ n: Int) { written += n }
+	@MainActor func finish(_ text: String) { message = cancelled ? "그만둠 · \(written.formatted())행까지 썼습니다" : text }
+
 	/// SQL 파일로 내보낸다. 데이터는 1000행씩 받아 바로 쓴다 (큰 테이블도 메모리를 많이 안 쓰게)
 	@MainActor
 	func exportSQL(_ src: ExportSource, options o: SQLExportOptions, to url: URL) async {
@@ -561,5 +574,154 @@ extension QueryOutput: ExportSource {
 			if let info, !info.comment.isEmpty, d[c.name] == nil { d[c.name] = info.comment }
 		}
 		return d
+	}
+}
+
+// MARK: - iModules 형식 (package.json 의 databases 자리에 붙이는 { "테이블": { columns, indexes, auto_increment, comment, datas } })
+
+/// iModules 내보내기 옵션
+struct IModulesExportOptions {
+	/// 테이블 이름에서 뺄 접두어 (im_core_ 등)
+	var prefix = ""
+	/// 데이터(datas) 넣기
+	var includeData = false
+}
+
+extension ExportJob {
+	/// iModules 스키마 JSON. 형식은 iModules app/databases/mysql/Builder.php 가 읽는 그대로:
+	/// columns{type,length,is_null,default,comment}, indexes{"a,b": primary_key|unique|index|fulltext}, auto_increment, comment, datas[행 객체]
+	@MainActor
+	func exportIModules(session: Session, schema: String, tables: [TableStat], options o: IModulesExportOptions, to url: URL) async {
+		guard begin(url: url, total: o.includeData ? tables.map { $0.rows.map { Int($0) } }.reduce(0) { a, b in a.flatMap { x in b.map { x + $0 } } } : nil) else { return }
+		defer { end() }
+		var notes: [String] = []
+		do {
+			FileManager.default.createFile(atPath: url.path, contents: nil)
+			let h = try FileHandle(forWritingTo: url)
+			defer { try? h.close() }
+			func w(_ s: String) { h.write(Data(s.utf8)) }
+			let list = tables.filter { !$0.isView }
+			if list.count < tables.count { notes.append("뷰 \(tables.count - list.count)개는 뺐습니다") }
+			w("{\n")
+			for (ti, t) in list.enumerated() where !cancelledFlag {
+				let name = o.prefix.isEmpty || !t.name.hasPrefix(o.prefix) ? t.name : String(t.name.dropFirst(o.prefix.count))
+				let q = "\(quoteName(schema)).\(quoteName(t.name))"
+				let cols = try await session.query("SHOW FULL COLUMNS FROM \(q)").last ?? QueryResult()
+				let idx = try await session.query("SHOW INDEX FROM \(q)").last ?? QueryResult()
+				w("    \(Self.json(name)): {\n        \"columns\": {\n")
+				func c(_ r: QueryResult, _ row: [Value], _ n: String) -> String? {
+					r.columns.firstIndex { $0.name.caseInsensitiveCompare(n) == .orderedSame }.flatMap { row[safe: $0]?.string }
+				}
+				var auto: String?
+				for (ci, row) in cols.rows.enumerated() {
+					let field = c(cols, row, "Field") ?? ""
+					let type = c(cols, row, "Type") ?? ""
+					let extra = (c(cols, row, "Extra") ?? "").lowercased()
+					let parsed = Self.parseType(type)
+					if parsed.unsigned { notes.append("\(t.name).\(field) UNSIGNED") }
+					if extra.contains("generated") && !extra.contains("default_generated") { notes.append("\(t.name).\(field) 계산 컬럼") }
+					if extra.contains("auto_increment") { auto = field }
+					var props: [String] = ["\"type\": \(Self.json(parsed.base))"]
+					if let len = parsed.length { props.append("\"length\": \(len)") }
+					if c(cols, row, "Null") == "YES" { props.append("\"is_null\": true") }
+					if let d = c(cols, row, "Default") {
+						if extra.contains("default_generated") { notes.append("\(t.name).\(field) 기본값 식(\(d))") }
+						else { props.append("\"default\": " + (Self.numericTypes.contains(parsed.base) && Double(d) != nil ? d : Self.json(d))) }
+					}
+					if let cm = c(cols, row, "Comment"), !cm.isEmpty { props.append("\"comment\": \(Self.json(cm))") }
+					w("            \(Self.json(field)): {\n" + props.map { "                " + $0 }.joined(separator: ",\n") + "\n            }"
+					  + (ci < cols.rows.count - 1 ? "," : "") + "\n")
+				}
+				w("        },\n")
+				// 인덱스: 이름 → (종류, 컬럼들). PRIMARY 먼저
+				var order: [String] = []
+				var keys: [String: (kind: String, cols: [String])] = [:]
+				for row in idx.rows {
+					let key = c(idx, row, "Key_name") ?? ""
+					let col = c(idx, row, "Column_name") ?? ""
+					if c(idx, row, "Sub_part") != nil { notes.append("\(t.name) 인덱스 \(key) 접두 길이") }
+					if keys[key] == nil {
+						order.append(key)
+						let kind = key == "PRIMARY" ? "primary_key"
+							: c(idx, row, "Index_type") == "FULLTEXT" ? "fulltext"
+							: c(idx, row, "Non_unique") == "0" ? "unique" : "index"
+						keys[key] = (kind, [])
+					}
+					keys[key]?.cols.append(col)
+				}
+				order = order.filter { $0 == "PRIMARY" } + order.filter { $0 != "PRIMARY" }
+				let idxLines = order.compactMap { k in keys[k].map { "            \(Self.json($0.cols.joined(separator: ","))): \(Self.json($0.kind))" } }
+				w("        \"indexes\": {" + (idxLines.isEmpty ? "}" : "\n" + idxLines.joined(separator: ",\n") + "\n        }"))
+				if let auto { w(",\n        \"auto_increment\": \(Self.json(auto))") }
+				w(",\n        \"comment\": \(Self.json(t.comment))")
+				if o.includeData {
+					w(",\n        \"datas\": [")
+					let spec = ExcelSheetSpec.table(session: session, schema: schema, t)
+					var offset = 0, first = true
+					while !cancelledFlag {
+						let batch = try await spec.fetch(offset, 1000)
+						for r in batch.rows {
+							let obj = batch.columns.indices.map { i in "\(Self.json(batch.columns[i].name)): \(Self.jsonValue(r[safe: i] ?? .null, batch.columns[i]))" }
+							w((first ? "\n" : ",\n") + "            {" + obj.joined(separator: ", ") + "}")
+							first = false
+						}
+						addWritten(batch.rows.count)
+						if batch.rows.count < 1000 { break }
+						offset += 1000
+					}
+					w(first ? "]" : "\n        ]")
+				}
+				w("\n    }" + (ti < list.count - 1 ? "," : "") + "\n")
+			}
+			w("}\n")
+			let fk = (try? await session.query("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = \(literal(.text(schema)))").last?.rows.first?.first?.string) ?? nil
+			if let fk, let n = Int(fk), n > 0 { notes.append("외래 키 \(n)개 (iModules 형식에 없음)") }
+			let head = "테이블 \(list.count)개" + (o.includeData ? " · \(writtenCount.formatted())행" : "") + " 내보냄 · \(url.lastPathComponent)"
+			finish(notes.isEmpty ? head : head + "\n빠진 것: " + notes.prefix(8).joined(separator: ", ") + (notes.count > 8 ? " 외 \(notes.count - 8)개" : ""))
+		} catch {
+			fail(error.localizedDescription)
+		}
+	}
+
+	static let numericTypes: Set<String> = ["tinyint", "smallint", "mediumint", "int", "integer", "bigint", "decimal", "numeric", "float", "double", "real", "bit", "year"]
+
+	/// "varchar(36)" → varchar, 36 / "decimal(10,2) unsigned" → decimal, "10,2", unsigned / "enum('a','b')" → enum, "'a','b'"
+	static func parseType(_ t: String) -> (base: String, length: String?, unsigned: Bool) {
+		let lower = t.lowercased()
+		let unsigned = lower.contains(" unsigned")
+		guard let open = t.firstIndex(of: "("), let close = t.lastIndex(of: ")"), open < close else {
+			return (String(lower.split(separator: " ").first ?? ""), nil, unsigned)
+		}
+		let base = String(lower[..<open]).trimmingCharacters(in: .whitespaces)
+		let inner = String(t[t.index(after: open)..<close])
+		if inner.allSatisfy(\.isNumber) { return (base, inner, unsigned) }
+		return (base, json(inner), unsigned)
+	}
+
+	/// JSON 글자 (따옴표·역슬래시·줄바꿈·제어 문자 바꾸기)
+	static func json(_ s: String) -> String {
+		var o = "\""
+		for u in s.unicodeScalars {
+			switch u {
+			case "\"": o += "\\\""
+			case "\\": o += "\\\\"
+			case "\n": o += "\\n"
+			case "\r": o += "\\r"
+			case "\t": o += "\\t"
+			default: if u.value < 0x20 { o += String(format: "\\u%04x", u.value) } else { o.unicodeScalars.append(u) }
+			}
+		}
+		return o + "\""
+	}
+
+	/// datas 값: 숫자 컬럼의 숫자는 숫자(15자리까지), NULL 은 null, 바이너리는 base64
+	static func jsonValue(_ v: Value, _ c: Column) -> String {
+		switch v {
+		case .null: return "null"
+		case .bytes(let d): return json(d.base64EncodedString())
+		case .text(let t):
+			if c.isNumeric, Double(t) != nil, t.filter(\.isNumber).count <= 15 { return t }
+			return json(t)
+		}
 	}
 }
