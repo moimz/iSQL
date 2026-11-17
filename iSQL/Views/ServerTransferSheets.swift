@@ -138,7 +138,7 @@ struct ExportServersSheet: View {
 	private func export() {
 		let servers = ServerStore.sorted(store.servers.filter { picked.contains($0.id) })
 		do {
-			let (payload, warnings) = try ServerTransfer.payload(servers, groups: store.groups)
+			let (payload, warnings) = try ServerTransfer.payload(servers)
 			let data = try ServerTransfer.seal(payload, password: password)
 			let panel = NSSavePanel()
 			panel.allowedContentTypes = [.isqlServers]
@@ -255,7 +255,6 @@ struct ImportServersSheet: View {
 				HStack(spacing: 6) {
 					Circle().fill(s.color.swiftUI ?? .secondary).frame(width: 8, height: 8)
 					Text(s.displayName).fontWeight(.medium)
-					if !s.group.isEmpty { Text(s.group).font(.caption).foregroundStyle(.secondary) }
 					Text(exists ? "이미 있음 — 덮어씀" : "새 서버").font(.caption).foregroundStyle(exists ? .orange : .green)
 				}
 			}
@@ -312,7 +311,7 @@ struct ImportServersSheet: View {
 		guard let p = payload else { return }
 		let items = p.servers.filter { picked.contains($0.id) }
 		do {
-			try ServerTransfer.apply(items, groups: p.groups, store: store, keyPassphrases: passphrases)
+			try ServerTransfer.apply(items, store: store, keyPassphrases: passphrases)
 			done = "\(items.count)개 서버를 가져왔습니다"
 			failure = nil
 		} catch {

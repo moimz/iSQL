@@ -20,7 +20,7 @@ enum ServerTransfer {
 		var format = "isql-servers"
 		var version = 1
 		var exported = Date()
-		/// 내보낸 서버들이 쓰는 그룹 이름 (그룹 순서대로)
+		/// 쓰지 않음 (늘 비어 있다). 그룹은 받는 사람이 자기 식으로 만들어 두므로 내보내지 않는다 (2026-11-17 사용자)
 		var groups: [String] = []
 		var servers: [Item] = []
 	}
@@ -59,14 +59,13 @@ enum ServerTransfer {
 
 	// MARK: 내보내기
 
-	/// 고른 서버를 Payload 로 (비밀번호는 키체인에서, 키 파일은 디스크에서 읽는다)
-	static func payload(_ servers: [Server], groups allGroups: [String]) throws -> (Payload, warnings: [String]) {
+	/// 고른 서버를 Payload 로 (비밀번호는 키체인에서, 키 파일은 디스크에서 읽는다). 그룹은 빼고 내보낸다
+	static func payload(_ servers: [Server]) throws -> (Payload, warnings: [String]) {
 		guard !servers.isEmpty else { throw Failure.noServers }
 		var p = Payload()
 		var warnings: [String] = []
-		let used = Set(servers.map(\.group))
-		p.groups = allGroups.filter { used.contains($0) } + used.filter { !$0.isEmpty && !allGroups.contains($0) }.sorted()
-		for s in servers {
+		for var s in servers {
+			s.group = ""
 			var item = Item(server: s, mysqlPassword: Keychain.get(s.mysqlPasswordKey))
 			if s.ssh.enabled {
 				if s.ssh.auth == .password {
@@ -126,12 +125,13 @@ enum ServerTransfer {
 		return p
 	}
 
-	/// 가져온 서버를 목록·키체인에 넣는다. keyPassphrases: 서버 id → 사용자가 직접 넣은 SSH 키 암호 (없으면 안 넣음)
+	/// 가져온 서버를 목록·키체인에 넣는다. keyPassphrases: 서버 id → 사용자가 직접 넣은 SSH 키 암호 (없으면 안 넣음).
+	/// 새 서버는 무조건 그룹 없음(그룹을 만들지 않는다), 이미 있는 서버를 덮어쓰면 이 맥에서 넣어 둔 그룹 그대로
 	@MainActor
-	static func apply(_ items: [Item], groups: [String], store: ServerStore, keyPassphrases: [UUID: String]) throws {
-		for g in groups { store.addGroup(g) }
+	static func apply(_ items: [Item], store: ServerStore, keyPassphrases: [UUID: String]) throws {
 		for item in items {
 			var s = item.server
+			s.group = store.servers.first { $0.id == s.id }?.group ?? ""
 			if let k = item.sshKey { s.ssh.keyPath = try installKey(k) }
 			store.save(s)
 			// 파일에 없는 비밀번호는 이 맥에 있던 것을 그대로 둔다 (덮어쓸 때 지우지 않게)
