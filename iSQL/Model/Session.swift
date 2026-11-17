@@ -752,6 +752,9 @@ final class Session {
 	/// 루틴 탭 열기 (이미 있으면 그 탭)
 	func openRoutine(_ r: RoutineInfo) { open(tabID: r.id) }
 
+	/// 뷰 정의 고치기 탭 (데이터 탭과 따로)
+	func openViewDefinition(_ t: TableInfo) { open(tabID: RoutineInfo.tabID(.view, t.schema, t.name)) }
+
 	/// 새 루틴 탭 (틀이 들어 있다)
 	func newRoutine(_ kind: RoutineKind, schema: String) {
 		open(tabID: RoutineInfo.newPrefix + kind.rawValue + ":" + schema + ":" + UUID().uuidString.prefix(8))
@@ -786,7 +789,7 @@ final class Session {
 		}
 		for t in tabs where t == r.id { closeTab(t) }
 		routineEditors[r.id] = nil
-		await loadRoutines()
+		if r.kind == .view { try? await loadSchema() } else { await loadRoutines() }
 		return nil
 	}
 

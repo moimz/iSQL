@@ -4,18 +4,21 @@ import Observation
 
 /// 프로시저·함수·트리거·이벤트 (사이드바 DB 아래 묶음, 탭으로 열어 SQL 로 고친다)
 enum RoutineKind: String, CaseIterable {
-	case procedure, function, trigger, event
+	case procedure, function, trigger, event, view
+
+	/// 사이드바 묶음·새로 만들기에 나오는 것 (뷰는 테이블 목록에 있고 정의 고치기만 탭으로)
+	static let routineKinds: [RoutineKind] = [.procedure, .function, .trigger, .event]
 
 	var label: String {
-		switch self { case .procedure: "프로시저"; case .function: "함수"; case .trigger: "트리거"; case .event: "이벤트" }
+		switch self { case .procedure: "프로시저"; case .function: "함수"; case .trigger: "트리거"; case .event: "이벤트"; case .view: "뷰" }
 	}
 	var sqlWord: String { rawValue.uppercased() }
 	var icon: String {
-		switch self { case .procedure: "gearshape.2"; case .function: "function"; case .trigger: "bolt"; case .event: "clock" }
+		switch self { case .procedure: "gearshape.2"; case .function: "function"; case .trigger: "bolt"; case .event: "clock"; case .view: "eye" }
 	}
 	/// SHOW CREATE 결과에서 정의가 든 컬럼
 	var createColumn: String {
-		switch self { case .procedure: "Create Procedure"; case .function: "Create Function"; case .trigger: "SQL Original Statement"; case .event: "Create Event" }
+		switch self { case .procedure: "Create Procedure"; case .function: "Create Function"; case .trigger: "SQL Original Statement"; case .event: "Create Event"; case .view: "Create View" }
 	}
 
 	/// 새로 만들 때 기본 틀
@@ -26,6 +29,7 @@ enum RoutineKind: String, CaseIterable {
 		case .function: return "CREATE FUNCTION `new_function`(p INT) RETURNS INT\nDETERMINISTIC\nBEGIN\n\tRETURN p;\nEND"
 		case .trigger: return "CREATE TRIGGER `new_trigger` BEFORE INSERT ON \(t) FOR EACH ROW\nBEGIN\n\t-- SET NEW.컬럼 = 값;\nEND"
 		case .event: return "CREATE EVENT `new_event`\nON SCHEDULE EVERY 1 DAY\nDO\n\tSELECT 1"
+		case .view: return "CREATE VIEW `new_view` AS\nSELECT 1"
 		}
 	}
 }
@@ -148,7 +152,10 @@ final class RoutineEditor {
 			let c = try await session.sideConnection(purpose: kind.label)
 			conn = c
 			_ = try await c.query("USE \(q(schema))")
-			if let old = name {
+			if kind == .view, let old = name, old == newName {
+				// 뷰는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
+				_ = try await c.query(Self.orReplace(sql))
+			} else if let old = name {
 				_ = try await c.query("DROP \(kind.sqlWord) \(q(schema)).\(q(old))")
 				do {
 					_ = try await c.query(sql)
@@ -163,7 +170,7 @@ final class RoutineEditor {
 			c.close()
 			conn = nil
 			name = newName
-			await session.loadRoutines()
+			if kind == .view { try? await session.loadSchema() } else { await session.loadRoutines() }
 			await load()
 			message = "저장했습니다"
 			return newName
@@ -198,6 +205,13 @@ final class RoutineEditor {
 		var t = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 		for end in ["$$", "//", ";;", ";"] where t.hasSuffix(end) { t = String(t.dropLast(end.count)).trimmingCharacters(in: .whitespacesAndNewlines); break }
 		return t
+	}
+
+	/// "CREATE … VIEW" → "CREATE OR REPLACE … VIEW"
+	static func orReplace(_ s: String) -> String {
+		guard !s.uppercased().contains("OR REPLACE"),
+		      let r = s.range(of: #"^\s*CREATE\b"#, options: [.regularExpression, .caseInsensitive]) else { return s }
+		return s.replacingCharacters(in: r, with: "CREATE OR REPLACE")
 	}
 
 	static func stripDefiner(_ s: String) -> String {

@@ -9,7 +9,7 @@ struct RoutineGroups: View {
 	var search = ""
 
 	var body: some View {
-		ForEach(RoutineKind.allCases, id: \.self) { kind in
+		ForEach(RoutineKind.routineKinds, id: \.self) { kind in
 			let all = session.routines(schema, kind)
 			let items = search.isEmpty ? all : all.filter { $0.name.lowercased().contains(search.lowercased()) }
 			if !items.isEmpty {
@@ -40,7 +40,7 @@ struct NewRoutineMenu: View {
 	let schema: String
 	var body: some View {
 		Menu("새로 만들기") {
-			ForEach(RoutineKind.allCases, id: \.self) { k in
+			ForEach(RoutineKind.routineKinds, id: \.self) { k in
 				Button("\(k.label)…") { session.newRoutine(k, schema: schema) }
 			}
 		}
@@ -163,8 +163,14 @@ struct RoutineTabView: View {
 	@Bindable var editor: RoutineEditor
 
 	private var info: RoutineInfo? {
-		editor.name.flatMap { n in session.routines.first { $0.kind == editor.kind && $0.schema == editor.schema && $0.name == n } }
+		guard let n = editor.name else { return nil }
+		if editor.kind == .view {
+			return session.tables.contains { $0.schema == editor.schema && $0.name == n && $0.isView } ? RoutineInfo(schema: editor.schema, name: n, kind: .view) : nil
+		}
+		return session.routines.first { $0.kind == editor.kind && $0.schema == editor.schema && $0.name == n }
 	}
+
+	@State private var running = false
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -183,6 +189,10 @@ struct RoutineTabView: View {
 				}
 				.fixedSize()
 				.help("저장할 때 DEFINER=… 를 그대로 둘지, 빼서 지금 접속한 계정으로 만들지")
+				if !editor.isNew && (editor.kind == .procedure || editor.kind == .function) {
+					Button("실행…") { running = true }.disabled(info == nil)
+						.help("인자를 넣어 CALL / SELECT 문을 쿼리 패널에 넣습니다")
+				}
 				if !editor.isNew {
 					Button("되돌리기") { editor.revert() }.disabled(!editor.changed)
 					Button(role: .destructive) { if let r = info { RoutineDrop.confirm(r, session: session) } } label: { Text("삭제…") }
@@ -221,7 +231,8 @@ struct RoutineTabView: View {
 						.lineLimit(2).textSelection(.enabled)
 				} else {
 					Text(editor.isNew ? "CREATE 문을 고친 뒤 만들기 (⌘S). DELIMITER 는 쓰지 않습니다 — BEGIN … END 를 그대로"
-					                  : "고친 뒤 저장(⌘S)하면 지우고 다시 만듭니다. 만들다 실패하면 원래 것으로 되돌립니다")
+					     : editor.kind == .view ? "고친 뒤 저장(⌘S)하면 CREATE OR REPLACE 로 바꿉니다 (이름을 바꾸면 지우고 새로 만듭니다)"
+					     : "고친 뒤 저장(⌘S)하면 지우고 다시 만듭니다. 만들다 실패하면 원래 것으로 되돌립니다")
 						.foregroundStyle(.secondary)
 				}
 				Spacer()
@@ -231,6 +242,9 @@ struct RoutineTabView: View {
 			.frame(height: 34)
 		}
 		.task(id: tab) { if !editor.loaded { await editor.load() } }
+		.sheet(isPresented: $running) {
+			if let n = editor.name { RoutineRunSheet(session: session, kind: editor.kind, schema: editor.schema, name: n) }
+		}
 	}
 
 	/// 저장 뒤 이름이 바뀌었으면(새로 만듦·이름 바꿈) 탭 id 도 새 이름으로
@@ -238,5 +252,107 @@ struct RoutineTabView: View {
 	func save() async {
 		guard let n = await editor.save() else { return }
 		session.retargetRoutineTab(tab, to: RoutineInfo.tabID(editor.kind, editor.schema, n))
+	}
+}
+
+/// 프로시저·함수 실행: 인자를 받아 CALL / SELECT 문을 쿼리 패널에 넣는다 (바로 실행하지 않는다).
+/// 값은 글자로 넣으면 따옴표를 붙이고, 숫자 타입이면 그대로. @변수 나 = 로 시작하면 식 그대로. 비우면 NULL. OUT 인자는 @이름 으로 받고 뒤에 SELECT
+struct RoutineRunSheet: View {
+	let session: Session
+	let kind: RoutineKind
+	let schema: String
+	let name: String
+	@State private var params: [Param] = []
+	@State private var values: [String] = []
+	@State private var loaded = false
+	@Environment(\.dismiss) private var dismiss
+
+	struct Param {
+		let mode: String
+		let name: String
+		let type: String
+		var numeric: Bool {
+			type.lowercased().range(of: #"^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|bit|bool|boolean)\b"#, options: .regularExpression) != nil
+		}
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 14) {
+			Text("\(name) 실행").font(.headline)
+			if !loaded {
+				ProgressView().controlSize(.small)
+			} else if params.isEmpty {
+				Text("인자가 없습니다").foregroundStyle(.secondary)
+			} else {
+				Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+					ForEach(params.indices, id: \.self) { i in
+						GridRow {
+							Text(params[i].mode).font(.caption).foregroundStyle(.secondary)
+							Text(params[i].name).font(.system(.body, design: .monospaced))
+							Text(params[i].type).font(.caption).foregroundStyle(.secondary)
+							if params[i].mode == "OUT" {
+								Text("@\(params[i].name) 로 받음").foregroundStyle(.secondary)
+							} else {
+								TextField(params[i].numeric ? "숫자 (비우면 NULL)" : "값 (비우면 NULL)", text: $values[i])
+									.textFieldStyle(.roundedBorder).frame(width: 220)
+							}
+						}
+					}
+				}
+				Text("글자는 따옴표를 붙여 넣습니다. @변수나 = 로 시작하면 식 그대로 (예: =NOW())")
+					.font(.callout).foregroundStyle(.secondary)
+			}
+			Text(sql).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+				.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+				.background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+			HStack {
+				Spacer()
+				Button("취소", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+				Button("쿼리 패널에 넣기") { insert() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+			}
+		}
+		.padding(20)
+		.frame(width: 560)
+		.task { await load() }
+	}
+
+	private func load() async {
+		let r = try? await session.query("""
+			SELECT PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER FROM information_schema.PARAMETERS
+			 WHERE SPECIFIC_SCHEMA = \(literal(.text(schema))) AND SPECIFIC_NAME = \(literal(.text(name))) AND ORDINAL_POSITION > 0
+			 ORDER BY ORDINAL_POSITION
+			""").last
+		params = (r?.rows ?? []).map { Param(mode: $0[safe: 0]?.string ?? "IN", name: $0[safe: 1]?.string ?? "", type: $0[safe: 2]?.string ?? "") }
+		values = Array(repeating: "", count: params.count)
+		loaded = true
+	}
+
+	private func value(_ i: Int) -> String {
+		let p = params[i]
+		if p.mode == "OUT" { return "@" + p.name }
+		let v = values.indices.contains(i) ? values[i].trimmingCharacters(in: .whitespaces) : ""
+		if v.isEmpty || v.uppercased() == "NULL" { return "NULL" }
+		if v.hasPrefix("@") { return v }
+		if v.hasPrefix("=") { return String(v.dropFirst()) }
+		if p.numeric, Double(v) != nil { return v }
+		return literal(.text(v))
+	}
+
+	private var sql: String {
+		let q = TableInspector.ident
+		let args = params.indices.map(value).joined(separator: ", ")
+		if kind == .function { return "SELECT \(q(schema)).\(q(name))(\(args));" }
+		var s = "CALL \(q(schema)).\(q(name))(\(args));"
+		let outs = params.filter { $0.mode != "IN" }.map { "@" + $0.name }
+		if !outs.isEmpty { s += "\nSELECT " + outs.joined(separator: ", ") + ";" }
+		return s
+	}
+
+	private func insert() {
+		guard let p = session.queryPanel else { dismiss(); return }
+		p.text = p.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? sql : p.text + "\n\n" + sql
+		if p.database.isEmpty { p.database = schema }
+		p.open = true
+		dismiss()
 	}
 }

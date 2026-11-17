@@ -73,7 +73,7 @@ final class DatabaseCopyJob {
 	}
 
 	@MainActor
-	func run(to target: String, structure: Bool, data: Bool) async {
+	func run(to target: String, structure: Bool, data: Bool, routines: Bool = false) async {
 		guard let session, !running else { return }
 		running = true
 		finished = false
@@ -117,10 +117,13 @@ final class DatabaseCopyJob {
 				}
 			}
 			if fkOff { _ = try? await session.query("SET FOREIGN_KEY_CHECKS = 1") }
+			// 루틴은 데이터를 다 넣은 뒤에 (트리거가 복제 INSERT 에 돌지 않게)
+			var routineNote = ""
+			if routines && structure && !cancelled { routineNote = try await copyRoutines(target: target) }
 			let stopped = current
 			current = ""
 			message = cancelled ? "그만뒀습니다. \(target) 에 테이블 \(done)개까지 복제됐습니다" + (stopped.isEmpty ? "." : " (\(stopped) 는 되돌림).")
-			                    : "\(target) 복제를 마쳤습니다" + (structure ? " (테이블 \(done)개)" : "")
+			                    : "\(target) 복제를 마쳤습니다" + (structure ? " (테이블 \(done)개\(routineNote))" : "")
 		} catch {
 			if fkOff { _ = try? await session.query("SET FOREIGN_KEY_CHECKS = 1") }
 			isError = true
@@ -316,6 +319,49 @@ final class DatabaseCopyJob {
 		guard let ddl = r.rows.first?[safe: 1]?.string, ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
 		// "VIEW `원본`.`v` AS …" 처럼 DB 가 붙어 와서 " VIEW `v`" 로 찾으면 못 찾았다 → 이름 바꾸기와 같은 고치기
 		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target))
+	}
+
+	/// 프로시저·함수·트리거·이벤트를 새 DB 에: SHOW CREATE 를 읽어 `원본`. 을 `새`. 로 바꾸고 USE 새 DB 에서 만든다.
+	/// DEFINER 로 실패하면 빼고 다시. 이벤트는 꺼진 채로 (복제본에서 돌면 안 되는 정리 작업일 수 있다). 끝에 붙일 설명
+	@MainActor
+	private func copyRoutines(target: String) async throws -> String {
+		guard let session else { return "" }
+		let q = TableInspector.ident
+		let s = literal(.text(source))
+		var items: [(RoutineKind, String)] = []
+		for r in (try await session.query("SELECT ROUTINE_TYPE, ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = \(s)").last?.rows ?? []) {
+			items.append((r[safe: 0]?.string == "FUNCTION" ? .function : .procedure, r[safe: 1]?.string ?? ""))
+		}
+		for r in (try await session.query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = \(s)").last?.rows ?? []) {
+			items.append((.trigger, r[safe: 0]?.string ?? ""))
+		}
+		for r in (try await session.query("SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = \(s)").last?.rows ?? []) {
+			items.append((.event, r[safe: 0]?.string ?? ""))
+		}
+		guard !items.isEmpty else { return "" }
+		let c = try await session.sideConnection(purpose: "복제")
+		defer { c.close() }
+		_ = try await c.query("USE \(q(target))")
+		var made = 0, events = 0
+		for (k, n) in items {
+			current = "\(k.label) \(n)"
+			let r = try await session.query("SHOW CREATE \(k.sqlWord) \(q(source)).\(q(n))").last ?? QueryResult()
+			guard !r.rows.isEmpty, let ddl0 = r.string(0, k.createColumn) else { throw CopyError.noDDL(n) }
+			let ddl = Self.retarget(ddl0, from: source, to: target)
+			do { _ = try await c.query(ddl) } catch { _ = try await c.query(RoutineEditor.stripDefiner(ddl)) }
+			if k == .event { _ = try? await c.query("ALTER EVENT \(q(target)).\(q(n)) DISABLE"); events += 1 }
+			made += 1
+		}
+		return ", 루틴 \(made)개" + (events > 0 ? " — 이벤트 \(events)개는 꺼진 채로" : "")
+	}
+
+	/// 정의 안의 DB 참조를 새 DB 로: `원본`. 과 따옴표 없는 원본. 둘 다 (프로시저 본문은 쓴 그대로 와서 따옴표가 없을 수 있다)
+	static func retarget(_ ddl: String, from: String, to: String) -> String {
+		let q = TableInspector.ident
+		var s = ddl.replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
+		let name = NSRegularExpression.escapedPattern(for: from)
+		s = s.replacingOccurrences(of: #"(?<![\w`$.])"# + name + #"\.(?=[`\w])"#, with: NSRegularExpression.escapedTemplate(for: q(to) + "."), options: .regularExpression)
+		return s
 	}
 
 	enum CopyError: LocalizedError {

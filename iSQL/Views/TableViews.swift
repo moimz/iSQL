@@ -437,7 +437,7 @@ struct SidebarTableMenu: View {
 		                            	.action(pinned ? "고정 풀기" : "맨 위에 고정") {
 		                            		if pinned { session.pinned.remove(table.id) } else { session.pinned.insert(table.id) }
 		                            	},
-		                            ],
+		                            ] + (table.isView ? [.action("뷰 정의 고치기") { session.openViewDefinition(table) }] : []),
 		                            open: { session.openTab(table) },
 		                            export: { session.requestExport(.table(table.schema, TableStat(table))) },
 		                            importExcel: { session.requestExcelImport(schema: table.schema, table: table.name) },
