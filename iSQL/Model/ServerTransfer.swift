@@ -131,7 +131,10 @@ enum ServerTransfer {
 	static func apply(_ items: [Item], store: ServerStore, keyPassphrases: [UUID: String]) throws {
 		for item in items {
 			var s = item.server
-			s.group = store.servers.first { $0.id == s.id }?.group ?? ""
+			// 덮어쓸 때 그룹·목록 순서는 이 맥에서 정해 둔 그대로
+			let old = store.servers.first { $0.id == s.id }
+			s.group = old?.group ?? ""
+			s.order = old?.order
 			if let k = item.sshKey { s.ssh.keyPath = try installKey(k) }
 			store.save(s)
 			// 파일에 없는 비밀번호는 이 맥에 있던 것을 그대로 둔다 (덮어쓸 때 지우지 않게)

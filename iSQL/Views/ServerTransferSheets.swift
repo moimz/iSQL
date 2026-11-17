@@ -168,6 +168,9 @@ struct ImportServersSheet: View {
 	@State private var failure: String?
 	@State private var done: String?
 	@State private var passwordFocused = false
+	/// 다른 앱 파일이면 그 앱 이름 (Sequel Ace), 가져오지 못한 것
+	@State private var source: String?
+	@State private var skipped: [String] = []
 
 	init(store: ServerStore, initialURL: URL?) {
 		self.store = store
@@ -194,15 +197,14 @@ struct ImportServersSheet: View {
 						Button("선택…", action: choose)
 					}
 				}
-				GridRow {
-					Text("암호").foregroundStyle(.secondary)
-					PasswordField(placeholder: "내보낼 때 넣은 암호", text: $password, focus: $passwordFocused, onSubmit: open)
-						.disabled(!isISQL || payload != nil)
+				// 암호는 iSQL 파일(.isql)일 때만 (다른 앱 파일은 암호 없이 바로 목록)
+				if isISQL {
+					GridRow {
+						Text("암호").foregroundStyle(.secondary)
+						PasswordField(placeholder: "내보낼 때 넣은 암호", text: $password, focus: $passwordFocused, onSubmit: open)
+							.disabled(payload != nil)
+					}
 				}
-			}
-			if url != nil && !isISQL {
-				Label("다른 앱에서 내보낸 파일은 아직 가져올 수 없습니다 (곧 지원)", systemImage: "info.circle")
-					.foregroundStyle(.secondary).font(.callout)
 			}
 			if let p = payload { serverList(p) }
 			if let f = failure {
@@ -233,13 +235,18 @@ struct ImportServersSheet: View {
 		}
 		.padding(20)
 		.frame(width: 600)
-		.onAppear { if url != nil { passwordFocused = true } }
+		.onAppear { fileChanged() }
 	}
 
 	@ViewBuilder private func serverList(_ p: ServerTransfer.Payload) -> some View {
 		VStack(alignment: .leading, spacing: 6) {
-			Text("\(p.servers.count)개 서버 · \(p.exported.formatted(date: .abbreviated, time: .shortened)) 에 내보냄")
-				.font(.callout).foregroundStyle(.secondary)
+			if let source {
+				Text("\(source) 접속 \(p.servers.count)개 · 비밀번호는 들어 있지 않아 처음 접속할 때 묻습니다")
+					.font(.callout).foregroundStyle(.secondary)
+			} else {
+				Text("\(p.servers.count)개 서버 · \(p.exported.formatted(date: .abbreviated, time: .shortened)) 에 내보냄")
+					.font(.callout).foregroundStyle(.secondary)
+			}
 			ScrollView {
 				VStack(alignment: .leading, spacing: 10) {
 					ForEach(p.servers) { item in row(item) }
@@ -250,6 +257,9 @@ struct ImportServersSheet: View {
 			.frame(maxHeight: 280)
 			.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
 			.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+			ForEach(skipped, id: \.self) { t in
+				Label(t, systemImage: "minus.circle").font(.callout).foregroundStyle(.secondary)
+			}
 		}
 	}
 
@@ -282,7 +292,15 @@ struct ImportServersSheet: View {
 						}
 					}
 				}
-				if item.mysqlPassword == nil { Text("MySQL 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
+				// 다른 앱 파일: 키 파일은 경로만 있다 → 이 맥에 있는지
+				if item.sshKey == nil, s.ssh.enabled, s.ssh.auth == .key, !s.ssh.keyPath.isEmpty {
+					if FileManager.default.fileExists(atPath: (s.ssh.keyPath as NSString).expandingTildeInPath) {
+						Label("SSH 키: \(s.ssh.keyPath)", systemImage: "key")
+					} else {
+						Label("SSH 키 \(s.ssh.keyPath) 가 이 맥에 없습니다", systemImage: "key").foregroundStyle(.orange)
+					}
+				}
+				if item.mysqlPassword == nil && source == nil { Text("MySQL 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
 			}
 			.font(.callout)
 			.padding(.leading, 22)
@@ -295,10 +313,32 @@ struct ImportServersSheet: View {
 		panel.allowsMultipleSelection = false
 		guard panel.runModal() == .OK, let u = panel.url else { return }
 		url = u
+		password = ""
+		fileChanged()
+	}
+
+	/// 파일이 정해졌을 때: .isql 이면 암호 칸에 포커스, 다른 앱 파일이면 바로 읽어 목록
+	private func fileChanged() {
 		payload = nil
+		source = nil
+		skipped = []
 		failure = nil
 		done = nil
-		passwordFocused = true
+		guard let url else { return }
+		if isISQL { passwordFocused = true; return }
+		do {
+			let r = try OtherAppImport.read(url, existing: store.servers)
+			var p = ServerTransfer.Payload()
+			p.servers = r.items
+			payload = p
+			source = r.app
+			skipped = r.skipped
+			// 새 접속만 체크 (이미 있는 서버는 덮어쓸지 사용자가 고른다)
+			let have = Set(store.servers.map(\.id))
+			picked = Set(r.items.map(\.id).filter { !have.contains($0) })
+		} catch {
+			failure = error.localizedDescription
+		}
 	}
 
 	private func open() {
