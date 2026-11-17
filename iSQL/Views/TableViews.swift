@@ -380,7 +380,7 @@ struct SidebarTableMenu: View {
 	let table: TableInfo
 
 	var body: some View {
-		let items = TableMenu.items(isView: table.isView,
+		let items = TableMenu.items(isView: table.isView, name: table.name,
 		                            open: { session.openTab(table) },
 		                            export: { session.requestExport(.table(table.schema, TableStat(table))) },
 		                            importExcel: { session.requestExcelImport(schema: table.schema, table: table.name) },

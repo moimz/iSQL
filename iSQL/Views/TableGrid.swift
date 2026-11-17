@@ -47,7 +47,7 @@ enum GridMenuItem {
 /// 테이블 하나의 오른쪽 클릭 메뉴 (사이드바 테이블·DB 개요에서 하나 골랐을 때 같은 순서).
 /// 자주 쓰는 것 위, 되돌릴 수 없는 것 맨 아래
 enum TableMenu {
-	static func items(isView: Bool, open: @escaping () -> Void, export: @escaping () -> Void,
+	static func items(isView: Bool, name: String? = nil, open: @escaping () -> Void, export: @escaping () -> Void,
 	                  importExcel: (() -> Void)? = nil,
 	                  duplicate: (() -> Void)? = nil, rename: (() -> Void)? = nil,
 	                  truncate: (() -> Void)? = nil, drop: (() -> Void)? = nil) -> [GridMenuItem] {
@@ -55,6 +55,10 @@ enum TableMenu {
 		func item(_ title: String, _ run: (() -> Void)?) -> GridMenuItem { run.map { .action(title, $0) } ?? .disabled(title) }
 		return [
 			.action("열기", open),
+		] + (name.map { n in [GridMenuItem.action("테이블 이름 복사") {
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(n, forType: .string)
+		}] } ?? []) + [
 			.separator,
 			.action("\(kind) 내보내기…", export),
 		] + (isView ? [] : [item("엑셀에서 가져오기…", importExcel)]) + [
@@ -113,6 +117,16 @@ protocol GridSource: AnyObject {
 	func openEditor(_ row: Int, _ col: Int)
 	/// Tab 으로 들르는 칸 (기본: 글자로 고치는 칸만)
 	func tabStop(_ row: Int, _ col: Int) -> Bool
+	/// "INSERT 문으로 복사" 에 쓰는 테이블 (nil 이면 그 메뉴 없음): SQL 이름, 컬럼 이름(공급자 컬럼 순서), AUTO_INCREMENT 컬럼
+	var insertTarget: InsertTarget? { get }
+	/// SQL 리터럴로 바꿀 칸 값 (바이너리는 X'..'). nil 이면 보이는 글자로
+	func sqlValue(_ row: Int, _ col: Int) -> Value?
+}
+
+struct InsertTarget {
+	var table: String
+	var columns: [String]
+	var autoIncrement: Set<Int> = []
 }
 
 extension GridSource {
@@ -135,6 +149,8 @@ extension GridSource {
 	func opensEditor(_ row: Int, _ col: Int) -> Bool { false }
 	func openEditor(_ row: Int, _ col: Int) {}
 	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
+	var insertTarget: InsertTarget? { nil }
+	func sqlValue(_ row: Int, _ col: Int) -> Value? { nil }
 }
 
 /// 컬럼을 끌어 순서를 바꾼 걸 알아 두고 되돌릴 수 있는 공급자 (데이터 탭)
@@ -1146,10 +1162,30 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if !table.selectedRowIndexes.contains(row) { table.selectRowIndexes([row], byExtendingSelection: false) }
 			let col = table.clickedColumn >= 0 ? colIndex(table.tableColumns[table.clickedColumn]) : nil
 			var items: [GridMenuItem] = []
+			let sel = table.selectedRowIndexes
 			if let col {
 				items.append(.action("값 복사") { self.writeClipboard(rows: [[self.source.cell(row, col).text]], columns: [col]) })
 			}
-			items.append(.action("행 복사 (\(table.selectedRowIndexes.count)개)") { self.copySelection() })
+			items.append(.action("행 복사 (\(sel.count)개)") { self.copySelection() })
+			items.append(.action("컬럼 이름 포함 복사") { self.copySelection(withNames: true) })
+			if let t = source.insertTarget {
+				items.append(.action("INSERT 문으로 복사") { self.copyInsert(t, skipAuto: false) })
+				if !t.autoIncrement.isEmpty {
+					items.append(.action("INSERT 문으로 복사 (AUTO_INCREMENT 빼고)") { self.copyInsert(t, skipAuto: true) })
+				}
+			}
+			if let col {
+				let name = columns[col].key
+				items.append(.separator)
+				items.append(.action("‘\(name)’ 값 복사") { self.writeClipboard(rows: sel.map { [self.source.cell($0, col).text] }, columns: [col]) })
+				items.append(.action("‘\(name)’ 값을 SQL 로 복사 (IN 목록)") {
+					// IN 목록: NULL 은 빼고(IN 으로는 안 맞는다) 같은 값은 한 번만
+					var seen = Set<String>()
+					let list = sel.map { self.sqlLiteral($0, col) }.filter { $0 != "NULL" && seen.insert($0).inserted }.joined(separator: ", ")
+					NSPasteboard.general.clearContents()
+					NSPasteboard.general.setString(list, forType: .string)
+				})
+			}
 			let extra = source.cellMenu(row: row, col: col, selection: table.selectedRowIndexes)
 			if !extra.isEmpty {
 				items = source.cellMenuFirst ? extra + [.separator] + items : items + [.separator] + extra
@@ -1185,9 +1221,29 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		var canEdit: Bool { source.canEdit }
 
 		/// 선택한 행을 탭으로 나눠 복사
-		func copySelection() {
+		/// 고른 행 복사. withNames 면 첫 줄에 컬럼 이름 (엑셀 표에도)
+		func copySelection(withNames: Bool = false) {
 			let cols = Array(columns.indices)
-			writeClipboard(rows: table.selectedRowIndexes.map { r in cols.map { source.cell(r, $0).text } }, columns: cols)
+			let rows = table.selectedRowIndexes.map { r in cols.map { source.cell(r, $0).text } }
+			writeClipboard(rows: rows, columns: cols, header: withNames ? cols.map { columns[$0].key } : nil)
+		}
+
+		/// SQL 리터럴: 숫자 컬럼의 숫자는 따옴표 없이, 나머지는 '…' (바이너리는 X'..')
+		func sqlLiteral(_ row: Int, _ col: Int) -> String {
+			let v = source.sqlValue(row, col) ?? (source.cell(row, col).text.map(Value.text) ?? .null)
+			if case .text(let t) = v, columns[col].numeric, Double(t) != nil, !t.isEmpty { return t }
+			return literal(v)
+		}
+
+		/// 고른 행을 INSERT 문 하나로 (VALUES 를 줄마다). skipAuto 면 AUTO_INCREMENT 컬럼은 빼서 새 번호로 들어가게
+		func copyInsert(_ t: InsertTarget, skipAuto: Bool) {
+			let cols = t.columns.indices.filter { !(skipAuto && t.autoIncrement.contains($0)) && $0 < columns.count }
+			guard !cols.isEmpty, !table.selectedRowIndexes.isEmpty else { return }
+			let values = table.selectedRowIndexes.map { r in "(" + cols.map { sqlLiteral(r, $0) }.joined(separator: ", ") + ")" }
+			let sql = "INSERT INTO \(t.table) (" + cols.map { quoteName(t.columns[$0]) }.joined(separator: ", ") + ") VALUES\n"
+				+ values.joined(separator: ",\n") + ";"
+			NSPasteboard.general.clearContents()
+			NSPasteboard.general.setString(sql, forType: .string)
 		}
 
 		/// ⌘C: 지금 칸이 있으면 그 컬럼 값만 (여러 행이면 줄마다 하나), 없으면 행 전체
@@ -1199,9 +1255,9 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// 클립보드에 두 가지로: 글자(탭·줄 구분, 메모장용 — 예전 그대로)와 HTML 표(엑셀·Numbers 는 이걸 먼저 쓴다).
 		/// 글자만 주면 칸 안 줄바꿈이 엑셀에서 행을 쪼갰다. HTML 표는 줄바꿈을 같은 칸 안 줄로,
 		/// 숫자 컬럼이 아니거나 15자리를 넘는 숫자는 글자 서식으로 (01234 → 1234, 큰 번호 → 1.8E+19 가 되지 않게; 엑셀로 확인)
-		private func writeClipboard(rows: [[String?]], columns cols: [Int]) {
+		private func writeClipboard(rows: [[String?]], columns cols: [Int], header: [String]? = nil) {
 			guard !rows.isEmpty else { return }
-			let plain = rows.map { $0.map { $0 ?? "NULL" }.joined(separator: "\t") }.joined(separator: "\n")
+			let plain = ((header.map { [$0.joined(separator: "\t")] } ?? []) + rows.map { $0.map { $0 ?? "NULL" }.joined(separator: "\t") }).joined(separator: "\n")
 			func esc(_ t: String) -> String {
 				t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
 					.replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
@@ -1209,6 +1265,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					.replacingOccurrences(of: "\n", with: "<br style=\"mso-data-placement:same-cell\">")
 			}
 			var html = "<html><head><meta charset=\"utf-8\"></head><body><table>"
+			if let header { html += "<tr>" + header.map { "<td style=\"mso-number-format:'\\@'\"><b>\(esc($0))</b></td>" }.joined() + "</tr>" }
 			for r in rows {
 				html += "<tr>"
 				for (i, v) in r.enumerated() {

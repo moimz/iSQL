@@ -496,6 +496,14 @@ extension TableData: GridSource {
 
 	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
 
+	var insertTarget: InsertTarget? {
+		guard !table.isView else { return nil }
+		return InsertTarget(table: quoteName(table.name), columns: columns.map(\.name),
+		                    autoIncrement: Set(columns.indices.filter { columns[$0].flags & 0x200 != 0 }))
+	}
+
+	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+
 	/// 바이너리(BLOB·BINARY) 칸은 고치지 않는다: 보이는 글자는 "(6 바이트)" 같은 표시라 고치면 그 글자로 덮어썼다
 	func isEditable(_ row: Int, _ col: Int) -> Bool { !(columns.indices.contains(col) && columns[col].isBinary) }
 

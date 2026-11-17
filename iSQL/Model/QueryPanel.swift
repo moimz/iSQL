@@ -360,6 +360,18 @@ final class QueryResultSource: GridSource {
 		return GridCell(text: v.string)
 	}
 
+	/// 결과 컬럼이 모두 한 테이블의 진짜 컬럼이면 INSERT 로 복사할 수 있다
+	var insertTarget: InsertTarget? {
+		let cols = result.columns
+		guard let t = cols.first?.orgTable, !t.isEmpty,
+		      cols.allSatisfy({ $0.orgTable == t && !$0.orgName.isEmpty }),
+		      Set(cols.map(\.orgName)).count == cols.count else { return nil }
+		return InsertTarget(table: quoteName(t), columns: cols.map(\.orgName),
+		                    autoIncrement: Set(cols.indices.filter { cols[$0].flags & 0x200 != 0 }))
+	}
+
+	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+
 	func isEditable(_ row: Int, _ col: Int) -> Bool {
 		guard canEdit, editableCols.contains(col) else { return false }
 		if let o = orig(row) { return !deleted.contains(o) }

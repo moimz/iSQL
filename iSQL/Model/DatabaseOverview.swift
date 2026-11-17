@@ -167,7 +167,7 @@ final class DatabaseOverview: GridSource {
 			]
 		}
 		guard let s = stat(at: row) else { return [] }
-		return TableMenu.items(isView: s.isView,
+		return TableMenu.items(isView: s.isView, name: s.name,
 		                       open: { [weak self] in self?.activateRow(row) },
 		                       export: { [weak self] in guard let self else { return }; self.session?.requestExport(.table(self.schema, s)) },
 		                       importExcel: { [weak self] in guard let self else { return }; let sess = self.session, schema = self.schema; MainActor.assumeIsolated { sess?.requestExcelImport(schema: schema, table: s.name) } },
