@@ -443,9 +443,12 @@ struct LongEditRequest: Identifiable {
 	let row: Int
 	let col: Int
 	let column: String
+	/// JSON 편집기로 연다 (JSON 컬럼이거나 "JSON 으로 편집…")
 	let isJSON: Bool
 	let text: String
 	let wasNull: Bool
+	/// 컬럼 타입이 JSON (서버가 다시 쓰므로 한 줄로 저장)
+	var jsonColumn = false
 }
 
 func quoteName(_ s: String) -> String { "`" + s.replacingOccurrences(of: "`", with: "``") + "`" }
@@ -569,11 +572,14 @@ extension TableData: GridSource {
 	/// TEXT·JSON 칸은 칸 안이 아니라 시트에서 여러 줄로 고친다
 	func opensEditor(_ row: Int, _ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isLongText }
 
-	func openEditor(_ row: Int, _ col: Int) {
+	func openEditor(_ row: Int, _ col: Int) { openEditor(row, col, asJSON: false) }
+
+	/// asJSON: varchar·text 라도 JSON 편집기로 (JSON 처럼 보이는 값의 "JSON 으로 편집…")
+	func openEditor(_ row: Int, _ col: Int, asJSON: Bool) {
 		guard canEdit, !isDeleted(row) else { NSSound.beep(); return }
 		let v = value(row, col)
-		longEdit = LongEditRequest(row: row, col: col, column: columnName(col), isJSON: columns[col].isJSON,
-		                           text: v.string ?? "", wasNull: v == .null)
+		longEdit = LongEditRequest(row: row, col: col, column: columnName(col), isJSON: columns[col].isJSON || asJSON,
+		                           text: v.string ?? "", wasNull: v == .null, jsonColumn: columns[col].isJSON)
 	}
 
 	var currentSort: (key: String, ascending: Bool)? { sort.map { ($0.column, $0.ascending) } }
@@ -606,6 +612,10 @@ extension TableData: GridSource {
 		guard canEdit else { return filterItems }
 		var items: [GridMenuItem] = []
 		if let col {
+			// JSON 컬럼이 아닌데 값이 JSON 처럼 보이면 (일반 편집은 그대로 글자 편집)
+			if !columns[col].isJSON, !columns[col].isBinary, let t = value(row, col).string, JSONFormat.looksLikeJSON(t) {
+				items.append(.action("JSON 으로 편집…") { self.openEditor(row, col, asJSON: true) })
+			}
 			items.append(.action("NULL 로 바꾸기") { self.set(row, col, .null) })
 			items.append(.action("빈 문자열로 바꾸기") { self.set(row, col, .text("")) })
 			if state(row, col) == .edited { items.append(.action("원래 값으로") { self.revert(row, col) }) }
