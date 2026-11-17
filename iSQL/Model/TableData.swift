@@ -14,6 +14,11 @@ final class TableData: ColumnOrderTracking {
 	private(set) var columns: [Column] = []
 	/// 서버에서 읽은 그대로의 행 (고친 값은 edits 에 따로 있다)
 	private(set) var rows: [[Value]] = []
+	/// 큰 BLOB 칸: 앞부분만 읽었다 → [행: [컬럼: 전체 바이트 수]]. 내용이 필요할 때(복사·훑어보기·저장) 기본 키로 다시 읽는다
+	@ObservationIgnored private(set) var partial: [Int: [Int: Int64]] = [:]
+	/// 이보다 큰 BLOB 은 앞부분만 (사용자 2026-11-17: 고정)
+	static let blobLimit = 65_536
+	static let blobPeek = 64
 	private(set) var loading = false
 	private(set) var error: String?
 	private(set) var saveError: String?
@@ -283,9 +288,29 @@ final class TableData: ColumnOrderTracking {
 		let filter = whereClause.trimmingCharacters(in: .whitespacesAndNewlines)
 		if filter != appliedWhere { knownTotal = nil }
 		appliedWhere = filter
-		let sql = "SELECT * FROM \(table.quoted)\(filter.isEmpty ? "" : " WHERE " + filter)\(order) LIMIT \(pageSize + 1) OFFSET \(newOffset)"
+		// BLOB 컬럼은 크면 앞부분만 + 전체 크기 (기본 키가 있어야 나중에 한 칸만 다시 읽을 수 있다)
+		let infos = session.columns[table.id] ?? []
+		let blobs = pk.isEmpty ? [] : infos.filter { $0.type.lowercased().hasSuffix("blob") }.map(\.name)
+		let select = blobs.isEmpty ? "*" : (infos.map { c in
+			let q = quoteName(c.name)
+			return blobs.contains(c.name) ? "IF(OCTET_LENGTH(\(q)) > \(Self.blobLimit), LEFT(\(q), \(Self.blobPeek)), \(q)) AS \(q)" : q
+		} + blobs.map { "OCTET_LENGTH(\(quoteName($0)))" }).joined(separator: ", ")
+		let sql = "SELECT \(select) FROM \(table.quoted)\(filter.isEmpty ? "" : " WHERE " + filter)\(order) LIMIT \(pageSize + 1) OFFSET \(newOffset)"
 		do {
-			let r = try await session.query(sql).last ?? QueryResult()
+			var r = try await session.query(sql).last ?? QueryResult()
+			// 뒤에 붙인 길이 컬럼을 떼어 큰 칸을 적어 둔다
+			var big: [Int: [Int: Int64]] = [:]
+			if !blobs.isEmpty, r.columns.count == infos.count + blobs.count {
+				let blobCols = blobs.compactMap { b in infos.firstIndex { $0.name == b } }
+				for (ri, row) in r.rows.enumerated() {
+					for (k, c) in blobCols.enumerated() {
+						if let n = Int64(row[infos.count + k].string ?? ""), n > Self.blobLimit { big[ri, default: [:]][c] = n }
+					}
+				}
+				r.columns = Array(r.columns.prefix(infos.count))
+				r.rows = r.rows.map { Array($0.prefix(infos.count)) }
+			}
+			partial = big
 			columns = r.columns
 			hasMore = r.rows.count > pageSize
 			rows = Array(r.rows.prefix(pageSize))
@@ -425,6 +450,26 @@ final class TableData: ColumnOrderTracking {
 
 	// MARK: - SQL 만들기
 
+	/// 앞부분만 읽은 큰 BLOB 칸이 이 행들에 있는지
+	func hasPartial(rows sel: IndexSet) -> Bool { sel.contains { partial[$0] != nil } }
+
+	/// 이 행들의 큰 BLOB 칸 내용을 기본 키로 읽어 채운다
+	@MainActor
+	func loadFull(rows sel: IndexSet) async {
+		let pk = keyIndices
+		guard !pk.isEmpty else { return }
+		for r in sel.sorted() {
+			guard let cols = partial[r], r < rows.count else { continue }
+			let names = cols.keys.sorted()
+			let whereSQL = pk.map { "\(quoteName(columnName($0))) = \(literal(rows[r][$0]))" }.joined(separator: " AND ")
+			let sql = "SELECT \(names.map { quoteName(columnName($0)) }.joined(separator: ", ")) FROM \(table.quoted) WHERE \(whereSQL) LIMIT 1"
+			guard let got = try? await session.query(sql).last?.rows.first, got.count == names.count else { continue }
+			for (k, c) in names.enumerated() { rows[r][c] = got[k] }
+			partial[r] = nil
+		}
+		version += 1
+	}
+
 	func columnName(_ i: Int) -> String {
 		columns[i].orgName.isEmpty ? columns[i].name : columns[i].orgName
 	}
@@ -540,6 +585,10 @@ extension TableData: GridSource {
 		}
 		var tip: String?
 		if st == .edited, let o = original(row, col) { tip = "원래 값: " + (o.string ?? "NULL") }
+		// 앞부분만 읽은 큰 BLOB: 형식은 앞부분으로, 크기는 전체로
+		if st == .clean, let n = partial[row]?[col], case .bytes(let d) = v {
+			return GridCell(text: BinaryInfo.describe(d, total: n), state: st, tooltip: "크기가 커서 앞부분만 읽었습니다. 복사·훑어보기·저장할 때 전체를 읽습니다")
+		}
 		return GridCell(text: v.display, state: st, tooltip: tip)
 	}
 
@@ -552,6 +601,8 @@ extension TableData: GridSource {
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+	func hasPartialRows(_ rows: IndexSet) -> Bool { hasPartial(rows: rows) }
+	func loadFullRows(_ rows: IndexSet) async { await loadFull(rows: rows) }
 	func isBinaryColumn(_ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isBinary }
 	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool {
 		guard canEdit, isBinaryColumn(col), !isDeleted(row) else { return false }

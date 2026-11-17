@@ -132,6 +132,9 @@ protocol GridSource: AnyObject {
 	func isBinaryColumn(_ col: Int) -> Bool
 	/// 파일 내용을 바이너리 칸에 넣기 (저장할 때 반영). 못 하면 false
 	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool
+	/// 내용을 앞부분만 읽은 칸(큰 BLOB)이 이 행들에 있는지 / 있으면 다 읽기 (복사·훑어보기·저장 전에)
+	func hasPartialRows(_ rows: IndexSet) -> Bool
+	func loadFullRows(_ rows: IndexSet) async
 }
 
 struct InsertTarget {
@@ -165,6 +168,8 @@ extension GridSource {
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { nil }
 	func isBinaryColumn(_ col: Int) -> Bool { false }
 	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool { false }
+	func hasPartialRows(_ rows: IndexSet) -> Bool { false }
+	func loadFullRows(_ rows: IndexSet) async {}
 }
 
 /// 컬럼을 끌어 순서를 바꾼 걸 알아 두고 되돌릴 수 있는 공급자 (데이터 탭)
@@ -1316,7 +1321,21 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		@objc private func runMenu(_ sender: NSMenuItem) {
-			(sender.representedObject as? () -> Void)?()
+			guard let run = sender.representedObject as? () -> Void else { return }
+			// 메뉴는 대부분 값을 꺼낸다 (복사·훑어보기·저장·행 복제): 앞부분만 읽은 큰 BLOB 이 있으면 먼저 다 읽는다
+			var rows = table.selectedRowIndexes
+			if table.clickedRow >= 0 { rows.insert(table.clickedRow) }
+			withFull(rows, run)
+		}
+
+		/// 고른 행에 앞부분만 읽은 칸이 있으면 다 읽고 나서 body
+		func withFull(_ rows: IndexSet, _ body: @escaping () -> Void) {
+			guard source.hasPartialRows(rows) else { body(); return }
+			let src = source
+			Task { @MainActor in
+				await src.loadFullRows(rows)
+				body()
+			}
 		}
 
 		// ⌫ 로 선택한 행 지우기
@@ -1398,8 +1417,10 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		/// ⌘C: 지금 칸이 있으면 그 컬럼 값만 (여러 행이면 줄마다 하나), 없으면 행 전체
 		func copyShortcut() {
-			guard let key = cursorKey, let col = Int(key), col < columns.count else { copySelection(); return }
-			writeClipboard(rows: table.selectedRowIndexes.map { [clipText($0, col)] }, columns: [col])
+			withFull(table.selectedRowIndexes) { [self] in
+				guard let key = cursorKey, let col = Int(key), col < columns.count else { copySelection(); return }
+				writeClipboard(rows: table.selectedRowIndexes.map { [clipText($0, col)] }, columns: [col])
+			}
 		}
 
 		/// 클립보드에 두 가지로: 글자(탭·줄 구분, 메모장용 — 예전 그대로)와 HTML 표(엑셀·Numbers 는 이걸 먼저 쓴다).

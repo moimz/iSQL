@@ -34,8 +34,15 @@ enum BinaryInfo {
 	}
 
 	/// 표 칸에 보일 글자: "PNG 이미지 · 24 KB", 모르면 "바이너리 · 6바이트"
-	static func describe(_ d: Data) -> String {
-		let size = d.count < 1024 ? "\(d.count)바이트" : ByteCountFormatter.string(fromByteCount: Int64(d.count), countStyle: .file)
+	static func describe(_ d: Data, total: Int64? = nil) -> String {
+		let n = total ?? Int64(d.count)
+		let size = n < 1024 ? "\(n)바이트" : ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
+		// 앞부분만 읽은 글자: 글자 중간에서 잘렸을 수 있어 끝 1~3바이트를 떼어 본다 → "앞부분… · 120KB"
+		if total != nil, kind(d) == nil {
+			for cut in 0...3 where d.count > cut {
+				if let t = text(d.dropLast(cut)) { return t.replacingOccurrences(of: "\n", with: " ") + "… · " + size }
+			}
+		}
 		return "\(kind(d)?.name ?? "바이너리") · \(size)"
 	}
 
