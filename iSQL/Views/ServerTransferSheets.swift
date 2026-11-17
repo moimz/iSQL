@@ -183,20 +183,21 @@ struct ImportServersSheet: View {
 				GridRow {
 					Text("파일").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
 					HStack {
-						Text(url?.path ?? "고르지 않음")
+						// 입력칸처럼 보이는 경로 상자 (고치지는 못하고 "선택…" 으로만 바꾼다)
+						Text(url?.path ?? "파일을 고르세요")
 							.foregroundStyle(url == nil ? .tertiary : .primary)
 							.lineLimit(1).truncationMode(.middle)
-							.frame(maxWidth: .infinity, alignment: .leading)
+							.padding(.horizontal, 8)
+							.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+							.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+							.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
 						Button("선택…", action: choose)
 					}
 				}
 				GridRow {
 					Text("암호").foregroundStyle(.secondary)
-					HStack {
-						PasswordField(placeholder: "내보낼 때 넣은 암호", text: $password, focus: $passwordFocused, onSubmit: open)
-							.disabled(!isISQL || payload != nil)
-						Button("열기", action: open).disabled(!isISQL || password.isEmpty || payload != nil)
-					}
+					PasswordField(placeholder: "내보낼 때 넣은 암호", text: $password, focus: $passwordFocused, onSubmit: open)
+						.disabled(!isISQL || payload != nil)
 				}
 			}
 			if url != nil && !isISQL {
@@ -213,11 +214,19 @@ struct ImportServersSheet: View {
 			HStack {
 				Spacer()
 				Button(done != nil ? "닫기" : "취소", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+				// 처음엔 "확인"(암호로 파일 열기), 열리면 목록이 보이고 "가져오기"
 				if done == nil {
-					Button("가져오기", action: apply)
-						.buttonStyle(.borderedProminent)
-						.keyboardShortcut(.defaultAction)
-						.disabled(payload == nil || picked.isEmpty)
+					if payload == nil {
+						Button("확인", action: open)
+							.buttonStyle(.borderedProminent)
+							.keyboardShortcut(.defaultAction)
+							.disabled(!isISQL || password.isEmpty)
+					} else {
+						Button("가져오기", action: apply)
+							.buttonStyle(.borderedProminent)
+							.keyboardShortcut(.defaultAction)
+							.disabled(picked.isEmpty)
+					}
 				}
 			}
 			.controlSize(.large)
@@ -259,12 +268,14 @@ struct ImportServersSheet: View {
 			Group {
 				Text(s.subtitle).foregroundStyle(.secondary)
 				if let k = item.sshKey {
-					if let have = ServerTransfer.existingKey(k) {
+					let have = ServerTransfer.existingKey(k)
+					if let have {
 						Label("SSH 키: 이 맥에 있는 같은 키를 씀 (\(have))", systemImage: "key")
 					} else {
 						Label("SSH 키: ~/.ssh 에 \(k.fileName) 로 저장", systemImage: "key")
 					}
-					if k.encrypted {
+					// 이 맥에 이미 있는 키면 키 암호도 이미 쓰고 있을 테니 묻지 않는다 (사용자)
+					if k.encrypted && have == nil {
 						HStack {
 							Text("키 암호").foregroundStyle(.secondary)
 							PasswordField(placeholder: "선택 — 넣으면 이 맥 키체인에 저장", text: Binding(get: { passphrases[s.id] ?? "" }, set: { passphrases[s.id] = $0 }))
@@ -291,7 +302,8 @@ struct ImportServersSheet: View {
 	}
 
 	private func open() {
-		guard let url, isISQL, !password.isEmpty else { return }
+		// 엔터(암호 칸)와 확인 단추가 같이 불려도 한 번만
+		guard let url, isISQL, !password.isEmpty, payload == nil else { return }
 		failure = nil
 		do {
 			let data = try Data(contentsOf: url)
