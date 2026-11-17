@@ -135,10 +135,24 @@ final class Session {
 	@ObservationIgnored private var sidePassword: String?
 
 	/// 같은 서버에 연결을 하나 더 연다 (MCP 용: USE 를 해도 이 창의 쿼리 패널 기본 DB 가 바뀌지 않게). 터널은 같이 쓴다
-	func sideConnection() async throws -> MySQLConnection {
+	func sideConnection(purpose: String = "") async throws -> MySQLConnection {
 		guard let server, let e = sideEndpoint else { throw MySQLError.closed }
-		return try await MySQLConnection.connect(.init(host: e.host, port: e.port, user: server.user,
-		                                               password: sidePassword ?? "", database: server.database))
+		let c = try await MySQLConnection.connect(.init(host: e.host, port: e.port, user: server.user,
+		                                                password: sidePassword ?? "", database: server.database))
+		attachLog(c, purpose: purpose)
+		return c
+	}
+
+	/// 콘솔에 이 연결의 쿼리를 남긴다 (서버 이름, 용도)
+	func attachLog(_ c: MySQLConnection, purpose: String = "") {
+		let name = (server?.displayName ?? "") + (purpose.isEmpty ? "" : " · " + purpose)
+		c.onQuery = { [weak self] sql, seconds, error in
+			DispatchQueue.main.async {
+				MainActor.assumeIsolated {
+					QueryLog.shared.add(server: name, database: purpose.isEmpty ? (self?.currentDB ?? "") : "", sql: sql, seconds: seconds, error: error)
+				}
+			}
+		}
 	}
 
 	static let systemSchemas: Set<String> = ["information_schema", "mysql", "performance_schema", "sys"]
@@ -158,6 +172,7 @@ final class Session {
 			}
 			tunnel = t
 			conn = c
+			attachLog(c)
 			sideEndpoint = t.map { ("127.0.0.1", Int($0.localPort)) } ?? (server.host, server.port)
 			sidePassword = mysqlPassword
 			serverVersion = c.serverVersion

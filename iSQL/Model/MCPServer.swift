@@ -479,7 +479,7 @@ final class MCPServer {
 		conns[t.server.id]?.tunnel?.close()
 		conns[t.server.id] = nil
 		if let s = t.session {
-			let c = try await s.sideConnection()
+			let c = try await s.sideConnection(purpose: "MCP")
 			conns[t.server.id] = (c, nil)
 			return c
 		}

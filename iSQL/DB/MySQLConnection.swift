@@ -25,6 +25,9 @@ final class MySQLConnection: @unchecked Sendable {
 
 	var isOpen: Bool { fd >= 0 }
 
+	/// 쿼리를 보낸 뒤 알린다 (콘솔): SQL, 걸린 시간(초), 오류. 연결 큐에서 불린다
+	var onQuery: (@Sendable (String, Double, String?) -> Void)?
+
 	// MARK: - 바깥에서 쓰는 비동기 API
 
 	static func connect(_ o: Options) async throws -> MySQLConnection {
@@ -195,6 +198,25 @@ final class MySQLConnection: @unchecked Sendable {
 	}
 
 	private func querySync(bytes: [UInt8]) throws -> [QueryResult] {
+		guard let onQuery else { return try querySyncRaw(bytes: bytes) }
+		let start = CFAbsoluteTimeGetCurrent()
+		func text() -> String {
+			// 콘솔에는 앞부분만 (SQL 파일 가져오기 묶음처럼 큰 것도 있다)
+			let head = bytes.count > 4000 ? Array(bytes.prefix(4000)) : bytes
+			let s = String(decoding: head, as: UTF8.self)
+			return bytes.count > 4000 ? s + " … (\(bytes.count.formatted())바이트)" : s
+		}
+		do {
+			let r = try querySyncRaw(bytes: bytes)
+			onQuery(text(), CFAbsoluteTimeGetCurrent() - start, nil)
+			return r
+		} catch {
+			onQuery(text(), CFAbsoluteTimeGetCurrent() - start, error.localizedDescription)
+			throw error
+		}
+	}
+
+	private func querySyncRaw(bytes: [UInt8]) throws -> [QueryResult] {
 		guard fd >= 0 else { throw MySQLError.closed }
 		seq = 0
 		try writePacket([0x03] + bytes)

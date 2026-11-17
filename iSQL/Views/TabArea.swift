@@ -42,12 +42,13 @@ struct TabArea: View {
 		session.queryPanel?.resultsVisible == true && (!model.hasSplit || model.splitFocus == .left)
 	}
 
-	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때: 쿼리 버튼 자리에 테이블 정보 버튼
+	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때: [쿼리 | 콘솔] 옆에 테이블 정보 버튼
 	private var structureShown: Bool {
 		active?.mode == .structure && !resultsCoverFocused
 	}
 
 	var body: some View {
+		VStack(spacing: 0) {
 		GeometryReader { geo in
 			HStack(spacing: 0) {
 				leftPane
@@ -69,6 +70,15 @@ struct TabArea: View {
 			}
 			.clipped()
 			.animation(.easeOut(duration: 0.2), value: focusedSession.showTableInfo)
+		}
+			// 콘솔: 하단바 아래 (쿼리 패널이 탭바 위에 열리는 것과 짝)
+			if model.showConsole {
+				ConsolePanel(log: QueryLog.shared) { sql in
+					guard let q = session.queryPanel else { return }
+					q.text = q.text.isEmpty ? sql : q.text + "\n" + sql
+					q.open = true
+				}
+			}
 		}
 		// 숨은 탭의 표가 키 입력(⌫ 등)을 받지 않게 탭을 바꾸면 입력 초점을 놓는다
 		.onChange(of: session.activeTab) {
@@ -119,8 +129,26 @@ struct TabArea: View {
 				}
 				ToolbarSpacer(.fixed)
 			}
+			// [쿼리 | 콘솔]: 어느 보기에서나 (쿼리 ⌘J, 콘솔 ⇧⌘L)
+			ToolbarItemGroup {
+				Button {
+					session.queryPanel?.open.toggle()
+				} label: {
+					Image(systemName: "terminal")
+						.foregroundStyle(session.queryPanel?.open == true ? Color.accentColor : Color.primary)
+				}
+				.help("쿼리 (⌘J)")
+				Button {
+					model.showConsole.toggle()
+				} label: {
+					Image(systemName: "list.bullet.rectangle")
+						.foregroundStyle(model.showConsole ? Color.accentColor : Color.primary)
+				}
+				.help("콘솔: 앱이 서버에 보낸 쿼리 (⇧⌘L)")
+			}
 			if structureShown {
-				// 구조 보기: 쿼리 버튼 대신 테이블 정보 패널 (⌥⌘I). 쿼리 패널은 ⌘J 로 여전히 열린다
+				// 구조 보기: 테이블 정보 패널 (⌥⌘I) 은 따로
+				ToolbarSpacer(.fixed)
 				ToolbarItem {
 					Button {
 						focusedSession.showTableInfo.toggle()
@@ -129,17 +157,6 @@ struct TabArea: View {
 							.foregroundStyle(focusedSession.showTableInfo ? Color.accentColor : Color.primary)
 					}
 					.help("테이블 정보 (⌥⌘I)")
-				}
-			} else {
-				// 쿼리: 탭이 없어도 접속만 돼 있으면 늘 보인다 (⌘J)
-				ToolbarItem {
-					Button {
-						session.queryPanel?.open.toggle()
-					} label: {
-						Image(systemName: "terminal")
-							.foregroundStyle(session.queryPanel?.open == true ? Color.accentColor : Color.primary)
-					}
-					.help("쿼리 (⌘J)")
 				}
 			}
 		}
@@ -168,6 +185,8 @@ struct TabArea: View {
 				}.keyboardShortcut("f", modifiers: [.command, .option])
 				// ⌘J 쿼리 패널 열기/닫기
 				Button("") { session.queryPanel?.open.toggle() }.keyboardShortcut("j")
+				// ⇧⌘L 콘솔
+				Button("") { model.showConsole.toggle() }.keyboardShortcut("l", modifiers: [.command, .shift])
 				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)
 				Button("") { if let d = active { d.mode = .structure; focusedSession.showTableInfo.toggle() } }.keyboardShortcut("i", modifiers: [.command, .option])
 			}

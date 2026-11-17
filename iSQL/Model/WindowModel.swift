@@ -13,6 +13,8 @@ final class WindowModel {
 	var parkedTabs: [ParkedTab] = []
 	var parkedActive: ParkedTab?
 	var splitFocus: SplitSide = .left
+	/// 콘솔 패널 (하단바 아래, ⇧⌘L)
+	var showConsole = false
 	/// 양쪽 표 스크롤 맞추기 (오른쪽 탭바 끝 버튼)
 	var scrollSync = false {
 		didSet { applyScrollLink() }

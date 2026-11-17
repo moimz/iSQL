@@ -327,7 +327,7 @@ final class ExcelImportJob {
 		var conn: MySQLConnection?
 		var created = false
 		do {
-			let c = try await session.sideConnection()
+			let c = try await session.sideConnection(purpose: "엑셀 가져오기")
 			conn = c
 			if target == .newTable {
 				_ = try await c.query(createSQL)

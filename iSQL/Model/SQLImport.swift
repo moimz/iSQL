@@ -212,7 +212,7 @@ final class SQLImportJob {
 		touched = schema
 		do {
 			reader = try SQLDumpReader(url: url)
-			let c = try await session.sideConnection()
+			let c = try await session.sideConnection(purpose: "SQL 가져오기")
 			conn = c
 			if disableForeignKeys { _ = try await c.query("SET FOREIGN_KEY_CHECKS = 0") }
 			if let schema { _ = try await c.query("USE " + TableInspector.ident(schema)) }
