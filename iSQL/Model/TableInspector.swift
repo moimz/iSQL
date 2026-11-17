@@ -69,6 +69,8 @@ final class TableInspector {
 	private(set) var updated = ""
 
 	private(set) var indexes: [IndexInfo] = []
+	/// SHOW CREATE TABLE (뷰면 CREATE VIEW)
+	private(set) var createSQL = ""
 
 	/// 실행 중인 ALTER
 	private(set) var applying = false
@@ -108,6 +110,9 @@ final class TableInspector {
 				autoIncrement = n(8); rowFormat = s(9); created = s(10); updated = s(11)
 			}
 			resetEdits()
+			createSQL = (try? await session.query("SHOW CREATE TABLE \(table.quoted)").last?.rows.first?[safe: 1]?.string) ?? ""
+			// information_schema 의 AUTO_INCREMENT 는 MySQL 8 에서 하루까지 묵을 수 있다 → CREATE 문의 값을 쓴다
+			if let m = createSQL.firstMatch(of: /\)[^)]*\bAUTO_INCREMENT=(\d+)/) { autoIncrement = Int64(m.1) }
 			try await loadIndexes()
 		} catch {
 			self.error = error.localizedDescription
@@ -140,8 +145,8 @@ final class TableInspector {
 			                      cardinality: iCard.flatMap { row[$0].string }.flatMap { Int64($0) }))
 		}
 		// FULLTEXT 파서: SHOW CREATE TABLE 의 "FULLTEXT KEY `이름` (…) /*!50100 WITH PARSER `ngram` */"
-		if list.contains(where: { $0.kind == .fulltext }),
-		   let ddl = try? await session.query("SHOW CREATE TABLE \(table.quoted)").last?.rows.first?[safe: 1]?.string {
+		if list.contains(where: { $0.kind == .fulltext }), !createSQL.isEmpty {
+			let ddl = createSQL
 			for line in ddl.split(separator: "\n") where line.contains("WITH PARSER") {
 				guard let name = Self.firstQuoted(line.drop { $0 != "`" }),
 				      let r = line.range(of: "WITH PARSER "),
@@ -192,6 +197,8 @@ final class TableInspector {
 		if editComment != comment { parts.append("COMMENT=\(literal(.text(editComment)))") }
 		return parts.isEmpty ? nil : "ALTER TABLE \(table.quoted) " + parts.joined(separator: ", ")
 	}
+
+	func autoIncrementSQL(_ n: Int64) -> String { "ALTER TABLE \(table.quoted) AUTO_INCREMENT = \(n)" }
 
 	func dropIndexSQL(_ index: IndexInfo) -> String {
 		index.kind == .primary ? "ALTER TABLE \(table.quoted) DROP PRIMARY KEY"

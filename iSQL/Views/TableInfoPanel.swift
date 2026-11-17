@@ -82,6 +82,9 @@ struct TableInfoPanel: View {
 	@State private var addingIndex = false
 	/// 고치는 인덱스 (두 번 누르기·오른쪽 클릭 "수정…")
 	@State private var editingIndex: IndexInfo?
+	/// AUTO_INCREMENT 바꾸기 창
+	@State private var editingAuto = false
+	@State private var autoText = ""
 
 	var body: some View {
 		ScrollView {
@@ -89,6 +92,7 @@ struct TableInfoPanel: View {
 				settings
 				stats
 				indexList
+				createStatement
 			}
 			.padding(16)
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -118,6 +122,16 @@ struct TableInfoPanel: View {
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize) { sql in
 				Task { failure = await inspector.run(sql) }
 			}
+		}
+		.alert("AUTO_INCREMENT 바꾸기", isPresented: $editingAuto) {
+			TextField("다음 번호", text: $autoText)
+			Button("바꾸기") {
+				guard let n = Int64(autoText.trimmingCharacters(in: .whitespaces)), n > 0 else { NSSound.beep(); return }
+				Task { failure = await inspector.run(inspector.autoIncrementSQL(n)) }
+			}
+			Button("취소", role: .cancel) {}
+		} message: {
+			Text("다음에 들어갈 행의 번호입니다. 지금 가장 큰 값보다 작게 넣으면 InnoDB 는 가장 큰 값 + 1 로 맞춥니다.")
 		}
 		.sheet(item: $editingIndex) { ix in
 			AddIndexSheet(table: inspector.table, columns: columns,
@@ -217,7 +231,22 @@ struct TableInfoPanel: View {
 				stat("전체", DatabaseOverview.size(inspector.dataLength + inspector.indexLength))
 				stat("여유 공간", DatabaseOverview.size(inspector.dataFree))
 				stat("평균 행 길이", inspector.avgRowLength > 0 ? ByteCountFormatter.string(fromByteCount: inspector.avgRowLength, countStyle: .memory) : nil)
-				stat("AUTO_INCREMENT", inspector.autoIncrement?.formatted())
+				GridRow {
+					label("AUTO_INCREMENT")
+					HStack(spacing: 6) {
+						Text(inspector.autoIncrement.map { String($0) } ?? "—")
+							.foregroundStyle(inspector.autoIncrement == nil ? .secondary : .primary).monospacedDigit()
+						Spacer(minLength: 0)
+						if inspector.autoIncrement != nil && !inspector.table.isView {
+							Button("바꾸기…") {
+								autoText = inspector.autoIncrement.map { String($0) } ?? ""
+								editingAuto = true
+							}
+							.buttonStyle(.borderless)
+							.disabled(inspector.applying)
+						}
+					}
+				}
 				stat("행 형식", inspector.rowFormat)
 				stat("만든 시각", inspector.created)
 				stat("고친 시각", inspector.updated)
@@ -318,6 +347,31 @@ struct TableInfoPanel: View {
 		// 잘려도 툴팁으로 전부 보인다
 		.help("\(ix.name): \(ix.columns.joined(separator: ", "))\n" + (ix.cardinality.map { "\(ix.method) · 카디널리티 \($0.formatted())" } ?? ix.method)
 		      + (ix.parser.map { " · WITH PARSER \($0)" } ?? ""))
+	}
+
+	// MARK: CREATE 문
+
+	private var createStatement: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			HStack {
+				header(inspector.table.isView ? "CREATE VIEW 문" : "CREATE 문")
+				Spacer()
+				Button("복사") {
+					NSPasteboard.general.clearContents()
+					NSPasteboard.general.setString(inspector.createSQL + ";", forType: .string)
+				}
+				.buttonStyle(.borderless)
+				.disabled(inspector.createSQL.isEmpty)
+			}
+			Text(inspector.createSQL.isEmpty ? AttributedString("—") : SQLHighlight.attributed(inspector.createSQL + ";"))
+				.font(.system(size: 11, design: .monospaced))
+				.textSelection(.enabled)
+				.fixedSize(horizontal: false, vertical: true)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding(8)
+				.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+				.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+		}
 	}
 
 	private func kindColor(_ k: IndexInfo.Kind) -> Color {
