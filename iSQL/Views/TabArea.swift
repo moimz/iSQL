@@ -42,7 +42,7 @@ struct TabArea: View {
 		session.queryPanel?.resultsVisible == true && (!model.hasSplit || model.splitFocus == .left)
 	}
 
-	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때: [쿼리 | 콘솔] 옆에 테이블 정보 버튼
+	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때 (테이블 정보 패널을 보일 수 있을 때)
 	private var structureShown: Bool {
 		active?.mode == .structure && !resultsCoverFocused
 	}
@@ -97,19 +97,20 @@ struct TabArea: View {
 			ToolbarSpacer(.flexible)
 			// 쿼리 결과가 탭을 덮고 있으면 탭용 버튼은 숨긴다
 			if let d = active, !resultsCoverFocused {
-				if d.mode == .data {
-					ToolbarItemGroup {
-						Button {
-							d.showFilter.toggle()
-						} label: {
-							Image(systemName: "magnifyingglass")
-								.foregroundStyle(d.showFilter || !d.whereClause.isEmpty ? Color.accentColor : Color.primary)
-						}
-						.help(d.whereClause.isEmpty ? "조건으로 찾기 (⌥⌘F)" : "조건으로 찾기 (⌥⌘F)\nWHERE \(d.whereClause)")
-						// 다시 읽기는 하단바 맨 오른쪽으로 옮겼다 (사용자)
+				// 데이터 보기: 검색 / 구조 보기: 테이블 정보 패널 (⌥⌘I). 한 버튼을 그대로 두고 아이콘·동작만 바꾼다:
+				// 다른 버튼으로 갈아 끼우면 다른 버튼이 움직이고(사용자), 새로 생긴 버튼이 빈 알약으로 그려지기도 했다
+				ToolbarItem {
+					let structure = d.mode == .structure
+					Button {
+						if structure { focusedSession.showTableInfo.toggle() } else { d.showFilter.toggle() }
+					} label: {
+						Image(systemName: structure ? "sidebar.right" : "magnifyingglass")
+							.foregroundStyle((structure ? focusedSession.showTableInfo : (d.showFilter || !d.whereClause.isEmpty)) ? Color.accentColor : Color.primary)
 					}
-					ToolbarSpacer(.fixed)
+					.help(structure ? "테이블 정보 (⌥⌘I)"
+					      : d.whereClause.isEmpty ? "조건으로 찾기 (⌥⌘F)" : "조건으로 찾기 (⌥⌘F)\nWHERE \(d.whereClause)")
 				}
+				ToolbarSpacer(.fixed)
 				ToolbarItem {
 					ModeSegment(selection: Binding(get: { d.mode == .data ? 0 : 1 }, set: { d.mode = $0 == 0 ? .data : .structure }))
 						.fixedSize()
@@ -145,19 +146,6 @@ struct TabArea: View {
 						.foregroundStyle(model.showConsole ? Color.accentColor : Color.primary)
 				}
 				.help("콘솔: 앱이 서버에 보낸 쿼리 (⇧⌘L)")
-			}
-			if structureShown {
-				// 구조 보기: 테이블 정보 패널 (⌥⌘I) 은 따로
-				ToolbarSpacer(.fixed)
-				ToolbarItem {
-					Button {
-						focusedSession.showTableInfo.toggle()
-					} label: {
-						Image(systemName: "sidebar.right")
-							.foregroundStyle(focusedSession.showTableInfo ? Color.accentColor : Color.primary)
-					}
-					.help("테이블 정보 (⌥⌘I)")
-				}
 			}
 		}
 		.background {
