@@ -352,12 +352,12 @@ final class QueryResultSource: GridSource {
 
 	func cell(_ row: Int, _ col: Int) -> GridCell {
 		let v = value(row, col)
-		guard let o = orig(row) else { return GridCell(text: v.string, state: .inserted) }
-		if deleted.contains(o) { return GridCell(text: v.string, state: .deleted) }
+		guard let o = orig(row) else { return GridCell(text: v.display, state: .inserted) }
+		if deleted.contains(o) { return GridCell(text: v.display, state: .deleted) }
 		if edits[o]?[col] != nil {
-			return GridCell(text: v.string, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].string ?? "NULL"))
+			return GridCell(text: v.display, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].display ?? "NULL"))
 		}
-		return GridCell(text: v.string)
+		return GridCell(text: v.display)
 	}
 
 	/// 결과 컬럼이 모두 한 테이블의 진짜 컬럼이면 INSERT 로 복사할 수 있다
@@ -371,6 +371,7 @@ final class QueryResultSource: GridSource {
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+	func isBinaryColumn(_ col: Int) -> Bool { result.columns.indices.contains(col) && result.columns[col].isBinary }
 
 	func isEditable(_ row: Int, _ col: Int) -> Bool {
 		guard canEdit, editableCols.contains(col) else { return false }

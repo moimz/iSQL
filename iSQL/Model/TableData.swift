@@ -500,7 +500,7 @@ extension TableData: GridSource {
 		}
 		var tip: String?
 		if st == .edited, let o = original(row, col) { tip = "원래 값: " + (o.string ?? "NULL") }
-		return GridCell(text: v.string, state: st, tooltip: tip)
+		return GridCell(text: v.display, state: st, tooltip: tip)
 	}
 
 	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
@@ -512,6 +512,12 @@ extension TableData: GridSource {
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+	func isBinaryColumn(_ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isBinary }
+	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool {
+		guard canEdit, isBinaryColumn(col), !isDeleted(row) else { return false }
+		set(row, col, .bytes(data))
+		return true
+	}
 
 	/// 바이너리(BLOB·BINARY) 칸은 고치지 않는다: 보이는 글자는 "(6 바이트)" 같은 표시라 고치면 그 글자로 덮어썼다
 	func isEditable(_ row: Int, _ col: Int) -> Bool { !(columns.indices.contains(col) && columns[col].isBinary) }

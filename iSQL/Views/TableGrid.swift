@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLookUI
 
 // MARK: - 공급자 규칙
 
@@ -123,6 +124,10 @@ protocol GridSource: AnyObject {
 	var insertTarget: InsertTarget? { get }
 	/// SQL 리터럴로 바꿀 칸 값 (바이너리는 X'..'). nil 이면 보이는 글자로
 	func sqlValue(_ row: Int, _ col: Int) -> Value?
+	/// 바이너리(BLOB·BINARY) 컬럼인지 (훑어보기·파일로 저장·불러오기 메뉴)
+	func isBinaryColumn(_ col: Int) -> Bool
+	/// 파일 내용을 바이너리 칸에 넣기 (저장할 때 반영). 못 하면 false
+	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool
 }
 
 struct InsertTarget {
@@ -154,6 +159,8 @@ extension GridSource {
 	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
 	var insertTarget: InsertTarget? { nil }
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { nil }
+	func isBinaryColumn(_ col: Int) -> Bool { false }
+	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool { false }
 }
 
 /// 컬럼을 끌어 순서를 바꾼 걸 알아 두고 되돌릴 수 있는 공급자 (데이터 탭)
@@ -261,7 +268,7 @@ final class GridHostView: NSView {
 }
 
 /// 표 하나 (NSScrollView + NSTableView) 와 그 공급자를 잇는다
-final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate, NSMenuDelegate {
+final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource, NSTextFieldDelegate, NSMenuDelegate, QLPreviewPanelDataSource {
 		let scroll = NSScrollView()
 		let table = GridTableView()
 		private(set) var source: GridSource
@@ -971,7 +978,60 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 
 		// MARK: 고치기
 
+		// MARK: 바이너리 칸 (훑어보기·파일로 저장·불러오기)
+
+		/// 훑어보기에 보여 줄 임시 파일
+		var previewURL: URL?
+
+		private func bytes(_ row: Int, _ col: Int) -> Data? {
+			if case .bytes(let d) = source.sqlValue(row, col) { return d }
+			return nil
+		}
+
+		private func fileName(_ row: Int, _ col: Int, _ d: Data) -> String {
+			let base = columns[col].key.replacingOccurrences(of: "/", with: "_")
+			return "\(base)_\(row + 1).\(BinaryInfo.kind(d)?.ext ?? "bin")"
+		}
+
+		/// 훑어보기(Quick Look): 임시 파일로 써서 띄운다
+		func preview(_ row: Int, _ col: Int, in tv: NSTableView) {
+			guard let d = bytes(row, col) else { NSSound.beep(); return }
+			let dir = FileManager.default.temporaryDirectory.appendingPathComponent("iSQL-preview", isDirectory: true)
+			try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+			let url = dir.appendingPathComponent(fileName(row, col, d))
+			guard (try? d.write(to: url)) != nil else { NSSound.beep(); return }
+			previewURL = url
+			tv.window?.makeFirstResponder(tv)
+			guard let panel = QLPreviewPanel.shared() else { return }
+			if panel.isVisible { panel.reloadData() } else { panel.makeKeyAndOrderFront(nil) }
+		}
+
+		func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURL == nil ? 0 : 1 }
+		func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! { previewURL as NSURL? }
+
+		func saveBinary(_ row: Int, _ col: Int) {
+			guard let d = bytes(row, col) else { NSSound.beep(); return }
+			let p = NSSavePanel()
+			p.nameFieldStringValue = fileName(row, col, d)
+			guard p.runModal() == .OK, let url = p.url else { return }
+			try? d.write(to: url)
+		}
+
+		func loadBinary(_ row: Int, _ col: Int) {
+			let p = NSOpenPanel()
+			p.canChooseDirectories = false
+			p.allowsMultipleSelection = false
+			guard p.runModal() == .OK, let url = p.url, let d = try? Data(contentsOf: url) else { return }
+			if !source.setBinary(row, col, d) { NSSound.beep() }
+		}
+
 		@objc func doubleClicked(_ sender: NSTableView) {
+			// 바이너리 칸은 훑어보기
+			let ci = sender.clickedColumn, r = sender.clickedRow
+			if r >= 0, ci >= 0, let col = colIndex(sender.tableColumns[ci]), source.isBinaryColumn(col), bytes(r, col) != nil {
+				preview(r, col, in: sender)
+				return
+			}
 			if source.canEdit { beginEditing(row: sender.clickedRow, column: sender.clickedColumn, in: sender) }
 			else if sender.clickedRow >= 0 { source.activateRow(sender.clickedRow) }
 		}
@@ -1187,7 +1247,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			var items: [GridMenuItem] = []
 			let sel = table.selectedRowIndexes
 			if let col {
-				items.append(.action("값 복사") { self.writeClipboard(rows: [[self.source.cell(row, col).text]], columns: [col]) })
+				items.append(.action("값 복사") { self.writeClipboard(rows: [[self.clipText(row, col)]], columns: [col]) })
 			}
 			items.append(.action("행 복사 (\(sel.count)개)") { self.copySelection() })
 			items.append(.action("컬럼 이름 포함 복사") { self.copySelection(withNames: true) })
@@ -1198,10 +1258,17 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				}
 			}
 			items.append(.action("JSON 으로 복사") { self.copyJSON() })
+			if let col, source.isBinaryColumn(col) {
+				let has = bytes(row, col) != nil
+				items.append(.separator)
+				items.append(has ? .action("훑어보기") { self.preview(row, col, in: table) } : .disabled("훑어보기"))
+				items.append(has ? .action("파일로 저장…") { self.saveBinary(row, col) } : .disabled("파일로 저장…"))
+				items.append(source.canEdit ? .action("파일에서 불러오기…") { self.loadBinary(row, col) } : .disabled("파일에서 불러오기…"))
+			}
 			if let col {
 				let name = columns[col].key
 				items.append(.separator)
-				items.append(.action("‘\(name)’ 값 복사") { self.writeClipboard(rows: sel.map { [self.source.cell($0, col).text] }, columns: [col]) })
+				items.append(.action("‘\(name)’ 값 복사") { self.writeClipboard(rows: sel.map { [self.clipText($0, col)] }, columns: [col]) })
 				items.append(.action("‘\(name)’ 값을 SQL 로 복사 (IN 목록)") {
 					// IN 목록: NULL 은 빼고(IN 으로는 안 맞는다) 같은 값은 한 번만
 					var seen = Set<String>()
@@ -1251,10 +1318,16 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		var canEdit: Bool { source.canEdit }
 
 		/// 선택한 행을 탭으로 나눠 복사
+		/// 복사할 칸 글자: 바이너리는 "(6 바이트)" 같은 표시 대신 0x… 16진수
+		private func clipText(_ row: Int, _ col: Int) -> String? {
+			if let v = source.sqlValue(row, col) { return v.clipboard }
+			return source.cell(row, col).text
+		}
+
 		/// 고른 행 복사. withNames 면 첫 줄에 컬럼 이름 (엑셀 표에도)
 		func copySelection(withNames: Bool = false) {
 			let cols = Array(columns.indices)
-			let rows = table.selectedRowIndexes.map { r in cols.map { source.cell(r, $0).text } }
+			let rows = table.selectedRowIndexes.map { r in cols.map { clipText(r, $0) } }
 			writeClipboard(rows: rows, columns: cols, header: withNames ? cols.map { columns[$0].key } : nil)
 		}
 
@@ -1317,7 +1390,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// ⌘C: 지금 칸이 있으면 그 컬럼 값만 (여러 행이면 줄마다 하나), 없으면 행 전체
 		func copyShortcut() {
 			guard let key = cursorKey, let col = Int(key), col < columns.count else { copySelection(); return }
-			writeClipboard(rows: table.selectedRowIndexes.map { [source.cell($0, col).text] }, columns: [col])
+			writeClipboard(rows: table.selectedRowIndexes.map { [clipText($0, col)] }, columns: [col])
 		}
 
 		/// 클립보드에 두 가지로: 글자(탭·줄 구분, 메모장용 — 예전 그대로)와 HTML 표(엑셀·Numbers 는 이걸 먼저 쓴다).
@@ -1436,6 +1509,11 @@ final class GridTableView: NSTableView {
 	}
 
 	@objc func copy(_ sender: Any?) { coordinator?.copyShortcut() }
+
+	// 훑어보기(Quick Look) 창이 이 표에서 내용을 받는다
+	override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { coordinator?.previewURL != nil }
+	override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) { panel.dataSource = coordinator }
+	override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { panel.dataSource = nil }
 
 	/// 끄는 컬럼 묶음 (머리를 다시 그릴 때마다 테두리 자리를 맞춘다)
 	weak var ghost: NSView?
