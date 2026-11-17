@@ -533,7 +533,18 @@ extension TableData: GridSource {
 	}
 
 	func cellMenu(row: Int, col: Int?, selection: IndexSet) -> [GridMenuItem] {
-		guard canEdit else { return [] }
+		var filterItems: [GridMenuItem] = []
+		if let col, col < columns.count, !columns[col].isBinary {
+			let name = columns[col].orgName.isEmpty ? columns[col].name : columns[col].orgName
+			let text = value(row, col).string
+			var ops: [(String, FilterOp)] = text == nil
+				? [("IS NULL", .isNull), ("IS NOT NULL", .notNull)]
+				: [("=", .eq), ("≠", .ne), ("LIKE", .like), ("NOT LIKE", .notLike), ("포함", .contains), ("포함 안 함", .notContains),
+				   ("IS NULL", .isNull), ("IS NOT NULL", .notNull)]
+			if text == nil { ops = ops.filter { !$0.1.needsValue } }
+			filterItems = [.submenu("고른 값으로 거르기", ops.map { title, op in .action(title) { self.filterBy(name, op, text ?? "") } })]
+		}
+		guard canEdit else { return filterItems }
 		var items: [GridMenuItem] = []
 		if let col {
 			items.append(.action("NULL 로 바꾸기") { self.set(row, col, .null) })
@@ -543,7 +554,16 @@ extension TableData: GridSource {
 		}
 		let allDeleted = selection.allSatisfy { isDeleted($0) }
 		items.append(.action(allDeleted ? "삭제 취소" : "행 삭제 (\(selection.count)개)") { self.toggleDelete(selection) })
-		return items
+		return filterItems.isEmpty ? items : filterItems + [.separator] + items
+	}
+
+	/// 칸 값으로 거르기: 찾기 줄을 이 조건 하나로 채우고 바로 적용 (찾기 줄을 보여 준다)
+	func filterBy(_ column: String, _ op: FilterOp, _ value: String) {
+		filters = [FilterRow(column: column, op: op, value: op.needsValue ? value : "")]
+		matchAll = true
+		whereClause = generatedWhere()
+		showFilter = true
+		Task { @MainActor in await applyWhere() }
 	}
 
 	func deleteRows(_ rows: IndexSet) -> Bool {

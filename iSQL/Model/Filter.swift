@@ -28,6 +28,7 @@ struct FilterRow: Identifiable, Equatable {
 		case .begins: return "\(c) LIKE \(lit(likeEscaped(v) + "%"))"
 		case .ends: return "\(c) LIKE \(lit("%" + likeEscaped(v)))"
 		case .like: return "\(c) LIKE \(lit(v))"
+		case .notLike: return "\(c) NOT LIKE \(lit(v))"
 		case .in, .notIn:
 			let items = v.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 			guard !items.isEmpty else { return nil }
@@ -51,6 +52,7 @@ enum FilterOp: String, CaseIterable, Identifiable {
 	case begins = "시작"
 	case ends = "끝"
 	case like = "LIKE"
+	case notLike = "NOT LIKE"
 	case `in` = "IN"
 	case notIn = "NOT IN"
 	case isNull = "NULL"
@@ -62,12 +64,12 @@ enum FilterOp: String, CaseIterable, Identifiable {
 	var placeholder: String {
 		switch self {
 		case .in, .notIn: "쉼표로 나눔: 1, 2, 3"
-		case .like: "% 와 _ 를 직접 씀"
+		case .like, .notLike: "% 와 _ 를 직접 씀"
 		default: "값"
 		}
 	}
 	/// 메뉴에서 구분선을 넣을 자리
-	var groupEnd: Bool { [.le, .like, .notIn].contains(self) }
+	var groupEnd: Bool { [.le, .notLike, .notIn].contains(self) }
 }
 
 /// 테이블마다 최근에 적용한 WHERE 절 (최대 10개, 이 맥에만)

@@ -393,6 +393,7 @@ struct SidebarTableMenu: View {
 			case .action(let title, let run): Button(title, role: title.hasSuffix("삭제…") ? .destructive : nil, action: run)
 			case .disabled(let title): Button(title, role: title.hasSuffix("삭제…") ? .destructive : nil) {}.disabled(true)
 			case .separator: Divider()
+			case .submenu(let title, _): Button(title) {}.disabled(true)
 			}
 		}
 	}

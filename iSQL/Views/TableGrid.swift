@@ -42,6 +42,8 @@ enum GridMenuItem {
 	/// 흐린 항목 (아직 기능이 없거나 지금 못 하는 것)
 	case disabled(String)
 	case separator
+	/// 하위 메뉴 (고른 값으로 거르기 ▸ …)
+	case submenu(String, [GridMenuItem])
 }
 
 /// 테이블 하나의 오른쪽 클릭 메뉴 (사이드바 테이블·DB 개요에서 하나 골랐을 때 같은 순서).
@@ -1210,6 +1212,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					let i = NSMenuItem(title: title, action: #selector(runMenu(_:)), keyEquivalent: "")
 					i.target = self
 					i.representedObject = run
+					menu.addItem(i)
+				case .submenu(let title, let sub):
+					let i = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+					let m = NSMenu(title: title)
+					fill(m, sub)
+					i.submenu = m
 					menu.addItem(i)
 				}
 			}
