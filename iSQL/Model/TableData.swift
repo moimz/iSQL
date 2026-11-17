@@ -499,7 +499,7 @@ extension TableData: GridSource {
 	var insertTarget: InsertTarget? {
 		guard !table.isView else { return nil }
 		return InsertTarget(table: quoteName(table.name), columns: columns.map(\.name),
-		                    autoIncrement: Set(columns.indices.filter { columns[$0].flags & 0x200 != 0 }))
+		                    primaryKey: Set(keyIndices))
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }

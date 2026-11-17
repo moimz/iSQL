@@ -117,7 +117,7 @@ protocol GridSource: AnyObject {
 	func openEditor(_ row: Int, _ col: Int)
 	/// Tab 으로 들르는 칸 (기본: 글자로 고치는 칸만)
 	func tabStop(_ row: Int, _ col: Int) -> Bool
-	/// "INSERT 문으로 복사" 에 쓰는 테이블 (nil 이면 그 메뉴 없음): SQL 이름, 컬럼 이름(공급자 컬럼 순서), AUTO_INCREMENT 컬럼
+	/// "INSERT 문으로 복사" 에 쓰는 테이블 (nil 이면 그 메뉴 없음): SQL 이름, 컬럼 이름(공급자 컬럼 순서), 기본 키 컬럼
 	var insertTarget: InsertTarget? { get }
 	/// SQL 리터럴로 바꿀 칸 값 (바이너리는 X'..'). nil 이면 보이는 글자로
 	func sqlValue(_ row: Int, _ col: Int) -> Value?
@@ -126,7 +126,8 @@ protocol GridSource: AnyObject {
 struct InsertTarget {
 	var table: String
 	var columns: [String]
-	var autoIncrement: Set<Int> = []
+	/// 기본 키 컬럼 ("PK 없이" 복사에서 뺀다)
+	var primaryKey: Set<Int> = []
 }
 
 extension GridSource {
@@ -1154,7 +1155,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				var freezeItems: [GridMenuItem] = [.separator]
 				if frozenCount != display + 1 { freezeItems.append(.action("‘\(columns[col].title)’ 까지 고정") { self.setFrozen(display + 1) }) }
 				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 풀기") { self.setFrozen(0) }) }
-				fill(menu, items + sortItems + freezeItems)
+				let name = columns[col].key
+				let copyItems: [GridMenuItem] = [.action("컬럼 이름 복사") {
+					NSPasteboard.general.clearContents()
+					NSPasteboard.general.setString(name, forType: .string)
+				}, .separator]
+				fill(menu, copyItems + items + sortItems + freezeItems)
 				return
 			}
 			guard table.clickedRow >= 0 else { return }
@@ -1170,8 +1176,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			items.append(.action("컬럼 이름 포함 복사") { self.copySelection(withNames: true) })
 			if let t = source.insertTarget {
 				items.append(.action("INSERT 문으로 복사") { self.copyInsert(t, skipAuto: false) })
-				if !t.autoIncrement.isEmpty {
-					items.append(.action("INSERT 문으로 복사 (AUTO_INCREMENT 빼고)") { self.copyInsert(t, skipAuto: true) })
+				if !t.primaryKey.isEmpty {
+					items.append(.action("INSERT 문으로 복사 (PK 없이)") { self.copyInsert(t, skipAuto: true) })
 				}
 			}
 			if let col {
@@ -1235,9 +1241,9 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			return literal(v)
 		}
 
-		/// 고른 행을 INSERT 문 하나로 (VALUES 를 줄마다). skipAuto 면 AUTO_INCREMENT 컬럼은 빼서 새 번호로 들어가게
-		func copyInsert(_ t: InsertTarget, skipAuto: Bool) {
-			let cols = t.columns.indices.filter { !(skipAuto && t.autoIncrement.contains($0)) && $0 < columns.count }
+		/// 고른 행을 INSERT 문 하나로 (VALUES 를 줄마다). skipKey 면 기본 키 컬럼은 빼서 새 키로 들어가게
+		func copyInsert(_ t: InsertTarget, skipAuto skipKey: Bool) {
+			let cols = t.columns.indices.filter { !(skipKey && t.primaryKey.contains($0)) && $0 < columns.count }
 			guard !cols.isEmpty, !table.selectedRowIndexes.isEmpty else { return }
 			let values = table.selectedRowIndexes.map { r in "(" + cols.map { sqlLiteral(r, $0) }.joined(separator: ", ") + ")" }
 			let sql = "INSERT INTO \(t.table) (" + cols.map { quoteName(t.columns[$0]) }.joined(separator: ", ") + ") VALUES\n"
@@ -1384,7 +1390,9 @@ final class GridTableView: NSTableView {
 
 	/// 끄는 컬럼 묶음: 불투명·그림자, 양옆 테두리는 위아래 끝까지 (AppKit 의 테두리 선과 칸의 선은 데이터 줄에만 있어 빈 줄에서 끊겼다)
 	func solidifyGhost() {
-		guard let g = ghost, g.superview === self else { return }
+		// 컬럼 칸이 든 묶음만: 오른쪽 클릭하면 AppKit 이 테두리 표시용 뷰를 붙이는데 그것까지 칠해 표 전체를 덮었다
+		guard let g = ghost, g.superview === self,
+		      g.subviews.contains(where: { $0 is GridField || $0 is GridCheckView }) else { return }
 		g.alphaValue = 1
 		g.layer?.opacity = 1
 		g.layer?.backgroundColor = NSColor.alternatingContentBackgroundColors[0].cgColor

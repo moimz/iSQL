@@ -367,7 +367,7 @@ final class QueryResultSource: GridSource {
 		      cols.allSatisfy({ $0.orgTable == t && !$0.orgName.isEmpty }),
 		      Set(cols.map(\.orgName)).count == cols.count else { return nil }
 		return InsertTarget(table: quoteName(t), columns: cols.map(\.orgName),
-		                    autoIncrement: Set(cols.indices.filter { cols[$0].flags & 0x200 != 0 }))
+		                    primaryKey: Set(cols.indices.filter { cols[$0].isPrimaryKey }))
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
