@@ -353,6 +353,7 @@ struct QueryEditor: NSViewRepresentable {
 		tv.autoresizingMask = [.width]
 		tv.textContainer?.widthTracksTextView = true
 		tv.string = text
+		SQLHighlight.apply(to: tv)
 		tv.delegate = context.coordinator
 		scroll.documentView = tv
 		scroll.drawsBackground = false
@@ -367,7 +368,7 @@ struct QueryEditor: NSViewRepresentable {
 	func updateNSView(_ scroll: NSScrollView, context: Context) {
 		context.coordinator.parent = self
 		guard let tv = context.coordinator.textView else { return }
-		if tv.string != text { tv.string = text }
+		if tv.string != text { tv.string = text; SQLHighlight.apply(to: tv) }
 	}
 
 	@MainActor
@@ -389,6 +390,7 @@ struct QueryEditor: NSViewRepresentable {
 		func textDidChange(_ notification: Notification) {
 			guard let tv = textView else { return }
 			parent.text = tv.string
+			SQLHighlight.apply(to: tv)
 			if typing { typing = false; refresh(force: false) } else { popup.hide() }
 		}
 

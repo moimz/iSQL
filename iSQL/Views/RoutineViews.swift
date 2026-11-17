@@ -193,6 +193,10 @@ struct RoutineTabView: View {
 					Button("실행…") { running = true }.disabled(info == nil)
 						.help("인자를 넣어 CALL / SELECT 문을 쿼리 패널에 넣습니다")
 				}
+				if editor.kind == .view {
+					Button("줄바꿈") { editor.text = SQLHighlight.format(editor.text) }
+						.help("FROM · WHERE · JOIN 앞과 SELECT 목록의 쉼표 뒤에서 줄을 나눕니다 (뜻은 그대로)")
+				}
 				if !editor.isNew {
 					Button("되돌리기") { editor.revert() }.disabled(!editor.changed)
 					Button(role: .destructive) { if let r = info { RoutineDrop.confirm(r, session: session) } } label: { Text("삭제…") }

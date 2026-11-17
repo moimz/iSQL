@@ -1,7 +1,10 @@
 import SwiftUI
+import AppKit
 
-/// SQL 글자에 색: 키워드·문자열·숫자·주석 (보기 전용, 테이블 정보 패널의 CREATE 문 등)
+/// SQL 글자에 색: 키워드·문자열·숫자·주석. 보기 전용(CREATE 문)과 편집기(쿼리 패널·루틴 탭)가 같은 규칙을 쓴다
 enum SQLHighlight {
+	enum Kind { case keyword, string, number, comment }
+
 	private static let keywords: Set<String> = Set("""
 		CREATE TABLE VIEW KEY PRIMARY UNIQUE FULLTEXT SPATIAL INDEX CONSTRAINT FOREIGN REFERENCES ON DELETE UPDATE CASCADE RESTRICT
 		SET NULL NOT DEFAULT AUTO_INCREMENT COMMENT CHARACTER COLLATE ENGINE CHARSET ROW_FORMAT UNSIGNED ZEROFILL GENERATED ALWAYS
@@ -9,51 +12,169 @@ enum SQLHighlight {
 		OUTER AND OR IN IS LIKE CURRENT_TIMESTAMP CHECK OPTION CASCADED LOCAL PARTITION BY RANGE LIST VALUES LESS THAN MAXVALUE
 		INT TINYINT SMALLINT MEDIUMINT BIGINT DECIMAL NUMERIC FLOAT DOUBLE BIT BOOL BOOLEAN DATE DATETIME TIMESTAMP TIME YEAR CHAR
 		VARCHAR BINARY VARBINARY TINYBLOB BLOB MEDIUMBLOB LONGBLOB TINYTEXT TEXT MEDIUMTEXT LONGTEXT ENUM JSON GEOMETRY POINT
+		INSERT INTO REPLACE IGNORE DUPLICATE ORDER GROUP HAVING LIMIT OFFSET UNION ALL DISTINCT CASE WHEN THEN ELSE END EXISTS BETWEEN
+		ASC DESC CROSS NATURAL STRAIGHT_JOIN TRUE FALSE DROP ALTER ADD COLUMN MODIFY CHANGE RENAME TO TRUNCATE EXPLAIN SHOW DESCRIBE
+		USE DATABASE SCHEMA IF BEGIN DECLARE ELSEIF WHILE LOOP REPEAT UNTIL LEAVE ITERATE RETURN RETURNS PROCEDURE FUNCTION TRIGGER
+		EVENT CALL BEFORE AFTER EACH ROW FOR DO SCHEDULE EVERY STARTS ENDS AT INTERVAL DAY HOUR MINUTE SECOND MONTH WEEK QUARTER
+		NEW OLD DETERMINISTIC READS MODIFIES CONTAINS NO DATA OUT INOUT ENABLE DISABLE COMPLETION PRESERVE CURSOR HANDLER CONTINUE
+		EXIT OPEN CLOSE FETCH SIGNAL SQLSTATE START TRANSACTION COMMIT ROLLBACK GRANT REVOKE PRIVILEGES LOCK UNLOCK TABLES OVER
+		WINDOW PARTITION RECURSIVE LATERAL XOR DIV MOD REGEXP RLIKE SOUNDS ESCAPE COUNT SUM AVG MIN MAX NOW
 		""".split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init))
 
-	static func attributed(_ sql: String) -> AttributedString {
-		var out = AttributedString()
-		let chars = Array(sql)
-		var i = 0
-		func add(_ s: String, _ color: Color?) {
-			var a = AttributedString(s)
-			if let color { a.foregroundColor = color }
-			out += a
+	/// 색칠할 자리 (UTF-16 범위). 이름(`…`)은 칠하지 않는다
+	static func tokens(_ ns: NSString, limit: Int = .max) -> [(NSRange, Kind)] {
+		let n = min(ns.length, limit)
+		var out: [(NSRange, Kind)] = []
+		var buf = [unichar](repeating: 0, count: n)
+		ns.getCharacters(&buf, range: NSRange(location: 0, length: n))
+		func isWord(_ c: unichar) -> Bool {
+			if c == 95 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 36 { return true }
+			guard c >= 128, let s = Unicode.Scalar(c) else { return false }
+			return CharacterSet.letters.contains(s)
 		}
-		while i < chars.count {
-			let c = chars[i]
-			if c == "'" || c == "\"" {
-				// 문자열 (\' 와 '' 를 건너뜀)
+		var i = 0
+		while i < n {
+			let c = buf[i]
+			if c == 39 || c == 34 {   // ' "
 				var j = i + 1
-				while j < chars.count {
-					if chars[j] == "\\" { j += 2; continue }
-					if chars[j] == c { if j + 1 < chars.count, chars[j + 1] == c { j += 2; continue }; break }
+				while j < n {
+					if buf[j] == 92 { j += 2; continue }   // \
+					if buf[j] == c { if j + 1 < n, buf[j + 1] == c { j += 2; continue }; break }
 					j += 1
 				}
-				let end = min(j + 1, chars.count)
-				add(String(chars[i..<end]), Color(nsColor: .systemRed)); i = end
-			} else if c == "`" {
+				let end = min(j + 1, n)
+				out.append((NSRange(location: i, length: end - i), .string)); i = end
+			} else if c == 96 {   // `
 				var j = i + 1
-				while j < chars.count, chars[j] != "`" { j += 1 }
-				let end = min(j + 1, chars.count)
-				add(String(chars[i..<end]), nil); i = end
-			} else if c == "/" && i + 1 < chars.count && chars[i + 1] == "*" {
+				while j < n, buf[j] != 96 { j += 1 }
+				i = min(j + 1, n)
+			} else if c == 47, i + 1 < n, buf[i + 1] == 42 {   // /*
 				var j = i + 2
-				while j + 1 < chars.count, !(chars[j] == "*" && chars[j + 1] == "/") { j += 1 }
-				let end = min(j + 2, chars.count)
-				add(String(chars[i..<end]), .secondary); i = end
-			} else if c.isLetter || c == "_" {
+				while j + 1 < n, !(buf[j] == 42 && buf[j + 1] == 47) { j += 1 }
+				let end = min(j + 2, n)
+				out.append((NSRange(location: i, length: end - i), .comment)); i = end
+			} else if c == 35 || (c == 45 && i + 1 < n && buf[i + 1] == 45) {   // # 또는 --
 				var j = i
-				while j < chars.count, chars[j].isLetter || chars[j].isNumber || chars[j] == "_" { j += 1 }
-				let w = String(chars[i..<j])
-				add(w, keywords.contains(w.uppercased()) ? Color(nsColor: .systemBlue) : nil); i = j
-			} else if c.isNumber {
+				while j < n, buf[j] != 10 { j += 1 }
+				out.append((NSRange(location: i, length: j - i), .comment)); i = j
+			} else if isWord(c) && !(c >= 48 && c <= 57) {
 				var j = i
-				while j < chars.count, chars[j].isNumber || chars[j] == "." { j += 1 }
-				add(String(chars[i..<j]), Color(nsColor: .systemOrange)); i = j
+				while j < n, isWord(buf[j]) { j += 1 }
+				// 키워드는 영문뿐이라 짧은 낱말만 확인 (앞이 . 이면 이름: t.name)
+				if j - i <= 20, !(i > 0 && buf[i - 1] == 46) {
+					let w = ns.substring(with: NSRange(location: i, length: j - i)).uppercased()
+					if keywords.contains(w) { out.append((NSRange(location: i, length: j - i), .keyword)) }
+				}
+				i = j
+			} else if c >= 48 && c <= 57 {
+				var j = i
+				while j < n, (buf[j] >= 48 && buf[j] <= 57) || buf[j] == 46 { j += 1 }
+				// 이름 안의 숫자(t1)가 아닐 때만
+				if !(i > 0 && isWord(buf[i - 1])) { out.append((NSRange(location: i, length: j - i), .number)) }
+				i = j
 			} else {
-				add(String(c), nil); i += 1
+				i += 1
 			}
+		}
+		return out
+	}
+
+	static func color(_ k: Kind) -> NSColor {
+		switch k {
+		case .keyword: .systemBlue
+		case .string: .systemRed
+		case .number: .systemOrange
+		case .comment: .secondaryLabelColor
+		}
+	}
+
+	/// 보기 전용 글
+	static func attributed(_ sql: String) -> AttributedString {
+		// SwiftUI Text 는 AppKit 색 속성을 쓰지 않아 SwiftUI 색으로 넣는다
+		var a = AttributedString(sql)
+		for (r, k) in tokens(sql as NSString) {
+			guard let sr = Range(r, in: sql), let ar = Range(sr, in: a) else { continue }
+			a[ar].foregroundColor = Color(nsColor: color(k))
+		}
+		return a
+	}
+
+	/// 편집기 글을 칠한다: 글자색만 바꾸고(실행 취소에 남지 않음) 글꼴·커서는 그대로. 아주 긴 글은 앞부분만
+	@MainActor
+	static func apply(to tv: NSTextView) {
+		guard let storage = tv.textStorage else { return }
+		let ns = storage.string as NSString
+		let all = NSRange(location: 0, length: ns.length)
+		storage.beginEditing()
+		storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: all)
+		for (r, k) in tokens(ns, limit: 300_000) { storage.addAttribute(.foregroundColor, value: color(k), range: r) }
+		storage.endEditing()
+		tv.typingAttributes[.foregroundColor] = NSColor.labelColor
+	}
+
+	// MARK: 줄바꿈 (뷰 정의처럼 한 줄로 온 SELECT 를 읽기 좋게)
+
+	/// 괄호 밖의 FROM·WHERE·JOIN·GROUP BY·ORDER BY·HAVING·LIMIT·UNION 앞에서 줄을 나누고,
+	/// SELECT 목록의 쉼표 뒤에서 들여 줄을 나눈다. 글자·이름·주석 안은 건드리지 않는다
+	static func format(_ sql: String) -> String {
+		let ns = sql as NSString
+		let n = ns.length
+		// 건드리면 안 되는 범위: 글자·주석 + 이름(`…`)
+		var skip = tokens(ns).filter { $0.1 == .string || $0.1 == .comment }.map(\.0)
+		do {
+			var i = 0
+			while i < n {
+				if ns.character(at: i) == 96 {
+					var j = i + 1
+					while j < n, ns.character(at: j) != 96 { j += 1 }
+					skip.append(NSRange(location: i, length: min(j + 1, n) - i)); i = j + 1
+				} else { i += 1 }
+			}
+		}
+		func skipped(_ p: Int) -> Bool { skip.contains { NSLocationInRange(p, $0) } }
+		let breakBefore: Set<String> = ["FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "UNION", "JOIN", "LEFT", "RIGHT", "INNER", "CROSS", "STRAIGHT_JOIN"]
+		let joinMods: Set<String> = ["LEFT", "RIGHT", "INNER", "CROSS", "OUTER", "NATURAL"]
+		var out = ""
+		var depth = 0
+		var inSelectList = false
+		var prevWord = ""
+		var i = 0
+		while i < n {
+			let c = ns.character(at: i)
+			if skipped(i) {
+				if let r = skip.first(where: { NSLocationInRange(i, $0) }) {
+					out += ns.substring(with: NSRange(location: i, length: NSMaxRange(r) - i)); i = NSMaxRange(r); continue
+				}
+			}
+			if c == 40 { depth += 1 } else if c == 41 { depth = max(0, depth - 1) }
+			let isLetter = (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+			if isLetter {
+				var j = i
+				while j < n, let s = Unicode.Scalar(ns.character(at: j)), CharacterSet.alphanumerics.contains(s) || s == "_" { j += 1 }
+				let word = ns.substring(with: NSRange(location: i, length: j - i))
+				let up = word.uppercased()
+				if depth == 0 {
+					let breaks = breakBefore.contains(up) && !(up == "JOIN" && joinMods.contains(prevWord))
+						&& !(joinMods.contains(up) && joinMods.contains(prevWord))
+					if breaks || (up == "SELECT" && prevWord == "AS") {
+						while out.hasSuffix(" ") { out.removeLast() }
+						if !out.isEmpty && !out.hasSuffix("\n") { out += "\n" }
+					}
+					if up == "SELECT" { inSelectList = true } else if up == "FROM" { inSelectList = false }
+				}
+				out += word
+				prevWord = up
+				i = j
+				continue
+			}
+			if c == 44, depth == 0, inSelectList {   // ,
+				out += ",\n\t"
+				i += 1
+				while i < n, ns.character(at: i) == 32 { i += 1 }
+				continue
+			}
+			out += String(utf16CodeUnits: [c], count: 1)
+			i += 1
 		}
 		return out
 	}
