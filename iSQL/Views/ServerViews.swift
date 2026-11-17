@@ -367,7 +367,7 @@ struct LoginSheet: View {
 	@State private var user: String
 	@State private var password = ""
 	@State private var save = true
-	@FocusState private var focus: Bool
+	@State private var focus = false
 	@Environment(\.dismiss) private var dismiss
 
 	init(server: Server, saved: Bool, connect: @escaping (String, String, Bool) -> Void) {
@@ -389,8 +389,7 @@ struct LoginSheet: View {
 				}
 				GridRow {
 					Text("비밀번호:")
-					SecureField("", text: $password).textFieldStyle(.roundedBorder).focused($focus)
-						.onSubmit(go)
+					PasswordField(text: $password, focus: $focus, onSubmit: go)
 				}
 			}
 			if saved {

@@ -106,11 +106,11 @@ struct ExportServersSheet: View {
 			Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
 				GridRow {
 					Text("암호").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-					SecureField("가져올 때 넣을 암호 (4자 이상)", text: $password).textFieldStyle(.roundedBorder)
+					PasswordField(placeholder: "가져올 때 넣을 암호 (4자 이상)", text: $password)
 				}
 				GridRow {
 					Text("암호 확인").foregroundStyle(.secondary)
-					SecureField("", text: $confirm).textFieldStyle(.roundedBorder)
+					PasswordField(text: $confirm)
 				}
 			}
 			if !confirm.isEmpty && password != confirm {
@@ -167,7 +167,7 @@ struct ImportServersSheet: View {
 	@State private var passphrases: [UUID: String] = [:]
 	@State private var failure: String?
 	@State private var done: String?
-	@FocusState private var passwordFocused: Bool
+	@State private var passwordFocused = false
 
 	init(store: ServerStore, initialURL: URL?) {
 		self.store = store
@@ -193,10 +193,7 @@ struct ImportServersSheet: View {
 				GridRow {
 					Text("암호").foregroundStyle(.secondary)
 					HStack {
-						SecureField("내보낼 때 넣은 암호", text: $password)
-							.textFieldStyle(.roundedBorder)
-							.focused($passwordFocused)
-							.onSubmit(open)
+						PasswordField(placeholder: "내보낼 때 넣은 암호", text: $password, focus: $passwordFocused, onSubmit: open)
 							.disabled(!isISQL || payload != nil)
 						Button("열기", action: open).disabled(!isISQL || password.isEmpty || payload != nil)
 					}
@@ -270,8 +267,7 @@ struct ImportServersSheet: View {
 					if k.encrypted {
 						HStack {
 							Text("키 암호").foregroundStyle(.secondary)
-							SecureField("선택 — 넣으면 이 맥 키체인에 저장", text: Binding(get: { passphrases[s.id] ?? "" }, set: { passphrases[s.id] = $0 }))
-								.textFieldStyle(.roundedBorder)
+							PasswordField(placeholder: "선택 — 넣으면 이 맥 키체인에 저장", text: Binding(get: { passphrases[s.id] ?? "" }, set: { passphrases[s.id] = $0 }))
 						}
 					}
 				}

@@ -229,7 +229,7 @@ struct ConnectForm: View {
 	private func secret(_ text: Binding<String>, show: Binding<Bool>, _ prompt: String) -> some View {
 		box(HStack(spacing: 6) {
 			if show.wrappedValue { TextField("", text: text, prompt: Text(prompt)) }
-			else { SecureField("", text: text, prompt: Text(prompt)) }
+			else { PasswordField(placeholder: prompt, text: text, bordered: false) }
 			Button { show.wrappedValue.toggle() } label: {
 				Image(systemName: show.wrappedValue ? "eye.slash" : "eye").foregroundStyle(.secondary)
 			}

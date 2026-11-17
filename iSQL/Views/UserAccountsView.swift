@@ -356,11 +356,11 @@ struct AddUserSheet: View {
 				}
 				GridRow {
 					Text("비밀번호").foregroundStyle(.secondary)
-					SecureField("", text: $password).textFieldStyle(.roundedBorder)
+					PasswordField(text: $password)
 				}
 				GridRow {
 					Text("비밀번호 확인").foregroundStyle(.secondary)
-					SecureField("", text: $confirm).textFieldStyle(.roundedBorder)
+					PasswordField(text: $confirm)
 				}
 			}
 			Toggle("같은 이름의 데이터베이스를 만들고 모든 권한 주기", isOn: $makeDB).toggleStyle(.checkbox)
@@ -406,8 +406,8 @@ struct PasswordSheet: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
 			Text("\(account.sql) 비밀번호 바꾸기").font(.headline)
-			SecureField("새 비밀번호", text: $password).textFieldStyle(.roundedBorder)
-			SecureField("새 비밀번호 확인", text: $confirm).textFieldStyle(.roundedBorder)
+			PasswordField(placeholder: "새 비밀번호", text: $password)
+			PasswordField(placeholder: "새 비밀번호 확인", text: $confirm)
 			if !confirm.isEmpty && password != confirm {
 				Label("비밀번호가 서로 다릅니다", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
 			}
