@@ -15,6 +15,10 @@ final class WindowModel {
 	var splitFocus: SplitSide = .left
 	/// 콘솔 패널 (하단바 아래, ⇧⌘L)
 	var showConsole = false
+	/// 오른쪽 분할 칸의 테이블 정보 패널 (왼쪽은 Session.showTableInfo). 이 맥에만 기억
+	var showRightInfo = UserDefaults.standard.object(forKey: "showTableInfoRight") as? Bool ?? true {
+		didSet { UserDefaults.standard.set(showRightInfo, forKey: "showTableInfoRight") }
+	}
 	/// 양쪽 표 스크롤 맞추기 (오른쪽 탭바 끝 버튼)
 	var scrollSync = false {
 		didSet { applyScrollLink() }

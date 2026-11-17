@@ -30,8 +30,6 @@ struct TabArea: View {
 		focused.flatMap { f in f.session.data(tab: f.tab) }
 	}
 
-	private var activeTable: TableInfo? { focused.flatMap { $0.session.table($0.tab) } }
-
 	/// 초점 탭이 DB 개요 탭이면 그 개요
 	private var activeOverview: DatabaseOverview? {
 		focused.flatMap { f in Session.databaseOf(tab: f.tab).map { f.session.overview($0) } }
@@ -42,9 +40,27 @@ struct TabArea: View {
 		session.queryPanel?.resultsVisible == true && (!model.hasSplit || model.splitFocus == .left)
 	}
 
-	/// 구조 보기이고 쿼리 결과가 덮고 있지 않을 때 (테이블 정보 패널을 보일 수 있을 때)
-	private var structureShown: Bool {
-		active?.mode == .structure && !resultsCoverFocused
+	/// 초점 칸의 테이블 정보 패널을 켰는지 (패널은 칸마다 따로: 왼쪽은 서버별 기억, 오른쪽은 창이 든다)
+	private var focusedInfoOn: Bool {
+		model.hasSplit && model.splitFocus == .right ? model.showRightInfo : session.showTableInfo
+	}
+
+	private func toggleFocusedInfo() {
+		if model.hasSplit && model.splitFocus == .right { model.showRightInfo.toggle() } else { session.showTableInfo.toggle() }
+	}
+
+	/// 왼쪽 칸 정보 패널: 왼쪽 탭이 구조 보기이고 쿼리 결과가 덮고 있지 않을 때
+	private var leftInfoTable: TableInfo? {
+		guard session.showTableInfo, !(session.queryPanel.map { $0.open && !$0.outputs.isEmpty && $0.resultsVisible } ?? false),
+		      let id = session.activeTab, session.data(tab: id)?.mode == .structure else { return nil }
+		return session.table(id)
+	}
+
+	/// 오른쪽 칸 정보 패널
+	private var rightInfo: (Session, TableInfo)? {
+		guard model.showRightInfo, let p = model.parkedActive, let s = model.sessions[p.server],
+		      s.data(tab: p.tab)?.mode == .structure, let t = s.table(p.tab) else { return nil }
+		return (s, t)
 	}
 
 	var body: some View {
@@ -58,18 +74,8 @@ struct TabArea: View {
 					rightPane
 						.frame(width: rightWidth(total: geo.size.width))
 				}
-				// 구조 보기 오른쪽 테이블 정보 패널. SwiftUI .inspector 는 맥 26 에서 붙인 뷰가 사이드바·툴바 밑으로
-				// 파고들어(안전 영역을 잃음, 화면으로 확인) 직접 옆 칸으로 그린다
-				if focusedSession.showTableInfo && structureShown, let t = activeTable {
-					Divider()
-					TableInfoPanel(session: focusedSession, inspector: focusedSession.inspector(for: t), columns: focusedSession.columns[t.id] ?? [])
-						.id(t.id)
-						.frame(width: 340)
-						.transition(.move(edge: .trailing))
-				}
 			}
 			.clipped()
-			.animation(.easeOut(duration: 0.2), value: focusedSession.showTableInfo)
 		}
 			// 콘솔: 하단바 아래 (쿼리 패널이 탭바 위에 열리는 것과 짝)
 			if model.showConsole {
@@ -102,10 +108,10 @@ struct TabArea: View {
 				ToolbarItem {
 					let structure = d.mode == .structure
 					Button {
-						if structure { focusedSession.showTableInfo.toggle() } else { d.showFilter.toggle() }
+						if structure { toggleFocusedInfo() } else { d.showFilter.toggle() }
 					} label: {
 						Image(systemName: structure ? "sidebar.right" : "magnifyingglass")
-							.foregroundStyle((structure ? focusedSession.showTableInfo : (d.showFilter || !d.whereClause.isEmpty)) ? Color.accentColor : Color.primary)
+							.foregroundStyle((structure ? focusedInfoOn : (d.showFilter || !d.whereClause.isEmpty)) ? Color.accentColor : Color.primary)
 					}
 					.help(structure ? "테이블 정보 (⌥⌘I)"
 					      : d.whereClause.isEmpty ? "조건으로 찾기 (⌥⌘F)" : "조건으로 찾기 (⌥⌘F)\nWHERE \(d.whereClause)")
@@ -176,7 +182,7 @@ struct TabArea: View {
 				// ⇧⌘L 콘솔
 				Button("") { model.showConsole.toggle() }.keyboardShortcut("l", modifiers: [.command, .shift])
 				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)
-				Button("") { if let d = active { d.mode = .structure; focusedSession.showTableInfo.toggle() } }.keyboardShortcut("i", modifiers: [.command, .option])
+				Button("") { if let d = active { if d.mode == .structure { toggleFocusedInfo() } else { d.mode = .structure; if !focusedInfoOn { toggleFocusedInfo() } } } }.keyboardShortcut("i", modifiers: [.command, .option])
 			}
 			.hidden()
 		}
@@ -200,6 +206,7 @@ struct TabArea: View {
 		GeometryReader { geo in
 			ZStack(alignment: .top) {
 				leftTabs
+					.infoPanel(session: session, table: leftInfoTable, overlayTop: session.tabs.isEmpty ? 0 : 37, alwaysBeside: !model.hasSplit)
 				// 결과 보기: 위에서 아래로 스르륵 내려오고, 숨기면 위로 말려 올라간다 (탭바·표·하단바 통째로).
 				// 결과가 있는 동안은 결과 화면을 살려 두고 위치만 옮긴다 (보일 때마다 새로 만들면 100ms 씩 멈췄다)
 				if let q = session.queryPanel, q.open, !q.outputs.isEmpty {
@@ -246,6 +253,12 @@ struct TabArea: View {
 	// MARK: 오른쪽 (임시 영역, 서버를 바꿔도 그대로)
 
 	private var rightPane: some View {
+		rightPaneBody
+			.infoPanel(session: rightInfo?.0, table: rightInfo?.1, overlayTop: 37, alwaysBeside: false)
+			.background(PaneClickWatcher { model.splitFocus = .right })
+	}
+
+	private var rightPaneBody: some View {
 		VStack(spacing: 0) {
 			ParkedTabBar(model: model, currentServer: session.server?.id, close: closeRight)
 			Divider()
@@ -262,7 +275,6 @@ struct TabArea: View {
 				}
 			}
 		}
-		.background(PaneClickWatcher { model.splitFocus = .right })
 	}
 
 	/// 오른쪽에 둔 테이블 탭들의 표 공급자 (오른쪽 칸의 표 호스트가 살려 둘 것)
@@ -750,5 +762,59 @@ struct TabItem: View {
 			if !menu.isEmpty { Divider() }
 			Button("탭 닫기", action: close)
 		}
+	}
+}
+
+/// 구조 보기 테이블 정보 패널을 그 칸 오른쪽에 붙인다 (분할이면 칸마다 따로, 사용자 2026-11-17).
+/// 칸이 넉넉하면(표 최소 600 + 패널 340) 표를 밀고 나란히, 좁으면 탭바 아래에서 표 위로 떠서 덮는다.
+/// SwiftUI .inspector 는 맥 26 에서 붙인 뷰가 사이드바·툴바 밑으로 파고들어(안전 영역을 잃음, 화면으로 확인) 직접 그린다
+private struct InfoPanelHost: ViewModifier {
+	let session: Session?
+	let table: TableInfo?
+	/// 덮을 때 비워 둘 위 높이 (탭바)
+	let overlayTop: CGFloat
+	/// 분할이 아니면 예전처럼 늘 나란히 (창 최소 너비라 표가 좁아져도 덮지 않는다)
+	let alwaysBeside: Bool
+	@State private var width: CGFloat = 0
+
+	static let panelWidth: CGFloat = 340
+	private var fits: Bool { alwaysBeside || width >= 600 + Self.panelWidth }
+
+	func body(content: Content) -> some View {
+		// 표(AppKit) 자리는 늘 그대로 두고 패널만 붙였다 뗀다: 표를 다른 자리로 옮기면 새로 만들어져 느리고 스크롤도 잃는다
+		HStack(spacing: 0) {
+			content.frame(maxWidth: .infinity)
+			if fits, let session, let table {
+				Divider()
+				panel(session, table)
+			}
+		}
+		.overlay(alignment: .topTrailing) {
+			if !fits, let session, let table {
+				HStack(spacing: 0) {
+					Divider()
+					panel(session, table)
+				}
+				.background(Color(nsColor: .windowBackgroundColor))
+				.shadow(color: .black.opacity(0.25), radius: 8, x: -2)
+				.padding(.top, overlayTop)
+			}
+		}
+		.clipped()
+		.onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+		.animation(.easeOut(duration: 0.2), value: table?.id)
+	}
+
+	private func panel(_ s: Session, _ t: TableInfo) -> some View {
+		TableInfoPanel(session: s, inspector: s.inspector(for: t), columns: s.columns[t.id] ?? [])
+			.id(t.id)
+			.frame(width: Self.panelWidth)
+			.transition(.move(edge: .trailing))
+	}
+}
+
+extension View {
+	fileprivate func infoPanel(session: Session?, table: TableInfo?, overlayTop: CGFloat, alwaysBeside: Bool) -> some View {
+		modifier(InfoPanelHost(session: session, table: table, overlayTop: overlayTop, alwaysBeside: alwaysBeside))
 	}
 }
