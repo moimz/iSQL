@@ -105,6 +105,19 @@ struct QueryPanelView: View {
 				.keyboardShortcut(.return, modifiers: [.command, .shift])
 				.disabled(panel.running)
 				.help("모든 문장 (⌘⇧↩)")
+			// 실행계획: 실행하지 않고 EXPLAIN 만 (고른 부분, 없으면 커서가 있는 문장)
+			Button {
+				let st = panel.statementsToRun(all: false)
+				if st.isEmpty { NSSound.beep() } else { Task { await panel.explain(st) } }
+			} label: {
+				HStack(spacing: 5) {
+					Text("실행계획")
+					ShortcutKeys(symbols: ["option", "command", "return"]).foregroundStyle(.secondary)
+				}
+			}
+				.keyboardShortcut(.return, modifiers: [.command, .option])
+				.disabled(panel.running)
+				.help("EXPLAIN: 쿼리를 실행하지 않고 어떻게 읽을지 봅니다 (⌥⌘↩)")
 			if let m = panel.message {
 				Text(m)
 					.foregroundStyle(panel.isError ? Color.red : .secondary)
@@ -154,7 +167,8 @@ struct QueryResultsOverlay: View {
 			// 결과 탭바 (테이블 탭바와 같은 모양)
 			TabStrip(selected: panel.selectedOutput) {
 				ForEach(Array(panel.outputs.enumerated()), id: \.element.id) { i, o in
-					ResultTabItem(title: "결과 \(i + 1)", detail: o.totalText, sql: o.sql,
+					ResultTabItem(title: o.plan != nil ? "실행계획 \(i + 1)" : "결과 \(i + 1)",
+					              detail: o.plan.map { $0.warnings.isEmpty ? "경고 없음" : "경고 \($0.warnings.count)" } ?? o.totalText, sql: o.sql,
 					              active: i == panel.selectedOutput, loading: o.loading) {
 						panel.selectedOutput = i
 					}
@@ -188,6 +202,7 @@ struct ResultBody: View {
 	}
 
 	var body: some View {
+		if let plan = output.plan { ExplainHeader(plan: plan) }
 		ZStack {
 			TableGrid(source: source) { selection = $0 }
 			if output.loading {
@@ -460,5 +475,42 @@ struct ShortcutKeys: View {
 			ForEach(symbols, id: \.self) { Image(systemName: $0) }
 		}
 		.font(.system(size: 11, weight: .medium))
+	}
+}
+
+/// 실행계획 결과 위쪽: 경고 목록 + 나무(FORMAT=TREE). 아래는 전통 EXPLAIN 표 (문제 칸 색칠)
+struct ExplainHeader: View {
+	let plan: ExplainPlan
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			VStack(alignment: .leading, spacing: 4) {
+				if plan.warnings.isEmpty {
+					Label("눈에 띄는 문제 없음", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+				}
+				ForEach(plan.warnings, id: \.self) { w in
+					Label(w.text, systemImage: w.severe ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+						.foregroundStyle(w.severe ? Color.red : Color.orange)
+				}
+			}
+			.font(.callout)
+			.textSelection(.enabled)
+			.padding(.horizontal, 12)
+			.padding(.vertical, 8)
+			if let tree = plan.tree, !tree.isEmpty {
+				Divider()
+				ScrollView([.vertical, .horizontal]) {
+					Text(tree)
+						.font(.system(size: 12, design: .monospaced))
+						.textSelection(.enabled)
+						.fixedSize()
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.padding(12)
+				}
+				.frame(height: min(240, CGFloat(tree.split(separator: "\n").count) * 17 + 26))
+				.background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+			}
+			Divider()
+		}
 	}
 }

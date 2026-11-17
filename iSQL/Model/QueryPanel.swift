@@ -182,6 +182,125 @@ final class QueryPanel {
 		// 바꾼 테이블이 탭으로 열려 있으면 "다시 읽기 필요"
 		if !touched.isEmpty { session.markStale(touched, defaultDB: session.currentDB) }
 	}
+
+	// MARK: - 실행계획 (EXPLAIN)
+
+	/// 문장마다 실행계획: 나무(FORMAT=TREE, MySQL 8) + 전통 표. EXPLAIN 은 실행하지 않으므로 위험 쿼리 확인을 묻지 않는다.
+	/// EXPLAIN ANALYZE 는 진짜로 실행해서 넣지 않았다 (사용자 2026-11-17)
+	@MainActor
+	func explain(_ statements: [String]) async {
+		guard let session, !statements.isEmpty, !running else { return }
+		running = true
+		message = nil
+		isError = false
+		defer { running = false }
+		var outs: [QueryOutput] = []
+		var warnCount = 0
+		do {
+			if !database.isEmpty, database != session.currentDB {
+				_ = try await session.query("USE \(quoteName(database))")
+				session.currentDB = database
+			}
+			for st in statements {
+				let body = ExplainPlan.stripExplain(st)
+				// 나무는 MariaDB·옛 MySQL 에 없다 → 없으면 표만
+				let tree = (try? await session.query("EXPLAIN FORMAT=TREE \(body)"))?.last?.rows.first?.first?.display
+				guard let table = try await session.query("EXPLAIN \(body)").last(where: \.isResultSet) else { continue }
+				let out = QueryOutput(sql: "EXPLAIN \(body)", paged: false, result: table, pageSize: max(1, table.rows.count), session: session)
+				let plan = ExplainPlan(tree: tree, result: table)
+				warnCount += plan.warnings.count
+				out.plan = plan
+				out.source.cellTint = { plan.tint(row: $0, col: $1) }
+				out.source.gridColumns = out.source.gridColumns.map { var c = $0; c.width = ExplainPlan.widths[c.title.lowercased()] ?? c.width; return c }
+				outs.append(out)
+			}
+			message = "실행계획 \(outs.count)개" + (warnCount > 0 ? " · 경고 \(warnCount)건" : " · 경고 없음")
+		} catch {
+			isError = true
+			message = error.localizedDescription
+		}
+		if !outs.isEmpty {
+			outputs = outs
+			selectedOutput = 0
+			showResults = true
+		}
+	}
+}
+
+/// EXPLAIN 결과 읽기: 문제 칸 색칠과 한 줄 경고
+struct ExplainPlan {
+	struct Warning: Hashable {
+		let text: String
+		let severe: Bool
+	}
+	let tree: String?
+	let warnings: [Warning]
+	/// [행][컬럼] 경고색
+	private let tints: [Int: [Int: NSColor]]
+
+	/// 전체 훑기를 빨강으로 볼 행 수
+	static let manyRows = 1000
+	/// 이보다 작은 테이블의 전체 훑기는 문제 삼지 않는다 (코드표 같은 작은 테이블은 훑는 게 빠르다)
+	static let fewRows = 100
+
+	init(tree: String?, result: QueryResult) {
+		// UPDATE·DELETE 는 나무 대신 "<not executable by iterator executor>" 만 준다 → 표만
+		self.tree = tree.flatMap { $0.contains("not executable by iterator executor") ? nil : $0 }
+		let names = result.columns.map { $0.name.lowercased() }
+		func col(_ n: String) -> Int? { names.firstIndex(of: n) }
+		var warns: [Warning] = []
+		var tints: [Int: [Int: NSColor]] = [:]
+		let red = NSColor.systemRed.withAlphaComponent(0.28), orange = NSColor.systemOrange.withAlphaComponent(0.28)
+		for (r, row) in result.rows.enumerated() {
+			func val(_ n: String) -> String? { col(n).flatMap { $0 < row.count ? row[$0].display : nil } }
+			let table = val("table") ?? "?"
+			let rows = Int(val("rows") ?? "") ?? 0
+			if val("type")?.uppercased() == "ALL", rows >= Self.fewRows {
+				let severe = rows >= Self.manyRows
+				let c = severe ? red : orange
+				if let i = col("type") { tints[r, default: [:]][i] = c }
+				if severe, let i = col("rows") { tints[r, default: [:]][i] = c }
+				warns.append(Warning(text: "\(table): 인덱스 없이 전체를 훑음 (약 \(rows.formatted())행)", severe: severe))
+			}
+			let key = val("key") ?? ""
+			if key.isEmpty, rows >= Self.fewRows, let pk = val("possible_keys"), !pk.isEmpty {
+				if let i = col("key") { tints[r, default: [:]][i] = orange }
+				warns.append(Warning(text: "\(table): 쓸 수 있는 인덱스(\(pk))가 있는데 쓰지 않음", severe: false))
+			}
+			let extra = val("extra") ?? ""
+			var marks: [String] = []
+			if extra.contains("Using filesort") { marks.append("정렬을 따로 함 (filesort)") }
+			if extra.contains("Using temporary") { marks.append("임시 테이블을 만듦") }
+			if !marks.isEmpty {
+				if let i = col("extra") { tints[r, default: [:]][i] = orange }
+				warns.append(Warning(text: "\(table): " + marks.joined(separator: ", "), severe: false))
+			}
+		}
+		warnings = warns
+		self.tints = tints
+	}
+
+	func tint(row: Int, col: Int) -> NSColor? { tints[row]?[col] }
+
+	/// 표 컬럼 너비: 기본 150 이면 key·rows·Extra 가 화면 밖으로 밀렸다
+	static let widths: [String: CGFloat] = [
+		"id": 44, "select_type": 110, "table": 110, "partitions": 84, "type": 70, "possible_keys": 150,
+		"key": 120, "key_len": 66, "ref": 120, "rows": 80, "filtered": 70, "extra": 320,
+	]
+
+	/// 이미 EXPLAIN 으로 시작하면 떼고 본문만 (EXPLAIN EXPLAIN 이 되지 않게)
+	static func stripExplain(_ sql: String) -> String {
+		var s = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+		while s.hasSuffix(";") { s.removeLast() }
+		let lower = s.lowercased()
+		for p in ["explain format=tree ", "explain format=json ", "explain format=traditional ", "explain ", "describe ", "desc "] where lower.hasPrefix(p) {
+			// DESC 테이블 같은 것은 그대로 (뒤가 SELECT·UPDATE 등일 때만 뗀다)
+			let rest = String(s.dropFirst(p.count)).trimmingCharacters(in: .whitespaces)
+			let head = rest.prefix(7).lowercased()
+			if ["select", "update", "delete", "insert", "replace", "with", "table", "("].contains(where: { head.hasPrefix($0) }) { return rest }
+		}
+		return s
+	}
 }
 
 /// SELECT 결과 하나. LIMIT 없는 SELECT 였으면 쪽을 넘길 수 있다 (그 문장에 LIMIT/OFFSET 을 붙여 다시 실행)
@@ -202,6 +321,8 @@ final class QueryOutput: Identifiable, Pager {
 	private(set) var counting = false
 	private(set) var knownTotal: Int?
 	private(set) var error: String?
+	/// EXPLAIN 결과면 실행계획 (나무 글·경고)
+	var plan: ExplainPlan?
 
 	static var currentPageSize: Int {
 		let v = UserDefaults.standard.integer(forKey: "pageSize")
@@ -326,7 +447,8 @@ final class QueryResultSource: GridSource {
 	@ObservationIgnored private let result: QueryResult
 	@ObservationIgnored private var order: [Int]
 	@ObservationIgnored private var sortState: (key: String, ascending: Bool)?
-	@ObservationIgnored let gridColumns: [GridColumn]
+	/// 실행계획 표는 만든 뒤 컬럼 너비를 정해 준다
+	@ObservationIgnored var gridColumns: [GridColumn]
 	private(set) var gridVersion = 0
 	@ObservationIgnored let gridID = UUID().uuidString
 	@ObservationIgnored private weak var session: Session?
@@ -417,8 +539,11 @@ final class QueryResultSource: GridSource {
 		if edits[o]?[col] != nil {
 			return GridCell(text: v.display, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].display ?? "NULL"))
 		}
-		return GridCell(text: v.display)
+		return GridCell(text: v.display, tint: cellTint?(o, col))
 	}
+
+	/// 칸 경고색 (원래 행 번호, 컬럼). 실행계획 결과에서 쓴다
+	@ObservationIgnored var cellTint: ((Int, Int) -> NSColor?)?
 
 	/// 결과 컬럼이 모두 한 테이블의 진짜 컬럼이면 INSERT 로 복사할 수 있다
 	var insertTarget: InsertTarget? {

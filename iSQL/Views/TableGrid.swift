@@ -38,6 +38,8 @@ struct GridCell {
 	var dim = false
 	/// 글자 대신 체크박스 (nil 이면 글자 칸). 누르면 setText(예/아니오)
 	var check: Bool? = nil
+	/// 경고 바탕색 (실행계획의 전체 훑기 등). 상태색(고침·새 행)이 있으면 그쪽이 먼저
+	var tint: NSColor? = nil
 }
 
 enum GridMenuItem {
@@ -873,7 +875,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				}
 				v.button.state = on ? .on : .off
 				v.button.isEnabled = source.canEdit && cellInfo.state != .deleted && source.isEditable(row, col)
-				v.fill = Self.fill(cellInfo.state)
+				v.fill = Self.fill(cellInfo.state) ?? cellInfo.tint
 				v.toolTip = cellInfo.tooltip
 				return v
 			}
@@ -916,7 +918,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
 				attrs[.foregroundColor] = NSColor.systemRed
 			}
-			field.fill = Self.fill(cell.state)
+			field.fill = Self.fill(cell.state) ?? cell.tint
 			let s = NSMutableAttributedString()
 			if let icon = cell.icon {
 				let a = NSTextAttachment()
