@@ -235,7 +235,20 @@ final class Session {
 
 	/// 열린 탭 (테이블 id 순서대로)과 지금 탭. 왼쪽 탭바
 	private(set) var tabs: [String] = []
-	var activeTab: String? { didSet { rememberTabs() } }
+	var activeTab: String? {
+		didSet {
+			rememberTabs()
+			// ⌘K 빠른 열기의 최근 연 것 (이 접속 동안만)
+			if let id = activeTab {
+				let tid = Self.tableID(ofTab: id)
+				recent.removeAll { $0 == tid }
+				recent.insert(tid, at: 0)
+				if recent.count > 20 { recent.removeLast() }
+			}
+		}
+	}
+	/// 최근 본 테이블·DB 개요 (테이블 id 또는 "db:이름", 최근이 앞)
+	@ObservationIgnored private(set) var recent: [String] = []
 	/// 오른쪽 분할(임시 영역)에 옮겨 둔 이 서버의 탭. 순서·보이는 탭은 창(WindowModel)이 정한다.
 	/// 데이터(openData)는 여기 그대로 두고, 다시 켜면 왼쪽 탭으로 되살린다 (TabMemory 에 같이 적는다)
 	private(set) var parked: [String] = []

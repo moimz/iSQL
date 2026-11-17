@@ -179,6 +179,8 @@ struct TabArea: View {
 				}.keyboardShortcut("f", modifiers: [.command, .option])
 				// ⌘J 쿼리 패널 열기/닫기
 				Button("") { session.queryPanel?.open.toggle() }.keyboardShortcut("j")
+				// ⌘K 빠른 열기
+				Button("") { model.showQuickOpen.toggle() }.keyboardShortcut("k")
 				// ⇧⌘L 콘솔
 				Button("") { model.showConsole.toggle() }.keyboardShortcut("l", modifiers: [.command, .shift])
 				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)

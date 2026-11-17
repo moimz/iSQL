@@ -18,6 +18,18 @@ struct ConnectedArea: View {
 			// SELECT 결과는 탭 영역의 왼쪽 칸만 덮는다 (오른쪽 분할은 그대로 보여 결과와 나란히 비교). TabArea 안에서 그린다
 			TabArea(session: session, model: model)
 		}
+		// ⌘K 빠른 열기: 위 가운데, 바깥을 누르면 닫힘
+		.overlay(alignment: .top) {
+			if model.showQuickOpen {
+				ZStack(alignment: .top) {
+					Color.black.opacity(0.12)
+						.contentShape(Rectangle())
+						.onTapGesture { model.showQuickOpen = false }
+					QuickOpenView(session: session) { model.showQuickOpen = false }
+						.padding(.top, 60)
+				}
+			}
+		}
 	}
 }
 
