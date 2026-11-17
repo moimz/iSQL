@@ -27,8 +27,7 @@ struct ServerStatusTab: View {
 			if let e = monitor.error {
 				Label(e, systemImage: "xmark.octagon.fill").foregroundStyle(.red).padding(.horizontal, 16).padding(.bottom, 8)
 			}
-			if let s = monitor.summary { cards(s).padding(.horizontal, 16).padding(.bottom, 10) }
-			Divider()
+			if let s = monitor.summary { cards(s).padding(.horizontal, 16).padding(.bottom, 6) }
 			HStack {
 				Picker("", selection: $page) {
 					Text("프로세스 \(monitor.processes.count)").tag(0)
@@ -52,7 +51,7 @@ struct ServerStatusTab: View {
 					TableGrid(source: monitor.digestSource)
 				}
 			}
-			.frame(maxHeight: .infinity)
+			.settingsTableFrame()
 		}
 		.onAppear { monitor.start() }
 		.onDisappear { monitor.stop() }
@@ -113,6 +112,7 @@ struct ServerVariablesTab: View {
 			.padding(.horizontal, 16).padding(.vertical, 10)
 			if let error { Label(error, systemImage: "xmark.octagon.fill").foregroundStyle(.red).padding(.bottom, 8) }
 			TableGrid(source: source)
+				.settingsTableFrame()
 		}
 		.task { await load() }
 	}
@@ -203,5 +203,17 @@ final class VariablesSource: GridSource {
 		guard let n = Int64(value), n >= 1 << 20,
 		      ["size", "buffer", "packet", "length", "capacity", "cache_size"].contains(where: { name.contains($0) }) else { return value }
 		return "\(value) (\(ServerDiagnostics.bytes(n)))"
+	}
+}
+
+extension View {
+	/// 설정 창 안의 표: 창 끝까지 꽉 채우지 않고 여백 + 둥근 테두리 (사용자 계정 탭과 같은 모양)
+	func settingsTableFrame() -> some View {
+		self
+			.clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+			.overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Color(nsColor: .separatorColor)))
+			.padding(.horizontal, 16)
+			.padding(.bottom, 16)
+			.frame(maxHeight: .infinity)
 	}
 }

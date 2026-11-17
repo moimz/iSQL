@@ -13,7 +13,7 @@ final class SettingsTarget {
 @MainActor
 final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 	static let shared = ServerSettingsWindow()
-	static let width: CGFloat = 920
+	static let width: CGFloat = 830
 
 	private var window: NSWindow?
 
@@ -58,6 +58,8 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 		w.setContentSize(NSSize(width: Self.width, height: Self.pages[tabs.selectedTabViewItemIndex].height))
 		w.center()
 		w.setFrameAutosaveName("iSQL.ServerSettings")
+		// 저장해 둔 창 크기가 옛 폭(920)이어도 지금 폭으로 (위치만 이어받는다)
+		w.setContentSize(NSSize(width: Self.width, height: Self.pages[tabs.selectedTabViewItemIndex].height))
 		w.delegate = self
 		window = w
 	}
