@@ -82,6 +82,10 @@ struct TableInfoPanel: View {
 	@State private var addingIndex = false
 	/// 고치는 인덱스 (두 번 누르기·오른쪽 클릭 "수정…")
 	@State private var editingIndex: IndexInfo?
+	/// 외래 키: 고른 것, 추가 시트, 고치는 것
+	@State private var selectedFK: String?
+	@State private var addingFK = false
+	@State private var editingFK: ForeignKeyInfo?
 	/// AUTO_INCREMENT 바꾸기 창
 	@State private var editingAuto = false
 	@State private var autoText = ""
@@ -92,6 +96,7 @@ struct TableInfoPanel: View {
 				settings
 				stats
 				indexList
+				if !inspector.table.isView { foreignKeyList }
 				createStatement
 			}
 			.padding(16)
@@ -132,6 +137,16 @@ struct TableInfoPanel: View {
 			Button("취소", role: .cancel) {}
 		} message: {
 			Text("다음에 들어갈 행의 번호입니다. 지금 가장 큰 값보다 작게 넣으면 InnoDB 는 가장 큰 값 + 1 로 맞춥니다.")
+		}
+		.sheet(isPresented: $addingFK) {
+			ForeignKeySheet(session: session, inspector: inspector, columns: columns,
+			                add: { sql in Task { failure = await inspector.run(sql) } },
+			                edit: { _, _ in })
+		}
+		.sheet(item: $editingFK) { fk in
+			ForeignKeySheet(session: session, inspector: inspector, columns: columns, editing: fk,
+			                add: { _ in },
+			                edit: { old, new in Task { failure = await inspector.editForeignKey(old, to: new) } })
 		}
 		.sheet(item: $editingIndex) { ix in
 			AddIndexSheet(table: inspector.table, columns: columns,
@@ -349,6 +364,99 @@ struct TableInfoPanel: View {
 		      + (ix.parser.map { " · WITH PARSER \($0)" } ?? ""))
 	}
 
+	// MARK: 외래 키
+
+	private var foreignKeyList: some View {
+		VStack(alignment: .leading, spacing: 10) {
+			header("외래 키")
+			VStack(spacing: 0) {
+				if inspector.foreignKeys.isEmpty {
+					Text(inspector.loading ? "읽는 중…" : "외래 키 없음")
+						.foregroundStyle(.secondary).font(.callout)
+						.frame(maxWidth: .infinity, minHeight: 44)
+				}
+				ForEach(inspector.foreignKeys) { fk in
+					foreignKeyRow(fk, incoming: false)
+						.contentShape(Rectangle())
+						.onTapGesture(count: 2) {
+							selectedFK = fk.id
+							if !inspector.applying { editingFK = fk }
+						}
+						.onTapGesture { selectedFK = fk.id }
+						.contextMenu {
+							Button("수정…") { selectedFK = fk.id; editingFK = fk }
+							Divider()
+							Button("삭제…") {
+								selectedFK = fk.id
+								pending = ("외래 키 \(fk.name) 을(를) 지울까요?", inspector.dropForeignKeySQL(fk))
+							}
+						}
+				}
+				Divider()
+				HStack(spacing: 0) {
+					Button { addingFK = true } label: { Image(systemName: "plus").frame(width: 24, height: 16) }
+						.help("외래 키 추가")
+					Divider().frame(height: 14)
+					Button {
+						if let fk = inspector.foreignKeys.first(where: { $0.id == selectedFK }) {
+							pending = ("외래 키 \(fk.name) 을(를) 지울까요?", inspector.dropForeignKeySQL(fk))
+						}
+					} label: { Image(systemName: "minus").frame(width: 24, height: 16) }
+						.help("고른 외래 키 삭제")
+						.disabled(selectedFK == nil || inspector.applying)
+					Spacer()
+				}
+				.buttonStyle(.borderless)
+				.padding(4)
+			}
+			.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+			.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+			// 이 테이블을 가리키는 다른 테이블의 키 (보기만)
+			if !inspector.referencedBy.isEmpty {
+				Text("이 테이블을 참조하는 키").font(.callout).foregroundStyle(.secondary).padding(.top, 4)
+				VStack(spacing: 0) {
+					ForEach(inspector.referencedBy) { fk in foreignKeyRow(fk, incoming: true) }
+				}
+				.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+				.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+			}
+		}
+		.onChange(of: inspector.foreignKeys) { if !inspector.foreignKeys.contains(where: { $0.id == selectedFK }) { selectedFK = nil } }
+	}
+
+	/// 한 줄: [FK] 컬럼 → 테이블.컬럼, 아래 작게 규칙(기본값 아닐 때)·이름. 들어오는 키는 다른테이블.컬럼 → 이 테이블 컬럼
+	private func foreignKeyRow(_ fk: ForeignKeyInfo, incoming: Bool) -> some View {
+		let selected = !incoming && selectedFK == fk.id
+		let refTable = fk.refSchema == inspector.table.schema ? fk.refTable : "\(fk.refSchema).\(fk.refTable)"
+		let fromTable = fk.schema == inspector.table.schema ? fk.table : "\(fk.schema).\(fk.table)"
+		let text = incoming
+			? "\(fromTable).\(fk.columns.joined(separator: ", ")) → \(fk.refColumns.joined(separator: ", "))"
+			: "\(fk.columns.joined(separator: ", ")) → \(refTable).\(fk.refColumns.joined(separator: ", "))"
+		let rules = [fk.onDelete == "RESTRICT" || fk.onDelete == "NO ACTION" ? nil : "삭제 \(fk.onDelete)",
+		             fk.onUpdate == "RESTRICT" || fk.onUpdate == "NO ACTION" ? nil : "변경 \(fk.onUpdate)"].compactMap { $0 }
+		return HStack(alignment: .firstTextBaseline, spacing: 8) {
+			Text(incoming ? "←" : "FK")
+				.font(.caption.weight(.semibold))
+				.foregroundStyle(selected ? Color.white : Color.pink)
+				.padding(.horizontal, 5).padding(.vertical, 1)
+				.background(RoundedRectangle(cornerRadius: 4).fill((selected ? Color.white : Color.pink).opacity(0.18)))
+				.frame(width: 40, alignment: .leading)
+			VStack(alignment: .leading, spacing: 1) {
+				Text(text).lineLimit(1).truncationMode(.middle)
+				if !rules.isEmpty {
+					Text(rules.joined(separator: " · ")).font(.caption).foregroundStyle(selected ? Color.white.opacity(0.8) : .secondary)
+				}
+			}
+			Spacer(minLength: 4)
+		}
+		.padding(.horizontal, 8)
+		.padding(.vertical, 4)
+		.frame(minHeight: 26)
+		.foregroundStyle(selected ? Color.white : Color.primary)
+		.background(selected ? Color.accentColor : Color.clear)
+		.help("\(fk.name)\n\(text)\nON DELETE \(fk.onDelete) · ON UPDATE \(fk.onUpdate)")
+	}
+
 	// MARK: CREATE 문
 
 	private var createStatement: some View {
@@ -528,5 +636,164 @@ struct AddIndexSheet: View {
 		.padding(20)
 		.frame(width: 420)
 		.onAppear(perform: prepare)
+	}
+}
+
+/// 외래 키 추가·수정 시트: 이름, 컬럼(누른 순서대로), 참조 테이블, 참조 컬럼(같은 수), ON DELETE / ON UPDATE
+struct ForeignKeySheet: View {
+	let session: Session
+	let inspector: TableInspector
+	let columns: [ColumnInfo]
+	/// 고치는 외래 키 (nil 이면 새로)
+	var editing: ForeignKeyInfo? = nil
+	/// 새로: ALTER 한 줄 / 수정: 원래·새 키
+	let add: (String) -> Void
+	let edit: (ForeignKeyInfo, ForeignKeyInfo) -> Void
+	@Environment(\.dismiss) private var dismiss
+	@State private var name = ""
+	@State private var nameEdited = false
+	@State private var picked: [String] = []
+	@State private var refTableID = ""
+	@State private var refPicked: [String] = []
+	@State private var onDelete = "RESTRICT"
+	@State private var onUpdate = "RESTRICT"
+	@State private var prepared = false
+
+	private var table: TableInfo { inspector.table }
+	private var refTable: TableInfo? { session.tables.first { $0.id == refTableID } }
+	private var refColumns: [ColumnInfo] { refTable.map { session.columns[$0.id] ?? [] } ?? [] }
+
+	private var autoName: String {
+		guard let r = refTable, !picked.isEmpty else { return "" }
+		return "fk_\(table.name)_\(picked.joined(separator: "_"))_\(r.name)"
+	}
+
+	private var key: ForeignKeyInfo {
+		ForeignKeyInfo(name: nameEdited ? name : autoName, schema: table.schema, table: table.name, columns: picked,
+		               refSchema: refTable?.schema ?? table.schema, refTable: refTable?.name ?? "", refColumns: refPicked,
+		               onDelete: onDelete, onUpdate: onUpdate)
+	}
+
+	private var ready: Bool { !picked.isEmpty && picked.count == refPicked.count && refTable != nil }
+
+	private var sql: String {
+		guard ready else { return "컬럼과 참조 컬럼을 같은 수만큼 고르세요" }
+		if let old = editing { return inspector.dropForeignKeySQL(old) + ";\n" + inspector.addForeignKeySQL(key) + ";" }
+		return inspector.addForeignKeySQL(key) + ";"
+	}
+
+	/// 참조할 테이블: 같은 DB 먼저, 그다음 다른 DB (뷰 제외)
+	private var tableOptions: [(title: String, value: String?)] {
+		let all = session.tables.filter { !$0.isView }
+		let same = all.filter { $0.schema == table.schema }.map { ($0.name, Optional($0.id)) }
+		let other = all.filter { $0.schema != table.schema }.map { ("\($0.schema).\($0.name)", Optional($0.id)) }
+		return same + (other.isEmpty ? [] : [("", nil)] + other)
+	}
+
+	private func prepare() {
+		guard !prepared else { return }
+		prepared = true
+		if let fk = editing {
+			name = fk.name; nameEdited = true
+			picked = fk.columns
+			refTableID = fk.refSchema + "." + fk.refTable
+			refPicked = fk.refColumns
+			onDelete = fk.onDelete; onUpdate = fk.onUpdate
+		} else if let first = tableOptions.compactMap(\.value).first(where: { $0 != table.id }) ?? tableOptions.compactMap(\.value).first {
+			pickTable(first)
+		}
+	}
+
+	/// 참조 테이블을 고르면 참조 컬럼은 그 테이블의 기본 키로
+	private func pickTable(_ id: String) {
+		refTableID = id
+		let cols = session.columns[id] ?? []
+		refPicked = cols.filter { $0.key == "PRI" }.map(\.name)
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 14) {
+			Text(editing.map { "\(table.name) 의 외래 키 \($0.name) 수정" } ?? "\(table.name) 에 외래 키 추가").font(.headline)
+			Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
+				GridRow {
+					Text("이름").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+					TextField("자동", text: Binding(get: { nameEdited ? name : autoName }, set: { name = $0; nameEdited = !$0.isEmpty }))
+						.textFieldStyle(.roundedBorder)
+				}
+				GridRow {
+					Text("참조 테이블").foregroundStyle(.secondary)
+					PopUp(selection: Binding(get: { refTableID }, set: { pickTable($0) }), options: tableOptions)
+						.frame(width: 260)
+				}
+				GridRow {
+					Text("삭제할 때").foregroundStyle(.secondary)
+					PopUp(selection: $onDelete, options: ForeignKeyInfo.rules.map { ($0, $0) }).frame(width: 160)
+				}
+				GridRow {
+					Text("바꿀 때").foregroundStyle(.secondary)
+					PopUp(selection: $onUpdate, options: ForeignKeyInfo.rules.map { ($0, $0) }).frame(width: 160)
+				}
+			}
+			HStack(alignment: .top, spacing: 12) {
+				columnPicker("이 테이블 컬럼", columns.map { ($0.name, $0.type) }, $picked)
+				Image(systemName: "arrow.right").foregroundStyle(.secondary).padding(.top, 30)
+				columnPicker("참조 컬럼 (\(refTable?.name ?? "—"))", refColumns.map { ($0.name, $0.type) }, $refPicked)
+			}
+			Text(sql)
+				.font(.callout.monospaced()).foregroundStyle(.secondary)
+				.textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+			HStack {
+				Spacer()
+				Button("취소", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+				Button(editing == nil ? "추가" : "수정") {
+					dismiss()
+					if let old = editing { edit(old, key) } else { add(inspector.addForeignKeySQL(key)) }
+				}
+				.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+				.disabled(!ready || (editing.map { $0 == key } ?? false))
+			}
+			.controlSize(.large)
+		}
+		.padding(20)
+		.frame(width: 560)
+		.onAppear(perform: prepare)
+	}
+
+	/// 누른 순서대로 번호가 붙는 컬럼 목록 (인덱스 추가 시트와 같은 모양)
+	private func columnPicker(_ title: String, _ items: [(name: String, type: String)], _ sel: Binding<[String]>) -> some View {
+		VStack(alignment: .leading, spacing: 6) {
+			Text(title).foregroundStyle(.secondary).lineLimit(1)
+			ScrollView {
+				LazyVStack(alignment: .leading, spacing: 0) {
+					ForEach(items, id: \.name) { c in
+						let order = sel.wrappedValue.firstIndex(of: c.name)
+						Button {
+							if let order { sel.wrappedValue.remove(at: order) } else { sel.wrappedValue.append(c.name) }
+						} label: {
+							HStack(spacing: 8) {
+								ZStack {
+									Circle().fill(order != nil ? Color.accentColor : Color.clear)
+									Circle().strokeBorder(order != nil ? Color.accentColor : Color.secondary.opacity(0.6))
+									if let order { Text("\(order + 1)").font(.caption2.bold()).foregroundStyle(.white) }
+								}
+								.frame(width: 18, height: 18)
+								Text(c.name).lineLimit(1)
+								Text(c.type).foregroundStyle(.secondary).lineLimit(1)
+								Spacer()
+							}
+							.contentShape(Rectangle())
+						}
+						.buttonStyle(.plain)
+						.padding(.horizontal, 8)
+						.frame(height: 26)
+					}
+				}
+				.padding(.vertical, 4)
+			}
+			.frame(height: min(CGFloat(max(items.count, 1)) * 26 + 8, 220))
+			.background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+			.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+		}
+		.frame(maxWidth: .infinity)
 	}
 }

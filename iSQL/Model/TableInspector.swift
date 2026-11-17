@@ -32,6 +32,22 @@ struct IndexInfo: Identifiable, Hashable {
 	var id: String { name }
 }
 
+/// 외래 키 하나 (나가는 키: 이 테이블 → 참조 테이블 / 들어오는 키: 다른 테이블 → 이 테이블)
+struct ForeignKeyInfo: Identifiable, Hashable {
+	var name: String
+	/// 키가 있는 테이블 (들어오는 키 목록에서 쓴다)
+	var schema: String
+	var table: String
+	var columns: [String]
+	var refSchema: String
+	var refTable: String
+	var refColumns: [String]
+	var onDelete: String
+	var onUpdate: String
+	var id: String { schema + "." + table + "." + name }
+	static let rules = ["RESTRICT", "CASCADE", "SET NULL", "NO ACTION", "SET DEFAULT"]
+}
+
 /// 구조 보기의 "테이블 정보" 옆 패널: 설정(엔진·문자셋·콜레이션·코멘트), 통계, 인덱스
 @Observable
 final class TableInspector {
@@ -71,6 +87,10 @@ final class TableInspector {
 	private(set) var indexes: [IndexInfo] = []
 	/// SHOW CREATE TABLE (뷰면 CREATE VIEW)
 	private(set) var createSQL = ""
+	/// 이 테이블의 외래 키 (나가는 키)
+	private(set) var foreignKeys: [ForeignKeyInfo] = []
+	/// 이 테이블을 참조하는 다른 테이블의 외래 키 (들어오는 키, 보기만)
+	private(set) var referencedBy: [ForeignKeyInfo] = []
 
 	/// 실행 중인 ALTER
 	private(set) var applying = false
@@ -114,6 +134,7 @@ final class TableInspector {
 			// information_schema 의 AUTO_INCREMENT 는 MySQL 8 에서 하루까지 묵을 수 있다 → CREATE 문의 값을 쓴다
 			if let m = createSQL.firstMatch(of: /\)[^)]*\bAUTO_INCREMENT=(\d+)/) { autoIncrement = Int64(m.1) }
 			try await loadIndexes()
+			try await loadForeignKeys()
 		} catch {
 			self.error = error.localizedDescription
 		}
@@ -156,6 +177,66 @@ final class TableInspector {
 		}
 		// 기본 키가 맨 위
 		indexes = list.filter { $0.kind == .primary } + list.filter { $0.kind != .primary }
+	}
+
+	/// 외래 키: information_schema 에서 나가는 키와 들어오는 키
+	@MainActor
+	private func loadForeignKeys() async throws {
+		guard let session, !table.isView else { foreignKeys = []; referencedBy = []; return }
+		let lit = { (s: String) in literal(.text(s)) }
+		func read(_ whereSQL: String) async throws -> [ForeignKeyInfo] {
+			let r = try await session.query("""
+				SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME,
+				       k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, r.DELETE_RULE, r.UPDATE_RULE
+				  FROM information_schema.KEY_COLUMN_USAGE k
+				  JOIN information_schema.REFERENTIAL_CONSTRAINTS r
+				    ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME
+				 WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND \(whereSQL)
+				 ORDER BY k.TABLE_SCHEMA, k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION
+				""").last ?? QueryResult()
+			var list: [ForeignKeyInfo] = []
+			for row in r.rows {
+				func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
+				if let k = list.indices.last, list[k].name == s(0), list[k].schema == s(1), list[k].table == s(2) {
+					list[k].columns.append(s(3)); list[k].refColumns.append(s(6))
+				} else {
+					list.append(ForeignKeyInfo(name: s(0), schema: s(1), table: s(2), columns: [s(3)], refSchema: s(4), refTable: s(5),
+					                           refColumns: [s(6)], onDelete: s(7), onUpdate: s(8)))
+				}
+			}
+			return list
+		}
+		foreignKeys = try await read("k.TABLE_SCHEMA = \(lit(table.schema)) AND k.TABLE_NAME = \(lit(table.name))")
+		referencedBy = try await read("k.REFERENCED_TABLE_SCHEMA = \(lit(table.schema)) AND k.REFERENCED_TABLE_NAME = \(lit(table.name))")
+	}
+
+	/// ADD CONSTRAINT … FOREIGN KEY 절 (ALTER TABLE 뒤에 붙인다)
+	func addForeignKeyClause(_ fk: ForeignKeyInfo) -> String {
+		let named = fk.name.trimmingCharacters(in: .whitespaces).isEmpty ? "" : "CONSTRAINT \(Self.ident(fk.name)) "
+		let ref = (fk.refSchema == table.schema ? "" : Self.ident(fk.refSchema) + ".") + Self.ident(fk.refTable)
+		return "ADD \(named)FOREIGN KEY (\(fk.columns.map(Self.ident).joined(separator: ", "))) REFERENCES \(ref) (\(fk.refColumns.map(Self.ident).joined(separator: ", "))) ON DELETE \(fk.onDelete) ON UPDATE \(fk.onUpdate)"
+	}
+	func addForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(table.quoted) " + addForeignKeyClause(fk) }
+	func dropForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(table.quoted) DROP FOREIGN KEY \(Self.ident(fk.name))" }
+
+	/// 외래 키 고치기: MySQL 은 같은 이름을 한 ALTER 에서 지우고 다시 만들 수 없다(1826) → 지우고 만들기를 따로,
+	/// 만들기가 실패하면 원래 키를 다시 만들어 되돌린다. 실패 글자 (성공이면 nil)
+	@MainActor
+	func editForeignKey(_ old: ForeignKeyInfo, to new: ForeignKeyInfo) async -> String? {
+		guard let session else { return "접속이 끊겼습니다" }
+		applying = true
+		defer { applying = false }
+		do { _ = try await session.query(dropForeignKeySQL(old)) } catch { return error.localizedDescription }
+		do {
+			_ = try await session.query(addForeignKeySQL(new))
+		} catch {
+			let message = error.localizedDescription
+			_ = try? await session.query(addForeignKeySQL(old))
+			await load()
+			return message + "\n(원래 외래 키로 되돌렸습니다)"
+		}
+		await load()
+		return nil
 	}
 
 	/// 정확한 행 수 (큰 테이블은 오래 걸릴 수 있어 따로 돈다)
