@@ -171,6 +171,7 @@ struct ImportServersSheet: View {
 	/// 다른 앱 파일이면 그 앱 이름 (Sequel Ace), 가져오지 못한 것
 	@State private var source: String?
 	@State private var skipped: [String] = []
+	@State private var sourceHasPasswords = false
 
 	init(store: ServerStore, initialURL: URL?) {
 		self.store = store
@@ -241,7 +242,7 @@ struct ImportServersSheet: View {
 	@ViewBuilder private func serverList(_ p: ServerTransfer.Payload) -> some View {
 		VStack(alignment: .leading, spacing: 6) {
 			if let source {
-				Text("\(source) 접속 \(p.servers.count)개 · 비밀번호는 들어 있지 않아 처음 접속할 때 묻습니다")
+				Text("\(source) 접속 \(p.servers.count)개 · " + (sourceHasPasswords ? "비밀번호도 함께 가져옵니다" : "비밀번호는 들어 있지 않아 처음 접속할 때 묻습니다"))
 					.font(.callout).foregroundStyle(.secondary)
 			} else {
 				Text("\(p.servers.count)개 서버 · \(p.exported.formatted(date: .abbreviated, time: .shortened)) 에 내보냄")
@@ -300,7 +301,7 @@ struct ImportServersSheet: View {
 						Label("SSH 키 \(s.ssh.keyPath) 가 이 맥에 없습니다", systemImage: "key").foregroundStyle(.orange)
 					}
 				}
-				if item.mysqlPassword == nil && source == nil { Text("MySQL 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
+				if item.mysqlPassword == nil && (source == nil || sourceHasPasswords) { Text("MySQL 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
 			}
 			.font(.callout)
 			.padding(.leading, 22)
@@ -332,6 +333,7 @@ struct ImportServersSheet: View {
 			p.servers = r.items
 			payload = p
 			source = r.app
+			sourceHasPasswords = r.hasPasswords
 			skipped = r.skipped
 			// 새 접속만 체크 (이미 있는 서버는 덮어쓸지 사용자가 고른다)
 			let have = Set(store.servers.map(\.id))
