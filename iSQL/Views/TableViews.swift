@@ -55,6 +55,7 @@ struct TableSidebar: View {
 										.onDisappear { rowFrames.map[t.id] = nil }
 										.id(t.id)
 								}
+								RoutineGroups(session: session, schema: schema, search: searchText)
 								Color.clear.frame(height: 6)
 							}
 						} header: {
@@ -72,6 +73,7 @@ struct TableSidebar: View {
 								Button("테이블 목록·용량 보기") { session.openDatabase(schema) }
 								Divider()
 								Button("새 테이블 만들기…") { session.createTableRequest = CreateTableRequest(schema: schema) }
+								NewRoutineMenu(session: session, schema: schema)
 								Divider()
 								Button("데이터베이스 내보내기…") { session.requestExport(schema: schema) }
 								Button("SQL 파일 가져오기…") { session.requestImport(schema: schema) }

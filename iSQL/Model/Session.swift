@@ -79,6 +79,11 @@ final class Session {
 	/// 시스템 DB 를 뺀 DB 이름 (테이블이 없는 DB 도 있다)
 	private(set) var databases: [String] = []
 	private(set) var tables: [TableInfo] = []
+	/// 프로시저·함수·트리거·이벤트 (권한이 없으면 비어 있다)
+	private(set) var routines: [RoutineInfo] = []
+	/// 사이드바에서 펼친 루틴 묶음 ("DB|종류")
+	var expandedRoutineGroups: Set<String> = []
+	@ObservationIgnored private var routineEditors: [String: RoutineEditor] = [:]
 	/// 테이블 id → 컬럼
 	private(set) var columns: [String: [ColumnInfo]] = [:]
 	private(set) var loadingSchema = false
@@ -707,6 +712,82 @@ final class Session {
 			                                        comment: r[8].string ?? ""))
 		}
 		columns = cols
+		await loadRoutines()
+	}
+
+	/// 루틴 목록 (따로: 권한이 없어도 테이블 목록은 나오게)
+	func loadRoutines() async {
+		guard let conn else { return }
+		let excluded = Self.systemSchemas.map { "'\($0)'" }.joined(separator: ",")
+		guard let r = try? await conn.query("""
+			SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_COMMENT FROM information_schema.ROUTINES
+			 WHERE ROUTINE_SCHEMA NOT IN (\(excluded)) ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;
+			SELECT TRIGGER_SCHEMA, TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS
+			 WHERE TRIGGER_SCHEMA NOT IN (\(excluded)) ORDER BY TRIGGER_SCHEMA, TRIGGER_NAME;
+			SELECT EVENT_SCHEMA, EVENT_NAME, STATUS, EVENT_TYPE, INTERVAL_VALUE, INTERVAL_FIELD, EXECUTE_AT, EVENT_COMMENT FROM information_schema.EVENTS
+			 WHERE EVENT_SCHEMA NOT IN (\(excluded)) ORDER BY EVENT_SCHEMA, EVENT_NAME
+			"""), r.count >= 3 else { routines = []; return }
+		var list: [RoutineInfo] = []
+		for row in r[0].rows {
+			let kind: RoutineKind = row[safe: 2]?.string == "FUNCTION" ? .function : .procedure
+			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: kind, comment: row[safe: 3]?.string ?? ""))
+		}
+		for row in r[1].rows {
+			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: .trigger,
+			                        detail: "\(row[safe: 2]?.string ?? "") \(row[safe: 3]?.string ?? "") · \(row[safe: 4]?.string ?? "")"))
+		}
+		for row in r[2].rows {
+			let recurring = row[safe: 3]?.string == "RECURRING"
+			let when = recurring ? "매 \(row[safe: 4]?.string ?? "") \(row[safe: 5]?.string ?? "")" : "한 번 · \(row[safe: 6]?.string ?? "")"
+			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: .event, detail: when,
+			                        enabled: row[safe: 2]?.string == "ENABLED", comment: row[safe: 7]?.string ?? ""))
+		}
+		routines = list
+	}
+
+	func routines(_ schema: String, _ kind: RoutineKind) -> [RoutineInfo] {
+		routines.filter { $0.schema == schema && $0.kind == kind }
+	}
+
+	/// 루틴 탭 열기 (이미 있으면 그 탭)
+	func openRoutine(_ r: RoutineInfo) { open(tabID: r.id) }
+
+	/// 새 루틴 탭 (틀이 들어 있다)
+	func newRoutine(_ kind: RoutineKind, schema: String) {
+		open(tabID: RoutineInfo.newPrefix + kind.rawValue + ":" + schema + ":" + UUID().uuidString.prefix(8))
+	}
+
+	/// 루틴 탭의 편집 상태 (탭마다 하나)
+	func routineEditor(_ tab: String) -> RoutineEditor? {
+		if let e = routineEditors[tab] { return e }
+		guard let p = RoutineInfo.parse(tab) else { return nil }
+		let e = RoutineEditor(kind: p.kind, schema: p.schema, name: p.name, session: self)
+		routineEditors[tab] = e
+		return e
+	}
+
+	/// 새로 만든 루틴을 저장했거나 이름을 바꿨을 때: 탭 id 를 새 이름으로 (편집 상태는 그대로 옮긴다)
+	func retargetRoutineTab(_ old: String, to new: String) {
+		guard old != new, let i = tabs.firstIndex(of: old) else { return }
+		routineEditors[new] = routineEditors[old]
+		routineEditors[old] = nil
+		if tabs.contains(new) { tabs.remove(at: i) } else { tabs[i] = new }
+		if activeTab == old { activeTab = new }
+		rememberTabs()
+	}
+
+	/// 루틴 지우기 (확인은 부른 쪽이). 열린 탭은 닫는다
+	@discardableResult
+	func dropRoutine(_ r: RoutineInfo) async -> String? {
+		do {
+			_ = try await query("DROP \(r.kind.sqlWord) \(TableInspector.ident(r.schema)).\(TableInspector.ident(r.name))")
+		} catch {
+			return error.localizedDescription
+		}
+		for t in tabs where t == r.id { closeTab(t) }
+		routineEditors[r.id] = nil
+		await loadRoutines()
+		return nil
 	}
 
 	/// 검색: 테이블 이름, 테이블 코멘트, 컬럼 이름, 컬럼 코멘트. 띄어 쓴 낱말은 모두 들어 있어야 한다

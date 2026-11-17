@@ -43,7 +43,7 @@ struct QueryPanelView: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			QueryEditor(text: $panel.text, panel: panel)
+			QueryEditor(text: $panel.text, session: panel.session, database: panel.database) { panel.selection = $0 }
 				.frame(height: panel.height)
 			Divider()
 			actionBar
@@ -323,7 +323,10 @@ struct ResultTabItem: View {
 /// 쿼리 입력창 (NSTextView): 고정폭, 똑똑한 따옴표·자동 고침 끔
 struct QueryEditor: NSViewRepresentable {
 	@Binding var text: String
-	let panel: QueryPanel
+	/// 자동완성에 쓰는 접속과 기본 DB (쿼리 패널·루틴 탭이 같이 쓴다)
+	weak var session: Session?
+	var database: String = ""
+	var onSelection: ((NSRange) -> Void)?
 
 	func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -391,7 +394,7 @@ struct QueryEditor: NSViewRepresentable {
 
 		func textViewDidChangeSelection(_ notification: Notification) {
 			guard let tv = textView else { return }
-			parent.panel.selection = tv.selectedRange()
+			parent.onSelection?(tv.selectedRange())
 			// 커서를 낱말 밖으로 옮기면 닫는다
 			if popup.isVisible {
 				let r = tv.selectedRange()
@@ -434,11 +437,11 @@ struct QueryEditor: NSViewRepresentable {
 		func textDidEndEditing(_ notification: Notification) { popup.hide() }
 
 		private func refresh(force: Bool) {
-			guard let tv = textView, let session = parent.panel.session, let window = tv.window else { popup.hide(); return }
+			guard let tv = textView, let session = parent.session, let window = tv.window else { popup.hide(); return }
 			let caret = tv.selectedRange()
 			guard caret.length == 0,
 			      let r = SQLCompleter.complete(text: tv.string, caret: caret.location, session: session,
-			                                    defaultDB: parent.panel.database.isEmpty ? session.currentDB : parent.panel.database, force: force)
+			                                    defaultDB: parent.database.isEmpty ? session.currentDB : parent.database, force: force)
 			else { popup.hide(); return }
 			replaceRange = r.range
 			// 커서 위치(화면 좌표)

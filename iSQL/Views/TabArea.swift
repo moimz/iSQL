@@ -168,6 +168,14 @@ struct TabArea: View {
 						Task { await src.save() }
 						return
 					}
+					// 루틴 탭: 저장 (DROP → CREATE)
+					if let f = focused, let e = f.session.routineEditor(f.tab) {
+						let s = f.session, tab = f.tab
+						Task {
+							if let n = await e.save() { s.retargetRoutineTab(tab, to: RoutineInfo.tabID(e.kind, e.schema, n)) }
+						}
+						return
+					}
 					guard let d = active else { return }
 					Task { if d.mode == .structure { await d.saveStructure() } else { await d.saveIfNeeded() } }
 				}.keyboardShortcut("s")
@@ -243,6 +251,9 @@ struct TabArea: View {
 				} else if let id = session.activeTab, let schema = Session.databaseOf(tab: id) {
 					// DB 개요 탭
 					DatabaseOverviewView(session: session, overview: session.overview(schema)).id(id)
+				} else if let id = session.activeTab, let e = session.routineEditor(id) {
+					// 프로시저·함수·트리거·이벤트
+					RoutineTabView(session: session, tab: id, editor: e).id(id)
 				}
 				if session.activeTab == nil {
 					ContentUnavailableView("테이블을 고르세요", systemImage: "tablecells",
@@ -271,6 +282,8 @@ struct TabArea: View {
 						                onGridScroll: { model.scrollLink.register(.right, $0) })
 					} else if let schema = Session.databaseOf(tab: p.tab) {
 						DatabaseOverviewView(session: s, overview: s.overview(schema)).id(p.key)
+					} else if let e = s.routineEditor(p.tab) {
+						RoutineTabView(session: s, tab: p.tab, editor: e).id(p.key)
 					} else {
 						ContentUnavailableView("테이블이 없습니다", systemImage: "tablecells", description: Text(p.tab))
 					}
@@ -706,7 +719,7 @@ struct TabItem: View {
 					ProgressView().controlSize(.mini)
 				} else {
 					Image(systemName: Session.databaseOf(tab: id) != nil ? "cylinder.split.1x2"
-					      : structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells"))
+					      : RoutineInfo.parse(id).map(\.kind.icon) ?? (structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells")))
 						.font(.system(size: 11))
 						.foregroundStyle(active && focused ? Color.accentColor : .secondary)
 				}
@@ -718,7 +731,8 @@ struct TabItem: View {
 			}
 			// DB 이름은 테이블 이름에 붙여서 ("html.im_core…", 사이 띄어쓰기 없이)
 			TabTitle(prefix: showSchema ? table.map { $0.schema + "." } : nil,
-			         text: table?.name ?? Session.databaseOf(tab: id) ?? id, active: active && focused)
+			         text: table?.name ?? Session.databaseOf(tab: id) ?? RoutineInfo.parse(id).map { $0.name ?? "새 \($0.kind.label)" } ?? id,
+			         active: active && focused)
 			if stale {
 				Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 11)).foregroundStyle(.orange)
 					.help("쿼리로 바뀌었습니다. 다시 읽으세요")
