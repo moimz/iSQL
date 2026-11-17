@@ -350,6 +350,15 @@ final class TableData: ColumnOrderTracking {
 		bump()
 	}
 
+	/// 고른 행을 같은 값으로 새 행에 (기본 키 칸은 비워서 — 저장할 때 새 키·자동 증가)
+	func duplicateRows(_ selected: IndexSet) {
+		guard canEdit, !selected.isEmpty else { return }
+		for r in selected.sorted() where !isDeleted(r) {
+			inserted.append(columns.indices.map { keyIndices.contains($0) ? .null : value(r, $0) })
+		}
+		bump()
+	}
+
 	/// 기존 행은 지울 표시(다시 누르면 취소), 새 행은 바로 뺀다
 	func toggleDelete(_ selected: IndexSet) {
 		guard canEdit else { return }
@@ -552,6 +561,8 @@ extension TableData: GridSource {
 			if state(row, col) == .edited { items.append(.action("원래 값으로") { self.revert(row, col) }) }
 			items.append(.separator)
 		}
+		items.append(.action("행 추가") { self.addRow() })
+		items.append(.action("행 복제 (\(selection.count)개)") { self.duplicateRows(selection) })
 		let allDeleted = selection.allSatisfy { isDeleted($0) }
 		items.append(.action(allDeleted ? "삭제 취소" : "행 삭제 (\(selection.count)개)") { self.toggleDelete(selection) })
 		return filterItems.isEmpty ? items : filterItems + [.separator] + items

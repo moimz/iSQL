@@ -68,6 +68,10 @@ struct ServerSidebar: View {
 			if let id = ids.first, let s = store.servers.first(where: { $0.id == id }) {
 				Button("접속") { model.open(s) }
 				Button("복제") { model.selectedServerID = store.duplicate(s).id }
+				Button("접속 문자열 복사") {
+					NSPasteboard.general.clearContents()
+					NSPasteboard.general.setString(s.connectionString, forType: .string)
+				}
 				Divider()
 				Button("지우기…", role: .destructive) { deleting = s }
 			}

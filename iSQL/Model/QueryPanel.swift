@@ -401,6 +401,15 @@ final class QueryResultSource: GridSource {
 		bump()
 	}
 
+	/// 고른 행을 같은 값으로 새 행에 (기본 키 칸은 비워서). 고칠 수 없는 컬럼(식)은 새 행에서 안 쓰이니 비운다
+	func duplicateRows(_ rows: IndexSet) {
+		guard canEdit, !rows.isEmpty else { return }
+		for r in rows.sorted() where !(orig(r).map { deleted.contains($0) } ?? false) {
+			inserted.append(result.columns.indices.map { keyCols.contains($0) || !editableCols.contains($0) ? .null : value(r, $0) })
+		}
+		bump()
+	}
+
 	/// 기존 행은 지울 표시(다시 누르면 취소), 새 행은 바로 뺀다
 	func toggleDelete(_ rows: IndexSet) {
 		guard canEdit else { return }
@@ -431,6 +440,8 @@ final class QueryResultSource: GridSource {
 			if let o = orig(row), edits[o]?[col] != nil { items.append(.action("원래 값으로") { self.set(row, col, self.result.rows[o][col]) }) }
 			items.append(.separator)
 		}
+		items.append(.action("행 추가") { self.addRow() })
+		items.append(.action("행 복제 (\(selection.count)개)") { self.duplicateRows(selection) })
 		let allDeleted = selection.allSatisfy { r in orig(r).map { deleted.contains($0) } ?? false }
 		items.append(.action(allDeleted ? "삭제 취소" : "행 삭제 (\(selection.count)개)") { self.toggleDelete(selection) })
 		return items

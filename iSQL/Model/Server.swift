@@ -14,6 +14,14 @@ struct Server: Codable, Identifiable, Hashable {
 	/// 접속하자마자 고를 DB (비어 있으면 고르지 않음)
 	var database = ""
 
+	/// mysql://user@host:port/db (비밀번호·SSH 는 빼고)
+	var connectionString: String {
+		let u = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
+		let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+		let db = database.isEmpty ? "" : "/" + (database.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? database)
+		return "mysql://\(u)@\(h):\(port)\(db)"
+	}
+
 	var ssh = SSHSettings()
 
 	/// 그룹 안 순서 (작을수록 위, 없으면 이름순으로 뒤에). 예전 파일에는 없어서 옵셔널
