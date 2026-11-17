@@ -65,9 +65,10 @@ struct QuickOpenView: View {
 			}
 			Divider()
 			Text("↑↓ 고르기   ↵ 열기   ⌘↵ 오른쪽 분할에 열기   esc 닫기")
-				.font(.caption).foregroundStyle(.tertiary)
+				// .tertiary 는 반투명 바탕 위에서 거의 안 보였다 (사용자 2026-11-17)
+				.font(.footnote).foregroundStyle(.secondary)
 				.frame(maxWidth: .infinity)
-				.frame(height: 26)
+				.frame(height: 28)
 		}
 		.frame(width: 580)
 		.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
