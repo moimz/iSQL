@@ -123,6 +123,7 @@ final class ServerStore {
 	func delete(_ server: Server) {
 		servers.removeAll { $0.id == server.id }
 		StorageLocation.remove(dir.appendingPathComponent(server.id.uuidString + ".json"))
+		QueryStore.remove(server.id)
 		Keychain.delete(server.mysqlPasswordKey)
 		Keychain.delete(server.sshSecretKey)
 	}

@@ -2,7 +2,9 @@ import Foundation
 import AppKit
 import Observation
 
-/// 서버마다 하나인 쿼리 패널. 입력한 쿼리는 직접 지우기 전까지 남는다 (앱을 다시 켜도, UserDefaults "query.<서버id>").
+/// 서버마다 하나인 쿼리 패널. 입력한 쿼리는 직접 지우기 전까지 남는다 (앱을 다시 켜도).
+/// 저장된 서버면 iCloud 파일(Queries/<서버id>.sql)에 두어 두 맥이 같이 쓴다 — 쿼리 즐겨찾기·기록을 이것으로 대신한다 (사용자 2026-11-17).
+/// 저장 안 한 서버(퀵 커넥트)와 시험 앱은 이 맥에만 (UserDefaults "query.<서버id>").
 /// 실행한 쿼리 기록은 따로 남기지 않는다 (사용자 결정 2026-11-15)
 @Observable
 final class QueryPanel {
@@ -16,7 +18,7 @@ final class QueryPanel {
 	}() {
 		didSet { UserDefaults.standard.set(Double(height), forKey: "queryPanelHeight") }
 	}
-	var text: String { didSet { scheduleSave() } }
+	var text: String { didSet { if !applyingRemote { scheduleSave() } } }
 	/// 쿼리를 돌릴 기본 DB (USE)
 	var database = ""
 
@@ -36,20 +38,78 @@ final class QueryPanel {
 	init(session: Session, serverID: UUID?) {
 		self.session = session
 		self.serverID = serverID
-		text = serverID.flatMap { UserDefaults.standard.string(forKey: "query.\($0.uuidString)") } ?? ""
+		// 패널은 접속(메인 스레드)에서 만든다
+		let saved = serverID.map { id in MainActor.assumeIsolated { AppState.shared.store?.servers.contains { $0.id == id } ?? false } } ?? false
+		let env = ProcessInfo.processInfo.environment
+		// 시험 앱은 iCloud 에 쓰지 않는다 (동기화 시험만 ISQL_AUTOTEST_SYNC=1 로 켠다)
+		synced = (saved && env["ISQL_AUTOTEST_PORT"] == nil) || env["ISQL_AUTOTEST_SYNC"] == "1"
+		let key = serverID.map { "query.\($0.uuidString)" }
+		let local = key.flatMap { UserDefaults.standard.string(forKey: $0) }
+		if synced, let id = serverID {
+			if let t = QueryStore.read(id) {
+				// 다른 맥이 먼저 옮겼는데 이 맥에도 다른 내용이 있었으면 버리지 않고 뒤에 붙인다
+				if let local, !local.isEmpty, local != t {
+					text = t + (t.isEmpty ? "" : "\n\n") + "-- 이 맥에만 있던 쿼리\n" + local
+					QueryStore.write(id, text)
+				} else {
+					text = t
+				}
+			} else {
+				// 이 맥에만 있던 내용을 처음 한 번 iCloud 로 옮긴다
+				text = local ?? ""
+				if let local, !local.isEmpty { QueryStore.write(id, local) }
+			}
+			if let key { UserDefaults.standard.removeObject(forKey: key) }
+			lastSynced = text
+			// 다른 맥에서 바뀌면(iCloud), 앱으로 돌아오면 파일을 다시 읽는다
+			for name in [CloudWatcher.didChange, NSApplication.didBecomeActiveNotification] {
+				observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+					MainActor.assumeIsolated { self?.pullRemote() }
+				})
+			}
+		} else {
+			text = local ?? ""
+		}
 	}
+
+	deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
 	// MARK: - 내용 저장 (입력이 멈추면 0.5초 뒤)
 
 	@ObservationIgnored private var saveWork: DispatchWorkItem?
+	/// iCloud 파일에 두는지 (저장된 서버)
+	@ObservationIgnored private let synced: Bool
+	/// 마지막으로 파일에 쓰거나 파일에서 읽은 내용 (다른 맥이 바꿨는지 알려고)
+	@ObservationIgnored private var lastSynced = ""
+	@ObservationIgnored private var applyingRemote = false
+	@ObservationIgnored private var observers: [NSObjectProtocol] = []
 
 	private func scheduleSave() {
 		guard let id = serverID else { return }
 		saveWork?.cancel()
 		let t = text
-		let w = DispatchWorkItem { UserDefaults.standard.set(t, forKey: "query.\(id.uuidString)") }
+		let w = DispatchWorkItem { [weak self] in
+			guard let self else { return }
+			if self.synced {
+				QueryStore.write(id, t)
+				self.lastSynced = t
+			} else {
+				UserDefaults.standard.set(t, forKey: "query.\(id.uuidString)")
+			}
+			self.saveWork = nil
+		}
 		saveWork = w
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
+	}
+
+	/// 다른 맥에서 고친 내용을 받아 넣는다. 이 맥에서 치고 있는 중(저장 대기)이면 이쪽 것이 이긴다
+	func pullRemote() {
+		guard synced, let id = serverID, saveWork == nil, let remote = QueryStore.read(id),
+		      remote != lastSynced, remote != text else { return }
+		applyingRemote = true
+		text = remote
+		applyingRemote = false
+		lastSynced = remote
 	}
 
 	// MARK: - 실행할 문장 고르기
