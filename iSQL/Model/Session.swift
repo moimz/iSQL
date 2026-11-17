@@ -166,6 +166,7 @@ final class Session {
 	func connect(_ server: Server, mysqlPassword: String?, sshSecret: String?) async {
 		disconnect()
 		self.server = server
+		authFailed = false
 		do {
 			let (t, c) = try await Self.open(server, mysqlPassword: mysqlPassword, sshSecret: sshSecret) { [weak self] step in
 				self?.state = .connecting(step)
@@ -185,9 +186,13 @@ final class Session {
 		} catch {
 			disconnect()
 			self.server = server
+			if case .server(let code, _, _) = error as? MySQLError, code == 1045 { authFailed = true }
 			state = .failed(error.localizedDescription)
 		}
 	}
+
+	/// 마지막 접속이 아이디·비밀번호가 틀려 실패했는지 (MySQL 1045) → 창이 로그인 시트를 띄운다
+	private(set) var authFailed = false
 
 	func disconnect() {
 		conn?.close()

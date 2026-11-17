@@ -315,6 +315,8 @@ struct SessionStatusView: View {
 	@Environment(ServerStore.self) private var store
 	let model: WindowModel
 	let session: Session
+	/// 로그인 시트를 닫았는지 (다시 실패하면 다시 띄운다)
+	@State private var loginDismissed = false
 
 	var body: some View {
 		switch session.state {
@@ -334,6 +336,18 @@ struct SessionStatusView: View {
 			}
 			.padding()
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			// 아이디·비밀번호가 틀렸으면(또는 비밀번호 없이 저장된 서버) 제목바 시트로 바로 묻는다
+			.sheet(isPresented: Binding(get: { session.authFailed && !loginDismissed }, set: { if !$0 { loginDismissed = true } })) {
+				if let s = session.server {
+					LoginSheet(server: s, saved: store.servers.contains { $0.id == s.id }) { user, pw, save in
+						loginDismissed = true
+						Task {
+							await model.retryLogin(s, user: user, password: pw, save: save, store: store)
+							loginDismissed = false
+						}
+					}
+				}
+			}
 		default:
 			VStack(spacing: 16) {
 				ProgressView().controlSize(.large)
@@ -343,5 +357,64 @@ struct SessionStatusView: View {
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
+	}
+}
+
+/// 접속 실패(아이디·비밀번호) 때 묻는 시트: 아이디, 비밀번호, (저장된 서버면) 서버 정보에 저장
+struct LoginSheet: View {
+	let server: Server
+	/// 저장된 서버인지 (퀵 커넥트가 아니면 "서버 정보에 저장" 을 보인다)
+	let saved: Bool
+	let connect: (_ user: String, _ password: String, _ save: Bool) -> Void
+	@State private var user: String
+	@State private var password = ""
+	@State private var save = true
+	@FocusState private var focus: Bool
+	@Environment(\.dismiss) private var dismiss
+
+	init(server: Server, saved: Bool, connect: @escaping (String, String, Bool) -> Void) {
+		self.server = server
+		self.saved = saved
+		self.connect = connect
+		_user = State(initialValue: server.user)
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 14) {
+			Text("\(server.displayName) 에 로그인").font(.headline)
+			Text("아이디나 비밀번호가 맞지 않습니다. 다른 앱에서 가져온 서버처럼 비밀번호가 저장되지 않았을 수도 있습니다.")
+				.font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+			Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 10) {
+				GridRow {
+					Text("아이디:").gridColumnAlignment(.trailing)
+					TextField("", text: $user).textFieldStyle(.roundedBorder)
+				}
+				GridRow {
+					Text("비밀번호:")
+					SecureField("", text: $password).textFieldStyle(.roundedBorder).focused($focus)
+						.onSubmit(go)
+				}
+			}
+			if saved {
+				Toggle("접속되면 서버 정보에 저장 (아이디·비밀번호)", isOn: $save).toggleStyle(.checkbox)
+			}
+			HStack {
+				Spacer()
+				Button("취소", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+				Button("접속", action: go).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+					.disabled(user.trimmingCharacters(in: .whitespaces).isEmpty)
+			}
+			.controlSize(.large)
+		}
+		.padding(20)
+		.frame(width: 420)
+		.onAppear { focus = true }
+	}
+
+	private func go() {
+		let u = user.trimmingCharacters(in: .whitespaces)
+		guard !u.isEmpty else { return }
+		connect(u, password, saved && save)
+		dismiss()
 	}
 }

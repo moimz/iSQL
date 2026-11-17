@@ -98,6 +98,20 @@ final class WindowModel {
 		Task { await s.connect(server, mysqlPassword: pw.mysql, sshSecret: pw.ssh) }
 	}
 
+	/// 로그인 시트에서 다시 접속: 아이디·비밀번호를 바꿔 접속하고, 되면(저장을 골랐으면) 서버 정보·키체인을 고친다
+	@MainActor
+	func retryLogin(_ server: Server, user: String, password: String, save: Bool, store: ServerStore) async {
+		var s = server
+		s.user = user
+		let ssh = secrets[s.id]?.ssh ?? Keychain.get(s.sshSecretKey)
+		disconnect(s.id)
+		open(s, mysqlPassword: password, sshSecret: ssh, given: true)
+		await waitSettled(s.id)
+		guard save, sessions[s.id]?.state == .connected, store.servers.contains(where: { $0.id == s.id }) else { return }
+		store.save(s)
+		Keychain.set(password, for: s.mysqlPasswordKey)
+	}
+
 	/// 접속해 있는 서버·보는 서버를 적어 둔다 (다음에 앱을 열 때 다시 접속)
 	private func recordConnections() {
 		AutoConnect.record(connected: Array(sessions.keys), viewing: currentID)
