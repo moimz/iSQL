@@ -64,11 +64,17 @@ struct QuickOpenView: View {
 				}
 			}
 			Divider()
-			Text("↑↓ 고르기   ↵ 열기   ⌘↵ 오른쪽 분할에 열기   esc 닫기")
-				// .tertiary 는 반투명 바탕 위에서 거의 안 보였다 (사용자 2026-11-17)
-				.font(.footnote).foregroundStyle(.secondary)
-				.frame(maxWidth: .infinity)
-				.frame(height: 28)
+			// 키는 실행 버튼처럼 시스템 기호 이미지로 (⌘ ↵ 를 글자로 쓰면 한글 글꼴로 그려져 모양이 다르다)
+			// .tertiary 는 반투명 바탕 위에서 거의 안 보였다 (사용자 2026-11-17)
+			HStack(spacing: 16) {
+				hint(["arrow.up", "arrow.down"], "고르기")
+				hint(["return"], "열기")
+				hint(["command", "return"], "오른쪽 분할에 열기")
+				hint(["escape"], "닫기")
+			}
+			.font(.footnote).foregroundStyle(.secondary)
+			.frame(maxWidth: .infinity)
+			.frame(height: 28)
 		}
 		.frame(width: 580)
 		.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -76,6 +82,13 @@ struct QuickOpenView: View {
 		.shadow(color: .black.opacity(0.3), radius: 24, y: 8)
 		.onAppear { focused = true }
 		.onChange(of: query) { selected = 0 }
+	}
+
+	private func hint(_ keys: [String], _ text: String) -> some View {
+		HStack(spacing: 4) {
+			ShortcutKeys(symbols: keys)
+			Text(text)
+		}
 	}
 
 	private func move(_ d: Int, count: Int) {
