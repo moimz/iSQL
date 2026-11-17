@@ -241,7 +241,7 @@ struct ModeSegment: NSViewRepresentable {
 	func makeCoordinator() -> Coordinator { Coordinator(self) }
 
 	func makeNSView(context: Context) -> NSSegmentedControl {
-		let images = ["tablecells", "list.bullet.rectangle"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
+		let images = ["tablecells", "square.stack.3d.up"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
 		let c = NSSegmentedControl(images: images, trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
 		c.setToolTip("데이터 (⌘1)", forSegment: 0)
 		c.setToolTip("구조 (⌘2)", forSegment: 1)
