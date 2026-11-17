@@ -39,6 +39,14 @@ struct iSQLApp: App {
 				}
 		}
 		.windowToolbarStyle(.unified)
+		// .isql 파일을 열 때 새 창을 만들지 않는다 (열린 창의 onOpenURL 이 받는다)
+		.handlesExternalEvents(matching: [])
+		.commands {
+			CommandGroup(replacing: .importExport) {
+				Button("서버 설정 가져오기…") { AppState.shared.requestTransfer(.importFile(nil)) }
+				Button("서버 정보 내보내기…") { AppState.shared.requestTransfer(.export) }
+			}
+		}
 
 		// iSQL 앱 설정 (⌘,): 일반 · MCP. 서버별 설정은 제목바 톱니로 여는 따로 된 창(ServerSettingsWindow)
 		Settings {

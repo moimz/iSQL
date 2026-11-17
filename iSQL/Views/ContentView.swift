@@ -102,6 +102,8 @@ struct ContentView: View {
 		.sheet(isPresented: $model.addingGroup) {
 			GroupAddSheet { model.onGroupAdded?($0) }
 		}
+		// 서버 내보내기·가져오기 시트, .isql 파일 열기
+		.modifier(ServerTransferHost(model: model))
 		.confirmationDialog("저장 안 된 변경이 있습니다", isPresented: Binding(get: { confirmDisconnect != nil }, set: { if !$0 { confirmDisconnect = nil } })) {
 			Button("버리고 닫기", role: .destructive) {
 				if let id = confirmDisconnect { model.disconnect(id) }

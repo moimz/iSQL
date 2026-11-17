@@ -44,6 +44,8 @@ final class WindowModel {
 
 	/// 그룹 추가 시트를 띄웠는지, 추가하면 알려 줄 곳 (퀵 커넥트 폼이 새 그룹을 고르게)
 	var addingGroup = false
+	/// 서버 내보내기·가져오기 시트 (파일 메뉴, .isql 더블클릭)
+	var transfer: ServerTransferRequest?
 	@ObservationIgnored var onGroupAdded: ((String) -> Void)?
 
 	var current: Session? { currentID.flatMap { sessions[$0] } }

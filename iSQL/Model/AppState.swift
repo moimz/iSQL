@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 /// 앱 전체에서 하나: 서버 목록, 열린 창들(창마다 WindowModel), 지금 앞에 있는 창.
 /// MCP 가 "지금 보고 있는 창의 서버 / 접속한 모든 서버 / 목록의 모든 서버" 를 고를 때 쓴다
@@ -17,6 +18,12 @@ final class AppState {
 		models.removeAll { $0.model == nil }
 		if !models.contains(where: { $0.model === m }) { models.append(WeakModel(m)) }
 		if activeModel == nil { activeModel = m }
+	}
+
+	/// 파일 메뉴 → 서버 내보내기·가져오기: 앞에 있는 창에 시트를 띄운다 (창이 없으면 삑)
+	func requestTransfer(_ r: ServerTransferRequest) {
+		guard let m = activeModel ?? allModels.first else { NSSound.beep(); return }
+		m.transfer = r
 	}
 
 	var allModels: [WindowModel] {
