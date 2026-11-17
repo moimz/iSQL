@@ -7,7 +7,7 @@ final class WindowModel {
 	/// 서버 id → 접속 (접속 중이거나 실패한 것만 있다)
 	private(set) var sessions: [UUID: Session] = [:]
 	/// 지금 보고 있는 서버 (nil 이면 퀵 커넥트 화면)
-	private(set) var currentID: UUID?
+	private(set) var currentID: UUID? { didSet { recordConnections() } }
 
 	/// 오른쪽 분할에 둔 탭 (순서대로)과 그중 보이는 탭, 초점이 있는 쪽
 	var parkedTabs: [ParkedTab] = []
@@ -69,9 +69,9 @@ final class WindowModel {
 	/// 그 서버로 옮긴다. 접속돼 있지 않으면 접속한다.
 	/// 비밀번호를 주면 그것을, 안 주면 앞서 받은 것이나 키체인 것을 쓴다
 	@MainActor
-	func open(_ server: Server, mysqlPassword: String? = nil, sshSecret: String? = nil, given: Bool = false) {
+	func open(_ server: Server, mysqlPassword: String? = nil, sshSecret: String? = nil, given: Bool = false, focus: Bool = true) {
 		if given { secrets[server.id] = (mysqlPassword, sshSecret) }
-		currentID = server.id
+		if focus { currentID = server.id }
 		if let s = sessions[server.id] {
 			switch s.state {
 			case .connected, .connecting: return
@@ -94,7 +94,37 @@ final class WindowModel {
 			}
 		}
 		sessions[server.id] = s
+		recordConnections()
 		Task { await s.connect(server, mysqlPassword: pw.mysql, sshSecret: pw.ssh) }
+	}
+
+	/// 접속해 있는 서버·보는 서버를 적어 둔다 (다음에 앱을 열 때 다시 접속)
+	private func recordConnections() {
+		AutoConnect.record(connected: Array(sessions.keys), viewing: currentID)
+	}
+
+	/// 앱을 열 때: 보여 줄 서버를 먼저 접속해 띄우고, 나머지는 뒤에서 차례로 (첫 창만)
+	@MainActor
+	func autoConnect(saved: [Server]) async {
+		guard !AutoConnect.didRun, !AutoConnect.testing else { return }
+		AutoConnect.didRun = true
+		let plan = AutoConnect.plan(saved: saved)
+		guard let first = plan.first else { return }
+		open(first)
+		await waitSettled(first.id)
+		for s in plan.dropFirst() where sessions[s.id] == nil {
+			open(s, focus: false)
+			await waitSettled(s.id)
+		}
+	}
+
+	/// 접속이 끝날(되거나 실패할) 때까지 (최대 30초)
+	@MainActor
+	private func waitSettled(_ id: UUID) async {
+		for _ in 0..<300 {
+			guard let s = sessions[id] else { return }
+			if case .connecting = s.state { try? await Task.sleep(for: .milliseconds(100)) } else if s.state == .idle { try? await Task.sleep(for: .milliseconds(100)) } else { return }
+		}
 	}
 
 	func disconnect(_ id: UUID) {
@@ -104,6 +134,7 @@ final class WindowModel {
 		sessions[id] = nil
 		secrets[id] = nil
 		if currentID == id { currentID = nil }
+		recordConnections()
 	}
 
 	/// 퀵 커넥트 화면으로 (접속은 그대로 둔다)

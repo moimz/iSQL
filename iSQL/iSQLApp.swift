@@ -8,6 +8,7 @@ enum Main {
 		// 앱이 죽어서 남은 터널을 끄고(다른 iSQL 이 쓰는 터널은 그대로), 이번에 끝날 때 내 터널도 끈다
 		TunnelRegistry.killOrphans()
 		NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+			AutoConnect.terminating = true
 			TunnelRegistry.killMine()
 		}
 		iSQLApp.main()

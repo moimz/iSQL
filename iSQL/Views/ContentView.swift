@@ -44,6 +44,8 @@ struct ContentView: View {
 		}
 		.toolbar(removing: .title)
 		.onAppear { AppState.shared.register(model) }
+		// 앱 열 때 자동 접속 (첫 창만)
+		.task { await model.autoConnect(saved: store.servers) }
 		.onChange(of: activeState, initial: true) { if activeState == .key { AppState.shared.activeModel = model } }
 		// 설정 창이 보일 서버: 이 창에서 서버를 고르면 그 서버로 (⌘, 로 열어도 마지막으로 고른 창의 서버)
 		.onChange(of: model.currentID, initial: true) { SettingsTarget.shared.session = model.current?.isConnected == true ? model.current : SettingsTarget.shared.session }

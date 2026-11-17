@@ -10,7 +10,7 @@ struct AppSettingsView: View {
 	var body: some View {
 		TabView(selection: $tab) {
 			Tab("일반", systemImage: "gearshape", value: "general") {
-				AppGeneralPage().frame(width: Self.width, height: 260)
+				AppGeneralPage().frame(width: Self.width, height: 340)
 			}
 			Tab("MCP", systemImage: "point.3.connected.trianglepath.dotted", value: "mcp") {
 				MCPSettingsPage().frame(width: Self.width, height: 700)
@@ -22,6 +22,7 @@ struct AppSettingsView: View {
 
 /// 앱 설정 > 일반 (앱 전역 설정은 차례로 들어간다)
 private struct AppGeneralPage: View {
+	@AppStorage(AutoConnect.reconnectKey) private var reconnectLast = false
 	private var version: String {
 		let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
 		let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
@@ -30,6 +31,11 @@ private struct AppGeneralPage: View {
 
 	var body: some View {
 		Form {
+			Section {
+				Toggle("앱을 열면 마지막에 접속해 있던 서버에 다시 접속", isOn: $reconnectLast)
+			} footer: {
+				Text("접속을 닫지 않고 앱을 끈 서버들에 다시 접속합니다. 보고 있던 서버를 먼저 띄우고 나머지는 뒤에서 접속합니다. 서버마다 \"앱 열 때 자동 접속\" 은 서버 목록 오른쪽 클릭에서 켭니다.").foregroundStyle(.tertiary)
+			}
 			Section {
 				LabeledContent("버전", value: version)
 			} footer: {

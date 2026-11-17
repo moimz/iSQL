@@ -6,6 +6,8 @@ struct ServerSidebar: View {
 	@Environment(ServerStore.self) private var store
 	@Bindable var model: WindowModel
 	@State private var deleting: Server?
+	/// 앱 열 때 자동 접속 표시한 서버 (메뉴에서 바꾸면 다시 읽는다)
+	@State private var autoIDs = AutoConnect.servers
 	@State private var deletingGroup: String?
 	@State private var searchText = ""
 	@FocusState private var searchFocused: Bool
@@ -36,7 +38,7 @@ struct ServerSidebar: View {
 			ForEach(shown, id: \.group) { g in
 				Section {
 					ForEach(g.servers) { s in
-						ServerRow(server: s, state: model.state(s.id)).tag(s.id)
+						ServerRow(server: s, state: model.state(s.id), auto: autoIDs.contains(s.id)).tag(s.id)
 							.draggable(DragItem.server(s.id))
 							// 서버 위에 놓으면 그 서버 앞으로
 							.dropDestination(for: String.self) { items, _ in
@@ -68,6 +70,8 @@ struct ServerSidebar: View {
 			if let id = ids.first, let s = store.servers.first(where: { $0.id == id }) {
 				Button("접속") { model.open(s) }
 				Button("복제") { model.selectedServerID = store.duplicate(s).id }
+				Toggle("앱 열 때 자동 접속", isOn: Binding(get: { autoIDs.contains(s.id) },
+				                                          set: { _ in AutoConnect.toggle(s.id); autoIDs = AutoConnect.servers }))
 				Button("접속 문자열 복사") {
 					NSPasteboard.general.clearContents()
 					NSPasteboard.general.setString(s.connectionString, forType: .string)
@@ -224,11 +228,19 @@ struct GroupAddSheet: View {
 struct ServerRow: View {
 	let server: Server
 	var state: Session.State?
+	/// 앱 열 때 자동 접속
+	var auto = false
 	var body: some View {
 		HStack(spacing: 9) {
 			ServerIcon(color: server.color, size: 30)
 			VStack(alignment: .leading, spacing: 1) {
-				Text(server.displayName)
+				HStack(spacing: 4) {
+					Text(server.displayName)
+					if auto {
+						Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(.yellow)
+							.help("앱 열 때 자동 접속")
+					}
+				}
 				Text(server.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
 			}
 			if state == .connected {
