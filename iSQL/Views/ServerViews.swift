@@ -315,8 +315,8 @@ struct SessionStatusView: View {
 	@Environment(ServerStore.self) private var store
 	let model: WindowModel
 	let session: Session
-	/// 로그인 시트를 닫았는지 (다시 실패하면 다시 띄운다)
-	@State private var loginDismissed = false
+	/// 로그인 시트를 닫은 실패 번호 (다시 실패하면 번호가 달라져 다시 띄운다: "다시 시도" 로 또 틀려도)
+	@State private var dismissedFailure = -1
 
 	var body: some View {
 		switch session.state {
@@ -337,14 +337,12 @@ struct SessionStatusView: View {
 			.padding()
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
 			// 아이디·비밀번호가 틀렸으면(또는 비밀번호 없이 저장된 서버) 제목바 시트로 바로 묻는다
-			.sheet(isPresented: Binding(get: { session.authFailed && !loginDismissed }, set: { if !$0 { loginDismissed = true } })) {
+			.sheet(isPresented: Binding(get: { session.authFailed && dismissedFailure != session.authFailCount },
+			                            set: { if !$0 { dismissedFailure = session.authFailCount } })) {
 				if let s = session.server {
 					LoginSheet(server: s, saved: store.servers.contains { $0.id == s.id }) { user, pw, save in
-						loginDismissed = true
-						Task {
-							await model.retryLogin(s, user: user, password: pw, save: save, store: store)
-							loginDismissed = false
-						}
+						dismissedFailure = session.authFailCount
+						Task { await model.retryLogin(s, user: user, password: pw, save: save, store: store) }
 					}
 				}
 			}

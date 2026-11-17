@@ -186,13 +186,16 @@ final class Session {
 		} catch {
 			disconnect()
 			self.server = server
-			if case .server(let code, _, _) = error as? MySQLError, code == 1045 { authFailed = true }
+			if case .server(let code, _, _) = error as? MySQLError, code == 1045 { authFailed = true; Self.failSeq += 1; authFailCount = Self.failSeq }
 			state = .failed(error.localizedDescription)
 		}
 	}
 
 	/// 마지막 접속이 아이디·비밀번호가 틀려 실패했는지 (MySQL 1045) → 창이 로그인 시트를 띄운다
 	private(set) var authFailed = false
+	/// 1045 실패 번호 (실패할 때마다 앱 전체에서 새 번호 — 다시 접속하며 Session 이 새로 생겨도 겹치지 않게). 창이 시트를 새로 띄운다
+	private(set) var authFailCount = 0
+	@MainActor private static var failSeq = 0
 
 	func disconnect() {
 		conn?.close()
