@@ -324,6 +324,18 @@ final class MCPServer {
 		 	"database": ["type": "string", "description": "이 DB 로 USE 한 뒤 실행 (MCP 전용 연결이라 앱 화면에는 영향 없음)"],
 		 	"max_rows": ["type": "integer"],
 		 ], "required": ["sql"]]],
+		["name": "server_status",
+		 "description": "서버 상태 진단: 가동 시간·연결 수/최대·실행 중 스레드·평균 초당 쿼리·느린 쿼리 수·InnoDB 버퍼 풀 적중률과 사용량, 그리고 프로세스 목록(10초 넘게 도는 쿼리·잠금 대기 표시). '이 서버 왜 느려?' 같은 질문에 먼저 쓴다. 쿼리 권한과 상관없이 읽기만 한다",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"include_sleeping": ["type": "boolean", "description": "놀고 있는(Sleep) 연결도 프로세스 목록에 넣기 (기본 false)"],
+		 ]]],
+		["name": "top_queries",
+		 "description": "performance_schema 의 쿼리별 누적 통계에서 총 시간이 오래 걸린 쿼리 (값은 ? 로 묶인 형태): 횟수·총 시간·평균·읽은 행·보낸 행. 읽은 행이 보낸 행보다 훨씬 많으면 인덱스를 못 타는 쿼리일 수 있다",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"limit": ["type": "integer", "description": "몇 개 (기본 20, 최대 200)"],
+		 ]]],
 	]
 
 	private struct MCPFailure: LocalizedError {
@@ -393,6 +405,39 @@ final class MCPServer {
 				Task { try? await session.loadSchema() }
 			}
 			return json(out.count == 1 ? out[0] : out)
+		case "server_status":
+			let t = try target(a)
+			let run: ServerDiagnostics.Run = { sql in try await self.run(t, sql) }
+			let s = try await ServerDiagnostics.summary(run)
+			let sleeping = (a["include_sleeping"] as? Bool) ?? false
+			let procs = try await ServerDiagnostics.processes(run).filter { sleeping || $0.command != "Sleep" }
+			note("server_status · \(t.server.displayName)")
+			var d: [String: Any] = [
+				"version": s.version,
+				"uptime_seconds": s.uptime,
+				"connections": ["connected": s.connected, "running": s.running, "max": s.maxConnections, "near_limit": s.connectionsTight],
+				"avg_queries_per_second": ServerDiagnostics.decimal(s.avgQPS, 1),
+				"slow_queries": s.slowQueries,
+				"long_query_time": ServerDiagnostics.trimNumber(s.longQueryTime),
+				"innodb_buffer_pool": ["used": ServerDiagnostics.bytes(s.bufferUsed), "size": ServerDiagnostics.bytes(s.bufferSize),
+				                       "hit_rate_percent": s.bufferHit.map { ServerDiagnostics.decimal($0 * 100, 2) } ?? NSNull(), "low": s.bufferLow],
+				"bytes_received": s.received, "bytes_sent": s.sent,
+			]
+			d["processes"] = procs.prefix(100).map { p -> [String: Any] in
+				["id": p.id, "user": p.user, "host": p.host, "db": p.db, "command": p.command, "time_seconds": p.time,
+				 "state": p.state, "query": String(p.info.prefix(500)), "long_running": p.long, "waiting_lock": p.waitingLock]
+			}
+			return json(d)
+		case "top_queries":
+			let t = try target(a)
+			let limit = min(max((a["limit"] as? Int) ?? 20, 1), 200)
+			let list = try await ServerDiagnostics.topQueries({ sql in try await self.run(t, sql) }, limit: limit)
+			note("top_queries · \(t.server.displayName)")
+			return json(list.map { q -> [String: Any] in
+				["query": String(q.sql.prefix(1000)), "database": q.schema, "count": q.count,
+				 "total_seconds": ServerDiagnostics.decimal(q.totalSeconds, 3), "avg_seconds": ServerDiagnostics.decimal(q.avgSeconds, 4),
+				 "rows_examined": q.rowsExamined, "rows_sent": q.rowsSent]
+			})
 		default:
 			throw MCPFailure("모르는 도구: \(name)")
 		}

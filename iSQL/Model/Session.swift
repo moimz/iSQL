@@ -135,11 +135,12 @@ final class Session {
 	@ObservationIgnored private var sidePassword: String?
 
 	/// 같은 서버에 연결을 하나 더 연다 (MCP 용: USE 를 해도 이 창의 쿼리 패널 기본 DB 가 바뀌지 않게). 터널은 같이 쓴다
-	func sideConnection(purpose: String = "") async throws -> MySQLConnection {
+	/// log: false 면 콘솔에 남기지 않는다 (설정 창 상태 탭이 5초마다 읽는 쿼리)
+	func sideConnection(purpose: String = "", log: Bool = true) async throws -> MySQLConnection {
 		guard let server, let e = sideEndpoint else { throw MySQLError.closed }
 		let c = try await MySQLConnection.connect(.init(host: e.host, port: e.port, user: server.user,
 		                                                password: sidePassword ?? "", database: server.database))
-		attachLog(c, purpose: purpose)
+		if log { attachLog(c, purpose: purpose) }
 		return c
 	}
 

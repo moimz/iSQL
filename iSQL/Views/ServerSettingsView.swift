@@ -21,8 +21,8 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 	private static let pages: [(key: String, title: String, symbol: String, height: CGFloat)] = [
 		("general", "일반", "gearshape", 440),
 		("accounts", "사용자 계정", "person.2", 620),
-		("status", "상태", "chart.bar.xaxis", 440),
-		("variables", "서버 설정", "slider.horizontal.3", 440),
+		("status", "상태", "chart.bar.xaxis", 720),
+		("variables", "서버 설정", "slider.horizontal.3", 640),
 	]
 
 	func show(store: ServerStore) {
@@ -93,9 +93,9 @@ struct ServerSettingsPage: View {
 				case "accounts":
 					UserAccountsView(session: s, manager: s.accountManager()).id(ObjectIdentifier(s))
 				case "status":
-					soon("상태", "chart.bar.xaxis", "서버·프로세스·질의 통계·상태 변수")
+					ServerStatusTab(session: s).id(ObjectIdentifier(s))
 				case "variables":
-					soon("서버 설정", "slider.horizontal.3", "서버 변수(SHOW VARIABLES) 보기·고치기")
+					ServerVariablesTab(session: s).id(ObjectIdentifier(s))
 				default:
 					general(s)
 				}
@@ -105,10 +105,6 @@ struct ServerSettingsPage: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
-	}
-
-	private func soon(_ title: String, _ icon: String, _ what: String) -> some View {
-		ContentUnavailableView(title, systemImage: icon, description: Text("\(what)는 준비 중입니다."))
 	}
 
 	private func general(_ session: Session) -> some View {
