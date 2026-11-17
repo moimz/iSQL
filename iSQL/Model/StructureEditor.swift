@@ -326,6 +326,21 @@ final class StructureEditor: GridSource {
 		changed()
 	}
 
+	/// 같은 정의로 바로 아래에 (이름은 _copy, 키·자동 증가는 빼고 — 테이블에 자동 증가는 하나뿐). 이름 칸을 바로 고친다
+	func duplicateColumn(_ row: Int) {
+		guard loaded, rows.indices.contains(row) else { NSSound.beep(); return }
+		var c = rows[row].col
+		let names = Set(rows.map { $0.col.name.lowercased() })
+		var name = c.name + "_copy", k = 2
+		while names.contains(name.lowercased()) { name = c.name + "_copy\(k)"; k += 1 }
+		c.name = name
+		c.key = ""
+		c.autoIncrement = false
+		rows.insert(Row(col: c, original: nil), at: row + 1)
+		editRequest = (row + 1, 0)
+		changed()
+	}
+
 	func move(_ from: IndexSet, to: Int) {
 		guard loaded, !from.isEmpty else { return }
 		let moving = from.map { rows[$0] }
@@ -540,6 +555,7 @@ final class StructureEditor: GridSource {
 		guard canEdit else { return [] }
 		var items: [GridMenuItem] = [
 			.action("아래에 컬럼 추가") { self.addColumn(after: row) },
+			.action("컬럼 복제") { self.duplicateColumn(row) },
 			.separator,
 			row > 0 ? .action("위로 옮기기") { self.moveUp(row) } : .disabled("위로 옮기기"),
 			row < rows.count - 1 ? .action("아래로 옮기기") { self.moveDown(row) } : .disabled("아래로 옮기기"),
