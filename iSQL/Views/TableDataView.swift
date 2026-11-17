@@ -99,6 +99,9 @@ struct TableDetailView: View {
 				.background(.background)
 			}
 		}
+		// 표가 남는 높이를 다 차지한다: 분할을 처음 열 때 가끔 표가 위쪽 일부만 차지하고 하단바 영역이 늘어나 화면이 깨졌다 (사용자)
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.layoutPriority(1)
 
 		if data.hasChanges || data.saveError != nil {
 			changesBar

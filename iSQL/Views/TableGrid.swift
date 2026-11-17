@@ -182,6 +182,11 @@ struct TableGrid: NSViewRepresentable {
 		c.onSelection = onSelection
 		c.setSource(source)
 	}
+
+	/// 주는 크기를 그대로 다 쓴다 (NSScrollView 의 제 크기를 묻게 두면 처음 배치 때 엉뚱한 높이가 나오기도 했다)
+	func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+		proposal.replacingUnspecifiedDimensions(by: CGSize(width: 200, height: 120))
+	}
 }
 
 /// 탭마다 AppKit 표를 하나씩 살려 두고 보이는 것만 보인다 (isHidden: 숨긴 표는 배치도 그리기도 안 한다).
@@ -202,6 +207,11 @@ struct TableGridHost: NSViewRepresentable {
 	func makeCoordinator() -> Coordinator { Coordinator() }
 
 	func makeNSView(context: Context) -> GridHostView { GridHostView() }
+
+	/// 주는 크기를 그대로 다 쓴다 (분할을 처음 열 때 표 높이가 엉뚱하게 잡혀 화면이 깨지던 것)
+	func sizeThatFits(_ proposal: ProposedViewSize, nsView: GridHostView, context: Context) -> CGSize? {
+		proposal.replacingUnspecifiedDimensions(by: CGSize(width: 200, height: 120))
+	}
 
 	func updateNSView(_ container: GridHostView, context: Context) {
 		let c = context.coordinator
@@ -242,6 +252,11 @@ final class GridHostView: NSView {
 	override var isFlipped: Bool { true }
 	override func resizeSubviews(withOldSize oldSize: NSSize) {
 		for v in subviews where !v.isHidden { v.frame = bounds }
+	}
+	/// 배치할 때마다도 맞춘다 (크기가 바뀐 뒤 표를 붙이면 resizeSubviews 가 다시 안 불려 예전 크기로 남았다)
+	override func layout() {
+		super.layout()
+		for v in subviews where !v.isHidden && v.frame != bounds { v.frame = bounds }
 	}
 }
 

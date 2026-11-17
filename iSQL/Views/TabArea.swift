@@ -270,9 +270,14 @@ struct TabArea: View {
 		model.parkedTabs.compactMap { p in model.sessions[p.server]?.data(tab: p.tab) }
 	}
 
+	/// 분할 한쪽 최소 너비 (하단바가 잘리지 않게, 사용자 2026-11-17)
+	private static let minPane: CGFloat = 600
+
 	private func rightWidth(total: CGFloat) -> CGFloat {
 		let w = splitWidth > 0 ? CGFloat(splitWidth) : total / 2
-		return min(max(w, 280), max(280, total - 280))
+		// 둘 다 600 이 안 되면 반반
+		guard total >= Self.minPane * 2 else { return total / 2 }
+		return min(max(w, Self.minPane), total - Self.minPane)
 	}
 
 	/// 두 칸 사이 경계: 끌어서 오른쪽 칸 너비를 바꾼다.
@@ -298,7 +303,7 @@ struct TabArea: View {
 						.onChanged { v in
 							if dragStartWidth == nil { dragStartWidth = Double(rightWidth(total: total)) }
 							let w = (dragStartWidth ?? 0) - Double(v.translation.width)
-							splitWidth = min(max(w, 280), Double(max(280, total - 280)))
+							splitWidth = total >= Self.minPane * 2 ? min(max(w, Double(Self.minPane)), Double(total - Self.minPane)) : Double(total / 2)
 						}
 						.onEnded { _ in dragStartWidth = nil })
 			}

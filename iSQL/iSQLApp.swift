@@ -32,7 +32,7 @@ struct iSQLApp: App {
 		WindowGroup {
 			ContentView()
 				.environment(store)
-				.frame(minWidth: 960, minHeight: 600)
+				.frame(minWidth: 1200, minHeight: 600)
 				.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
 					store.load()
 				}
