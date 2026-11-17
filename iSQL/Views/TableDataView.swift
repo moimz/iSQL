@@ -8,6 +8,7 @@ struct TableDetailView: View {
 	/// 지금 보이는 탭인지 (데이터는 처음 보일 때 받아온다. 복원한 탭을 한꺼번에 읽지 않게)
 	var isActive = true
 	@State private var selection = IndexSet()
+	@State private var creatingView = false
 	/// 구조 화면은 한 번 열어 본 뒤부터 살려 둔다
 	@State private var structureBuilt = false
 
@@ -47,6 +48,8 @@ struct TableDetailView: View {
 		}
 		.onChange(of: data.tab) { selection = [] }
 		.sheet(isPresented: Bindable(data).showSQL) { SQLPreview(statements: data.changeSQL()) }
+		// 지금 보는 상태(찾기 조건·정렬)를 뷰로
+		.sheet(isPresented: $creatingView) { CreateViewSheet(sql: data.viewSQL, session: session, schema: table.schema, title: "지금 보는 데이터로 뷰 만들기") }
 		.sheet(item: Bindable(data).longEdit) { req in
 			LongTextSheet(request: req, table: table) { data.set(req.row, req.col, $0) }
 		}
@@ -175,9 +178,9 @@ struct TableDetailView: View {
 				AddExportGroup(addHelp: "행 추가", add: { data.addRow() },
 				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
 				               remove: selection.isEmpty ? nil : { data.toggleDelete(selection) },
-				               exportHelp: "내보내기") { session.requestExport(.data(data)) }
+				               exportHelp: "내보내기", makeView: { creatingView = true }) { session.requestExport(.data(data)) }
 			} else {
-				ExportButton { session.requestExport(.data(data)) }
+				ExportButton(makeView: { creatingView = true }) { session.requestExport(.data(data)) }
 				if let why = data.readOnlyReason {
 					Label(why, systemImage: "lock").foregroundStyle(.secondary)
 				}

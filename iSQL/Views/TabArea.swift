@@ -254,6 +254,9 @@ struct TabArea: View {
 				} else if let id = session.activeTab, let e = session.routineEditor(id) {
 					// 프로시저·함수·트리거·이벤트
 					RoutineTabView(session: session, tab: id, editor: e).id(id)
+				} else if let id = session.activeTab, let v = session.privateView(tab: id) {
+					// 나만 보는 뷰
+					PrivateViewTabView(session: session, view: v).id(id)
 				}
 				if session.activeTab == nil {
 					ContentUnavailableView("테이블을 고르세요", systemImage: "tablecells",
@@ -284,6 +287,8 @@ struct TabArea: View {
 						DatabaseOverviewView(session: s, overview: s.overview(schema)).id(p.key)
 					} else if let e = s.routineEditor(p.tab) {
 						RoutineTabView(session: s, tab: p.tab, editor: e).id(p.key)
+					} else if let v = s.privateView(tab: p.tab) {
+						PrivateViewTabView(session: s, view: v).id(p.key)
 					} else {
 						ContentUnavailableView("테이블이 없습니다", systemImage: "tablecells", description: Text(p.tab))
 					}
@@ -391,7 +396,7 @@ struct TabBar: View {
 	var body: some View {
 		TabStrip(selected: session.activeTab) {
 			ForEach(session.tabs, id: \.self) { id in
-				TabItem(table: session.table(id), id: id,
+				TabItem(table: session.table(id), id: id, customTitle: session.privateView(tab: id)?.name,
 				        active: session.activeTab == id,
 				        // data(for:) 로 만들어 두고 읽어야 loading 이 관찰된다
 				        loading: session.data(tab: id)?.loading
@@ -454,7 +459,7 @@ struct ParkedTabBar: View {
 			ForEach(model.parkedTabs, id: \.key) { p in
 				let s = model.sessions[p.server]
 				let t = s?.table(p.tab)
-				TabItem(table: t, id: p.tab,
+				TabItem(table: t, id: p.tab, customTitle: s?.privateView(tab: p.tab)?.name,
 				        active: model.parkedActive == p,
 				        loading: s?.data(tab: p.tab)?.loading
 				            ?? Session.databaseOf(tab: p.tab).flatMap { db in s.map { $0.overview(db).loading } } ?? false,
@@ -700,6 +705,8 @@ extension View {
 struct TabItem: View {
 	let table: TableInfo?
 	let id: String
+	/// 나만 보는 뷰처럼 id 로 이름을 알 수 없는 탭의 이름
+	var customTitle: String? = nil
 	let active: Bool
 	var loading = false
 	/// 쿼리 패널에서 이 테이블을 바꿔서 다시 읽어야 함
@@ -730,7 +737,8 @@ struct TabItem: View {
 					ProgressView().controlSize(.mini)
 				} else {
 					Image(systemName: Session.databaseOf(tab: id) != nil ? "cylinder.split.1x2"
-					      : RoutineInfo.parse(id).map(\.kind.icon) ?? (structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells")))
+					      : RoutineInfo.parse(id).map(\.kind.icon) ?? (PrivateView.id(ofTab: id) != nil ? "eye.circle"
+					      : (structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells"))))
 						.font(.system(size: 11))
 						.foregroundStyle(active && focused ? Color.accentColor : .secondary)
 				}
@@ -742,7 +750,7 @@ struct TabItem: View {
 			}
 			// DB 이름은 테이블 이름에 붙여서 ("html.im_core…", 사이 띄어쓰기 없이)
 			TabTitle(prefix: showSchema ? table.map { $0.schema + "." } : nil,
-			         text: table?.name ?? Session.databaseOf(tab: id) ?? RoutineInfo.parse(id).map { $0.name ?? "새 \($0.kind.label)" } ?? id,
+			         text: customTitle ?? table?.name ?? Session.databaseOf(tab: id) ?? RoutineInfo.parse(id).map { $0.name ?? "새 \($0.kind.label)" } ?? id,
 			         active: active && focused)
 			if stale {
 				Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 11)).foregroundStyle(.orange)

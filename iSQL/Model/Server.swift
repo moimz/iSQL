@@ -34,6 +34,9 @@ struct Server: Codable, Identifiable, Hashable {
 
 	/// 위험한 SQL(DROP·TRUNCATE·ALTER·WHERE 없는 UPDATE 등)을 쿼리 패널에서 실행하기 전에 묻기 (기본 켬)
 	var warnDangerousSQL: Bool?
+	/// 새 데이터베이스·새 테이블을 만들 때 먼저 골라 둘 문자셋·콜레이션 (비면 서버·DB 기본값). 서버 설정 > 일반
+	var defaultCharset: String?
+	var defaultCollation: String?
 	var warnsDangerousSQL: Bool { warnDangerousSQL ?? true }
 
 	var displayName: String { name.isEmpty ? (ssh.enabled ? "\(ssh.host) → \(host)" : host) : name }

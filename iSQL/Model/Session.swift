@@ -81,6 +81,10 @@ final class Session {
 	private(set) var tables: [TableInfo] = []
 	/// 프로시저·함수·트리거·이벤트 (권한이 없으면 비어 있다)
 	private(set) var routines: [RoutineInfo] = []
+	/// 나만 보는 뷰 (iCloud)
+	private(set) var privateViews: [PrivateView] = []
+	@ObservationIgnored private var privateViewsWatching = false
+	@ObservationIgnored private var privateOutputs: [String: QueryOutput] = [:]
 	/// 사이드바에서 펼친 루틴 묶음 ("DB|종류")
 	var expandedRoutineGroups: Set<String> = []
 	@ObservationIgnored private var routineEditors: [String: RoutineEditor] = [:]
@@ -713,7 +717,77 @@ final class Session {
 		}
 		columns = cols
 		await loadRoutines()
+		loadPrivateViews()
 	}
+
+	// MARK: 나만 보는 뷰
+
+	/// iCloud 에 두는지 (저장된 서버, 시험 앱 아님)
+	private var privateViewsSynced: Bool {
+		guard let id = server?.id, ProcessInfo.processInfo.environment["ISQL_AUTOTEST_PORT"] == nil else { return false }
+		return MainActor.assumeIsolated { AppState.shared.store?.servers.contains { $0.id == id } ?? false }
+	}
+
+	func loadPrivateViews() {
+		guard let id = server?.id, privateViewsSynced else { return }
+		privateViews = PrivateViewStore.load(id)
+		if !privateViewsWatching {
+			privateViewsWatching = true
+			// 다른 맥에서 바뀌면 다시 읽는다
+			NotificationCenter.default.addObserver(forName: CloudWatcher.didChange, object: nil, queue: .main) { [weak self] _ in
+				MainActor.assumeIsolated { self?.loadPrivateViews() }
+			}
+		}
+	}
+
+	private func savePrivateViews() {
+		guard let id = server?.id, privateViewsSynced else { return }
+		PrivateViewStore.save(id, privateViews)
+	}
+
+	func privateViews(_ schema: String) -> [PrivateView] { privateViews.filter { $0.schema == schema }.sorted { $0.name < $1.name } }
+	func privateView(tab: String) -> PrivateView? { PrivateView.id(ofTab: tab).flatMap { id in privateViews.first { $0.id == id } } }
+
+	@discardableResult
+	func addPrivateView(name: String, schema: String, sql: String) -> PrivateView {
+		let v = PrivateView(name: name, schema: schema, sql: sql)
+		privateViews.append(v)
+		savePrivateViews()
+		return v
+	}
+
+	func renamePrivateView(_ v: PrivateView, to name: String) {
+		guard let i = privateViews.firstIndex(where: { $0.id == v.id }) else { return }
+		privateViews[i].name = name
+		savePrivateViews()
+	}
+
+	func deletePrivateView(_ v: PrivateView) {
+		privateViews.removeAll { $0.id == v.id }
+		for t in tabs where t == v.tabID { closeTab(t) }
+		privateOutputs[v.tabID] = nil
+		savePrivateViews()
+	}
+
+	func openPrivateView(_ v: PrivateView) { open(tabID: v.tabID) }
+
+	/// 나만 보는 뷰 탭의 결과 (처음 열 때·새로 읽기 때 실행). 기본 DB 를 그 뷰의 DB 로 맞춘다 (쿼리 패널과 같은 연결)
+	@MainActor
+	func runPrivateView(_ v: PrivateView, refresh: Bool = false) async throws -> QueryOutput {
+		if !refresh, let o = privateOutputs[v.tabID] { return o }
+		if !v.schema.isEmpty, currentDB != v.schema {
+			_ = try await query("USE \(quoteName(v.schema))")
+			currentDB = v.schema
+		}
+		let paged = SQLSplitter.canAutoLimit(v.sql)
+		let size = QueryOutput.currentPageSize
+		let r = try await query(paged ? "\(v.sql) LIMIT \(size + 1)" : v.sql).last(where: \.isResultSet) ?? QueryResult()
+		let o = QueryOutput(sql: v.sql, paged: paged, result: r, pageSize: size, session: self)
+		privateOutputs[v.tabID] = o
+		return o
+	}
+
+	func cachedPrivateOutput(_ tab: String) -> QueryOutput? { privateOutputs[tab] }
 
 	/// 루틴 목록 (따로: 권한이 없어도 테이블 목록은 나오게)
 	func loadRoutines() async {

@@ -135,6 +135,10 @@ struct ServerSettingsPage: View {
 					Text("위험한 SQL 실행 전에 경고")
 					Text("쿼리 패널에서 DROP·TRUNCATE·ALTER·DELETE·WHERE 없는 UPDATE 를 실행하기 전에 묻습니다")
 				}
+				ServerDefaultCharsetRows(session: session) { s in
+					session.updateServer(s)
+					if store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
+				}
 			} header: {
 				Text("이 서버 설정")
 			} footer: {
@@ -162,4 +166,37 @@ struct SettingsWindowStyler: NSViewRepresentable {
 	}
 	func makeNSView(context: Context) -> Probe { Probe() }
 	func updateNSView(_ v: Probe, context: Context) {}
+}
+
+/// 서버 설정 > 일반: 새 DB·테이블의 기본 문자셋·콜레이션 ("서버 기본값" 이면 비움)
+private struct ServerDefaultCharsetRows: View {
+	let session: Session
+	let save: (Server) -> Void
+
+	var body: some View {
+		let cs = session.server?.defaultCharset ?? ""
+		let co = session.server?.defaultCollation ?? ""
+		Picker(selection: Binding(get: { cs }, set: { v in
+			guard var s = session.server else { return }
+			s.defaultCharset = v.isEmpty ? nil : v
+			s.defaultCollation = v.isEmpty ? nil : session.catalog.defaultCollation(for: v)
+			save(s)
+		})) {
+			Text("서버 기본값").tag("")
+			ForEach(session.catalog.charsets.map(\.name), id: \.self) { Text($0).tag($0) }
+		} label: {
+			Text("새로 만들 때 문자셋")
+			Text("새 데이터베이스·새 테이블 시트에서 먼저 골라 둡니다")
+		}
+		Picker("새로 만들 때 콜레이션", selection: Binding(get: { co }, set: { v in
+			guard var s = session.server else { return }
+			s.defaultCollation = v.isEmpty ? nil : v
+			save(s)
+		})) {
+			Text(cs.isEmpty ? "서버 기본값" : "문자셋 기본값").tag("")
+			ForEach(session.catalog.collations(for: cs), id: \.self) { Text($0).tag($0) }
+		}
+		.disabled(cs.isEmpty)
+		.task { try? await session.loadCatalogIfNeeded() }
+	}
 }

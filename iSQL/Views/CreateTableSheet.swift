@@ -389,6 +389,11 @@ struct CreateTableSheet: View {
 			let e = try? await session.query("SELECT @@default_storage_engine").last?.rows.first?.first?.string
 			engine = e ?? (session.catalog.engines.contains("InnoDB") ? "InnoDB" : session.catalog.engines.first ?? "")
 		}
+		if charset.isEmpty, let cs = session.server?.defaultCharset, !cs.isEmpty {
+			// 서버 설정에 정해 둔 기본값이 먼저
+			charset = cs
+			collation = session.server?.defaultCollation.flatMap { $0.isEmpty ? nil : $0 } ?? session.catalog.defaultCollation(for: cs) ?? ""
+		}
 		if charset.isEmpty {
 			let r = try? await session.query("""
 				SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(literal(.text(schema)))

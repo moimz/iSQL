@@ -55,6 +55,7 @@ struct TableSidebar: View {
 										.onDisappear { rowFrames.map[t.id] = nil }
 										.id(t.id)
 								}
+								PrivateViewRows(session: session, schema: schema, search: searchText)
 								RoutineGroups(session: session, schema: schema, search: searchText)
 								Color.clear.frame(height: 6)
 							}

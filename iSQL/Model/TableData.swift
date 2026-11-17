@@ -450,6 +450,14 @@ final class TableData: ColumnOrderTracking {
 
 	// MARK: - SQL 만들기
 
+	/// 지금 보는 상태의 SELECT (뷰로 만들기): DB 까지 붙인 테이블 + 적용한 찾기 조건 + 정렬
+	var viewSQL: String {
+		var s = "SELECT * FROM \(quoteName(table.schema)).\(quoteName(table.name))"
+		if !appliedWhere.isEmpty { s += " WHERE " + appliedWhere }
+		if let sort { s += " ORDER BY " + quoteName(sort.column) + (sort.ascending ? " ASC" : " DESC") }
+		return s
+	}
+
 	/// 앞부분만 읽은 큰 BLOB 칸이 이 행들에 있는지
 	func hasPartial(rows sel: IndexSet) -> Bool { sel.contains { partial[$0] != nil } }
 

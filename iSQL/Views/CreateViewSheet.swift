@@ -1,21 +1,26 @@
 import SwiftUI
 
-/// 쿼리 결과로 뷰 만들기: 이름·DB 를 고르면 CREATE VIEW db.이름 AS (실행한 SELECT)
+/// 쿼리 결과·지금 보는 데이터로 뷰 만들기: 이름·DB 를 고르면 CREATE VIEW db.이름 AS (SELECT).
+/// "나만 보기" 면 서버에 만들지 않고 iCloud 에 이름 붙인 SELECT 로 둔다 (사이드바에 자물쇠 눈, 내 맥끼리 같이 씀)
 struct CreateViewSheet: View {
 	let sql: String
 	let session: Session
+	var title = "쿼리 결과로 뷰 만들기"
 	@State private var name = ""
 	@State private var schema: String
+	@AppStorage("createViewPrivate") private var privateOnly = false
 	@State private var running = false
 	@State private var error: String?
 	@FocusState private var focused: Bool
 	@Environment(\.dismiss) private var dismiss
 
-	init(sql: String, session: Session) {
+	init(sql: String, session: Session, schema: String? = nil, title: String = "쿼리 결과로 뷰 만들기") {
 		self.sql = sql
 		self.session = session
+		self.title = title
 		let dbs = session.databases.filter { !Session.systemSchemas.contains($0) }
-		_schema = State(initialValue: dbs.contains(session.currentDB) ? session.currentDB : (dbs.first ?? session.currentDB))
+		let want = schema ?? session.currentDB
+		_schema = State(initialValue: dbs.contains(want) ? want : (dbs.first ?? want))
 	}
 
 	private var trimmed: String { name.trimmingCharacters(in: .whitespaces) }
@@ -26,7 +31,9 @@ struct CreateViewSheet: View {
 		return s
 	}
 	private var exists: Bool {
-		session.tables.contains { $0.schema == schema && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+		privateOnly
+			? session.privateViews.contains { $0.schema == schema && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+			: session.tables.contains { $0.schema == schema && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
 	}
 	private var statement: String {
 		let q = TableInspector.ident
@@ -35,7 +42,7 @@ struct CreateViewSheet: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
-			Text("쿼리 결과로 뷰 만들기").font(.headline)
+			Text(title).font(.headline)
 			Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 10) {
 				GridRow {
 					Text("뷰 이름:").gridColumnAlignment(.trailing)
@@ -44,8 +51,14 @@ struct CreateViewSheet: View {
 				}
 				GridRow {
 					Text("데이터베이스:")
-					PopUp(selection: $schema, options: session.databases.filter { !Session.systemSchemas.contains($0) }.map { ($0, $0) })
-						.frame(width: 240)
+					HStack(spacing: 12) {
+						PopUp(selection: $schema, options: session.databases.filter { !Session.systemSchemas.contains($0) }.map { ($0, $0) })
+							.frame(width: 240)
+							.disabled(privateOnly)
+						Toggle("나만 보기", isOn: $privateOnly)
+							.toggleStyle(.checkbox)
+							.help("서버에 뷰를 만들지 않고 이 SELECT 에 이름을 붙여 iCloud 에 둡니다. 내 맥끼리만 보이고 다른 사람·다른 프로그램에는 안 보입니다")
+					}
 				}
 			}
 			.disabled(running)
@@ -53,7 +66,11 @@ struct CreateViewSheet: View {
 				Label("\(schema) 에 이미 있는 이름입니다.", systemImage: "exclamationmark.triangle.fill")
 					.foregroundStyle(.orange).font(.callout)
 			}
-			Text(statement)
+			if privateOnly {
+				Label("서버에는 만들지 않습니다. \(schema) 아래에 자물쇠가 붙은 뷰로 보이고, iCloud 로 내 다른 맥에도 보입니다.", systemImage: "lock.fill")
+					.font(.callout).foregroundStyle(.secondary)
+			}
+			Text(privateOnly ? body_ : statement)
 				.font(.callout.monospaced()).foregroundStyle(.secondary)
 				.lineLimit(8).truncationMode(.tail)
 				.textSelection(.enabled)
@@ -84,6 +101,13 @@ struct CreateViewSheet: View {
 		running = true
 		error = nil
 		let stmt = statement, db = schema
+		if privateOnly {
+			let v = session.addPrivateView(name: trimmed, schema: db, sql: body_)
+			session.openPrivateView(v)
+			running = false
+			dismiss()
+			return
+		}
 		Task { @MainActor in
 			do {
 				// 쿼리 패널과 같은 연결: 쿼리 안의 DB 를 안 붙인 테이블은 지금 기본 DB 로 풀린다 (결과와 같은 테이블)

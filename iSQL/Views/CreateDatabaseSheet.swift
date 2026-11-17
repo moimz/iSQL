@@ -96,6 +96,12 @@ struct CreateDatabaseSheet: View {
 	private func loadDefaults() async {
 		try? await session.loadCatalogIfNeeded()
 		guard charset.isEmpty else { return }
+		// 서버 설정에 정해 둔 기본값이 먼저
+		if let cs = session.server?.defaultCharset, !cs.isEmpty {
+			charset = cs
+			collation = session.server?.defaultCollation.flatMap { $0.isEmpty ? nil : $0 } ?? session.catalog.defaultCollation(for: cs) ?? ""
+			return
+		}
 		let r = try? await session.query("SELECT @@character_set_server, @@collation_server").last
 		charset = r?.rows.first?[safe: 0]?.string ?? ""
 		collation = r?.rows.first?[safe: 1]?.string ?? ""
