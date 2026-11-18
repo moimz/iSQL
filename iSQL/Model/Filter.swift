@@ -14,17 +14,28 @@ struct FilterRow: Identifiable, Equatable {
 	func sql(_ dialect: any SQLDialect) -> String? {
 		guard enabled, !column.isEmpty else { return nil }
 		let path = self.path.trimmingCharacters(in: .whitespaces)
-		let c = path.isEmpty ? dialect.quote(column) : dialect.jsonPath(dialect.quote(column), path)
+		let col = dialect.quote(column)
+		let c = path.isEmpty ? col : dialect.jsonPath(col, path)
 		let v = value
 		if op.needsValue && v.isEmpty { return nil }
 		func lit(_ s: String) -> String { dialect.literal(.text(s)) }
+		// JSON 경로 값은 글자로 나온다 → 크기 비교는 숫자면 숫자로 ('9' > '60' 이 참이 되지 않게)
+		func cmp(_ s: String) -> String {
+			let t = s.trimmingCharacters(in: .whitespaces)
+			return !path.isEmpty && Double(t) != nil && Double(t)!.isFinite ? t : lit(s)
+		}
 		switch op {
+		case .gt: return "\(c) > \(cmp(v))"
+		case .ge: return "\(c) >= \(cmp(v))"
+		case .lt: return "\(c) < \(cmp(v))"
+		case .le: return "\(c) <= \(cmp(v))"
+		case .jsonAnywhere: return dialect.jsonSearch(col, v, path: path.isEmpty ? nil : path)
+		case .jsonContains: return dialect.jsonContains(col, FilterOp.jsonCandidate(v), path: path.isEmpty ? nil : path)
+		case .jsonHasPath, .jsonNoPath:
+			guard !path.isEmpty else { return nil }
+			return dialect.jsonContainsPath(col, path) + (op == .jsonHasPath ? "" : " = 0")
 		case .eq: return "\(c) = \(lit(v))"
 		case .ne: return "\(c) != \(lit(v))"
-		case .gt: return "\(c) > \(lit(v))"
-		case .ge: return "\(c) >= \(lit(v))"
-		case .lt: return "\(c) < \(lit(v))"
-		case .le: return "\(c) <= \(lit(v))"
 		case .like: return "\(c) LIKE \(lit(v))"
 		case .notLike: return "\(c) NOT LIKE \(lit(v))"
 		case .in, .notIn:
@@ -53,19 +64,37 @@ enum FilterOp: String, CaseIterable, Identifiable {
 	case isNull = "NULL"
 	case notNull = "NULL 아님"
 	case isEmpty = "비어 있음"
+	// JSON 컬럼에서만 (경로 칸과 같이 쓴다, 사용자 2026-11-18: 함수 이름을 기억하지 않아도 되게)
+	case jsonAnywhere = "JSON 어디든 포함"
+	case jsonContains = "배열·객체에 포함"
+	case jsonHasPath = "경로 있음"
+	case jsonNoPath = "경로 없음"
 
 	var id: String { rawValue }
+	/// JSON 컬럼에서만 보이는 연산자
+	static let jsonOps: [FilterOp] = [.jsonAnywhere, .jsonContains, .jsonHasPath, .jsonNoPath]
+	var isJSONOnly: Bool { Self.jsonOps.contains(self) }
 	/// LIKE 값 안의 \ % _ 를 글자 그대로 찾게
-	var needsValue: Bool { ![.isNull, .notNull, .isEmpty].contains(self) }
+	var needsValue: Bool { ![.isNull, .notNull, .isEmpty, .jsonHasPath, .jsonNoPath].contains(self) }
 	var placeholder: String {
 		switch self {
 		case .in, .notIn: "쉼표로 나눔: 1, 2, 3"
 		case .like, .notLike: "% 와 _ 를 직접 씀"
+		case .jsonAnywhere: "찾을 글자 (% 를 쓸 수 있음)"
+		case .jsonContains: "값 (글자·숫자, 또는 JSON)"
 		default: "값"
 		}
 	}
 	/// 메뉴에서 구분선을 넣을 자리
-	var groupEnd: Bool { [.le, .notLike, .notIn].contains(self) }
+	var groupEnd: Bool { [.le, .notLike, .notIn, .isEmpty].contains(self) }
+
+	/// "배열·객체에 포함" 의 값 → JSON 글자: 숫자·true·false·null·{…}·[…] 는 그대로, 나머지는 "글자"
+	static func jsonCandidate(_ v: String) -> String {
+		let t = v.trimmingCharacters(in: .whitespaces)
+		if Double(t) != nil || ["true", "false", "null"].contains(t) || t.hasPrefix("{") || t.hasPrefix("[") { return t }
+		let data = try? JSONSerialization.data(withJSONObject: [t], options: [.withoutEscapingSlashes])
+		return data.flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\(t)\""
+	}
 }
 
 /// 테이블마다 최근에 적용한 WHERE 절 (최대 10개, 이 맥에만)

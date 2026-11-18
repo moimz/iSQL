@@ -247,6 +247,14 @@ struct FilterBar: View {
 
 	/// JSON 타입 컬럼인지 (테이블 목록을 읽을 때의 컬럼 타입)
 	private func isJSON(_ name: String) -> Bool { columns.first { $0.name == name }?.type.lowercased() == "json" }
+	/// 연산자 목록: JSON 컬럼이면 끝에 JSON 묶음
+	private func opOptions(jsonColumn: Bool) -> [(title: String, value: FilterOp?)] {
+		var o = FilterOp.allCases.filter { jsonColumn || !$0.isJSONOnly }.flatMap { op -> [(title: String, value: FilterOp?)] in
+			op.groupEnd ? [(op.rawValue, op), ("", nil)] : [(op.rawValue, op)]
+		}
+		if o.last?.value == nil { o.removeLast() }
+		return o
+	}
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -267,9 +275,7 @@ struct FilterBar: View {
 							.help("JSON 안의 값으로 거르기: $.name, $.user.id, $.tags[0] (비우면 컬럼 전체)")
 							.onSubmit(apply)
 					}
-					PopUp(selection: $f.op, options: FilterOp.allCases.flatMap { op -> [(title: String, value: FilterOp?)] in
-						op.groupEnd ? [(op.rawValue, op), ("", nil)] : [(op.rawValue, op)]
-					})
+					PopUp(selection: $f.op, options: opOptions(jsonColumn: data.session.capabilities.jsonPathFilter && isJSON(f.column)))
 					.frame(width: 120)
 					if f.op.needsValue {
 						TextField("", text: $f.value, prompt: Text(f.op.placeholder))
@@ -289,7 +295,11 @@ struct FilterBar: View {
 				}
 				.opacity(f.enabled ? 1 : 0.55)
 				// 다른 컬럼을 고르면 경로는 버린다
-				.onChange(of: f.column) { _, _ in if !f.path.isEmpty { $f.path.wrappedValue = "" } }
+				.onChange(of: f.column) { _, c in
+					if !f.path.isEmpty { $f.path.wrappedValue = "" }
+					// JSON 이 아닌 컬럼으로 바꾸면 JSON 연산자는 = 로
+					if f.op.isJSONOnly && !isJSON(c) { $f.op.wrappedValue = .eq }
+				}
 				.padding(.horizontal, 12)
 				.padding(.vertical, 5)
 				Divider().opacity(0.5)

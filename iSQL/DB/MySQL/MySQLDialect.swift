@@ -41,6 +41,17 @@ struct MySQLDialect: SQLDialect {
 		mariadb ? "JSON_UNQUOTE(JSON_EXTRACT(\(column), \(literal(.text(path)))))" : "\(column)->>\(literal(.text(path)))"
 	}
 
+	/// MySQL 5.7.8·MariaDB 10.2.3 부터 같은 함수
+	func jsonSearch(_ column: String, _ pattern: String, path: String?) -> String {
+		"JSON_SEARCH(\(column), 'one', \(literal(.text(pattern)))" + (path.map { ", NULL, \(literal(.text($0)))" } ?? "") + ") IS NOT NULL"
+	}
+	func jsonContains(_ column: String, _ candidate: String, path: String?) -> String {
+		"JSON_CONTAINS(\(column), \(literal(.text(candidate)))" + (path.map { ", \(literal(.text($0)))" } ?? "") + ")"
+	}
+	func jsonContainsPath(_ column: String, _ path: String) -> String {
+		"JSON_CONTAINS_PATH(\(column), 'one', \(literal(.text(path))))"
+	}
+
 	/// \ 로 이스케이프 (MySQL 기본 ESCAPE)
 	func likeEscaped(_ s: String) -> String {
 		s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")

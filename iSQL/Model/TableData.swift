@@ -658,7 +658,15 @@ extension TableData: GridSource {
 				guard let text else { return "" }
 				return op == .like || op == .notLike ? "%" + dialect.likeEscaped(text) + "%" : text
 			}
-			filterItems = [.submenu("현재 값으로 검색", ops.map { title, op in .action(title) { self.filterBy(name, op, filterValue(op)) } })]
+			var sub: [GridMenuItem] = ops.map { title, op in .action(title) { self.filterBy(name, op, filterValue(op)) } }
+			// JSON 칸: 그 JSON 의 값들로 바로 거르기를 먼저 (함수 이름을 몰라도 되게, 사용자 2026-11-18)
+			if let text, isJSONColumn(col), session.capabilities.jsonPathFilter {
+				let json = Self.jsonFilterChoices(text)
+				if !json.isEmpty {
+					sub = json.map { c in .action(c.title) { self.filterBy(name, c.op, c.value, path: c.path) } } + [.separator] + sub
+				}
+			}
+			filterItems = [.submenu("현재 값으로 검색", sub)]
 		}
 		guard canEdit else { return filterItems }
 		var items: [GridMenuItem] = []
@@ -680,12 +688,52 @@ extension TableData: GridSource {
 	}
 
 	/// 칸 값으로 거르기: 찾기 줄을 이 조건 하나로 채우고 바로 적용 (찾기 줄을 보여 준다)
-	func filterBy(_ column: String, _ op: FilterOp, _ value: String) {
-		filters = [FilterRow(column: column, op: op, value: op.needsValue ? value : "")]
+	func filterBy(_ column: String, _ op: FilterOp, _ value: String, path: String = "") {
+		filters = [FilterRow(column: column, op: op, value: op.needsValue ? value : "", path: path)]
 		matchAll = true
 		whereClause = generatedWhere()
 		showFilter = true
 		Task { @MainActor in await applyWhere() }
+	}
+
+	/// JSON 칸 메뉴의 고를 거리: 끝 값마다 "$.경로 = 값", 글자·숫자 배열은 "$.경로 에 값 포함", 끝에 "JSON 어디든" (많으면 앞쪽만)
+	static func jsonFilterChoices(_ text: String, limit: Int = 15) -> [(title: String, op: FilterOp, value: String, path: String)] {
+		guard let data = text.data(using: .utf8),
+		      let root = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return [] }
+		var out: [(title: String, op: FilterOp, value: String, path: String)] = []
+		var firstText: String?
+		func scalar(_ v: Any) -> String? {
+			if let n = v as? NSNumber {
+				if CFGetTypeID(n) == CFBooleanGetTypeID() { return n.boolValue ? "true" : "false" }
+				return n.stringValue
+			}
+			return v as? String
+		}
+		func key(_ k: String) -> String {
+			k.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) } && !(k.first?.isNumber ?? true) ? "." + k : ".\"" + k.replacingOccurrences(of: "\"", with: "\\\"") + "\""
+		}
+		func walk(_ v: Any, _ path: String) {
+			guard out.count < limit else { return }
+			if let d = v as? [String: Any] {
+				for k in d.keys.sorted() { walk(d[k]!, path + key(k)) }
+			} else if let a = v as? [Any] {
+				let scalars = a.compactMap(scalar)
+				if scalars.count == a.count, !a.isEmpty {
+					for s in scalars.prefix(3) where out.count < limit {
+						out.append(("\(path) 에 \"\(s)\" 포함", .jsonContains, s, path))
+						if firstText == nil, Double(s) == nil { firstText = s }
+					}
+				} else {
+					for (i, e) in a.prefix(3).enumerated() { walk(e, path + "[\(i)]") }
+				}
+			} else if let s = scalar(v) {
+				out.append(("\(path) = \(s.count > 40 ? String(s.prefix(40)) + "…" : s)", .eq, s, path))
+				if firstText == nil, Double(s) == nil, s != "true", s != "false" { firstText = s }
+			}
+		}
+		walk(root, "$")
+		if let t = firstText { out.append(("JSON 어디든 \"\(t.count > 40 ? String(t.prefix(40)) + "…" : t)\"", .jsonAnywhere, t, "")) }
+		return out
 	}
 
 	func deleteRows(_ rows: IndexSet) -> Bool {

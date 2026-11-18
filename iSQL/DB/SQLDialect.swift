@@ -15,6 +15,12 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func literal(_ v: Value) -> String
 	/// JSON 컬럼(감싼 이름) 안 경로("$.a.b")의 값을 글자로 꺼내는 식
 	func jsonPath(_ column: String, _ path: String) -> String
+	/// JSON 안 어디든(또는 path 아래) 그 글자가 있는 조건 (% _ 를 쓸 수 있다)
+	func jsonSearch(_ column: String, _ pattern: String, path: String?) -> String
+	/// JSON(또는 path 의 값)에 candidate(JSON 글자)가 들어 있는 조건 (배열 원소·객체 일부)
+	func jsonContains(_ column: String, _ candidate: String, path: String?) -> String
+	/// JSON 에 그 경로가 있는 식 (1/0)
+	func jsonContainsPath(_ column: String, _ path: String) -> String
 	/// LIKE 값 안의 % _ (와 이스케이프 글자)를 글자 그대로 찾게
 	func likeEscaped(_ s: String) -> String
 
