@@ -13,6 +13,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func quoteIfNeeded(_ name: String, reserved: Set<String>) -> String
 	/// 값 리터럴 (NULL, '글자', 바이너리)
 	func literal(_ v: Value) -> String
+	/// LIKE 값 안의 % _ (와 이스케이프 글자)를 글자 그대로 찾게
+	func likeEscaped(_ s: String) -> String
 
 	/// SQL 글자를 읽는 규칙 (따옴표·주석·키워드)
 	var syntax: SQLSyntax { get }

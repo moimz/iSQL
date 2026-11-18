@@ -34,6 +34,11 @@ struct MySQLDialect: SQLDialect {
 		}
 	}
 
+	/// \ 로 이스케이프 (MySQL 기본 ESCAPE)
+	func likeEscaped(_ s: String) -> String {
+		s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
+	}
+
 	// MARK: 기본 문장
 
 	func paged(_ sql: String, limit: Int, offset: Int?) -> String {

@@ -644,10 +644,14 @@ extension TableData: GridSource {
 			let text = value(row, col).string
 			var ops: [(String, FilterOp)] = text == nil
 				? [("IS NULL", .isNull), ("IS NOT NULL", .notNull)]
-				: [("=", .eq), ("≠", .ne), ("LIKE", .like), ("NOT LIKE", .notLike), ("포함", .contains), ("포함 안 함", .notContains),
-				   ("IS NULL", .isNull), ("IS NOT NULL", .notNull)]
+				: [("=", .eq), ("≠", .ne), ("LIKE", .like), ("NOT LIKE", .notLike), ("IS NULL", .isNull), ("IS NOT NULL", .notNull)]
 			if text == nil { ops = ops.filter { !$0.1.needsValue } }
-			filterItems = [.submenu("고른 값으로 거르기", ops.map { title, op in .action(title) { self.filterBy(name, op, text ?? "") } })]
+			// LIKE 는 앞뒤에 % 를 붙여 조건 줄에 그대로 보인다 (값 안의 % _ 는 글자로). 거기서 % 를 지워 고칠 수 있다 (사용자 2026-11-18: 포함·포함 안 함 대신)
+			func filterValue(_ op: FilterOp) -> String {
+				guard let text else { return "" }
+				return op == .like || op == .notLike ? "%" + dialect.likeEscaped(text) + "%" : text
+			}
+			filterItems = [.submenu("고른 값으로 거르기", ops.map { title, op in .action(title) { self.filterBy(name, op, filterValue(op)) } })]
 		}
 		guard canEdit else { return filterItems }
 		var items: [GridMenuItem] = []
