@@ -14,6 +14,31 @@ protocol SQLDialect: Sendable {
 	/// 값 리터럴 (NULL, '글자', 바이너리)
 	func literal(_ v: Value) -> String
 
+	// MARK: 기본 문장
+
+	/// SELECT(또는 INSERT … SELECT)에 행 수 제한을 붙인다. offset 이 nil 이면 처음부터 (OFFSET 을 쓰지 않는다)
+	func paged(_ sql: String, limit: Int, offset: Int?) -> String
+	/// 기본 DB 바꾸기
+	func use(_ schema: String) -> String
+	var beginTransaction: String { get }
+	var commit: String { get }
+	var rollback: String { get }
+	/// 외래 키 검사 끄기·켜기 (없는 DB 면 nil)
+	func foreignKeyChecks(_ on: Bool) -> String?
+	/// SQL 파일 내보내기의 맨 앞·맨 뒤 문장 (; 없이)
+	var dumpPrologue: [String] { get }
+	var dumpEpilogue: [String] { get }
+
+	/// 행 하나 고치기·지우기·넣기 (; 없이). table 은 감싼 이름, condition 은 그 행만 고르는 WHERE 조건,
+	/// sets 는 "`컬럼` = 값", columns·values 는 감싼 이름·리터럴 (비면 기본값만으로 한 행)
+	func updateRow(_ table: String, sets: [String], condition: String) -> String
+	func deleteRow(_ table: String, condition: String) -> String
+	func insertRow(_ table: String, columns: [String], values: [String]) -> String
+	/// 바이트 길이 식 (큰 BLOB 은 앞부분만 읽으려고)
+	func byteLength(_ expr: String) -> String
+	/// 길이가 over 바이트를 넘으면 앞 keep 바이트만, 아니면 그대로인 식
+	func blobPeek(_ column: String, over: Int, keep: Int) -> String
+
 	/// 아이디·비밀번호가 틀려 접속에 실패한 오류인지 (로그인 시트를 띄운다)
 	func isAuthFailure(_ error: Error) -> Bool
 	/// 서버가 SQL 에 오류로 답했는지 (연결은 멀쩡하다 — 다시 접속해 봐야 소용없다)
@@ -24,4 +49,5 @@ extension SQLDialect {
 	func quote(schema: String, table: String) -> String { quote(schema) + "." + quote(table) }
 	/// 테이블 (스키마.테이블)
 	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
+	func paged(_ sql: String, limit: Int) -> String { paged(sql, limit: limit, offset: nil) }
 }

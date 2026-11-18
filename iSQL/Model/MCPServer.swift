@@ -394,7 +394,7 @@ final class MCPServer {
 				}
 			}
 			let c = try await connection(t)
-			if let db = a["database"] as? String, !db.isEmpty { _ = try await c.query("USE \(t.dialect.quote(db))") }
+			if let db = a["database"] as? String, !db.isEmpty { _ = try await c.query(t.dialect.use(db)) }
 			var out: [[String: Any]] = []
 			for s in statements {
 				for r in try await c.query(s) { out.append(describe(r, maxRows: maxRows)) }

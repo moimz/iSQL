@@ -34,6 +34,34 @@ struct MySQLDialect: SQLDialect {
 		}
 	}
 
+	// MARK: 기본 문장
+
+	func paged(_ sql: String, limit: Int, offset: Int?) -> String {
+		sql + " LIMIT \(limit)" + (offset.map { " OFFSET \($0)" } ?? "")
+	}
+	func use(_ schema: String) -> String { "USE " + quote(schema) }
+	var beginTransaction: String { "START TRANSACTION" }
+	var commit: String { "COMMIT" }
+	var rollback: String { "ROLLBACK" }
+	func foreignKeyChecks(_ on: Bool) -> String? { "SET FOREIGN_KEY_CHECKS = \(on ? 1 : 0)" }
+	var dumpPrologue: [String] { ["SET NAMES utf8mb4", "SET FOREIGN_KEY_CHECKS = 0"] }
+	var dumpEpilogue: [String] { ["SET FOREIGN_KEY_CHECKS = 1"] }
+
+	/// 같은 값의 행이 여럿이어도 하나만 바뀌게 LIMIT 1
+	func updateRow(_ table: String, sets: [String], condition: String) -> String {
+		"UPDATE \(table) SET \(sets.joined(separator: ", ")) WHERE \(condition) LIMIT 1"
+	}
+	func deleteRow(_ table: String, condition: String) -> String { "DELETE FROM \(table) WHERE \(condition) LIMIT 1" }
+	func insertRow(_ table: String, columns: [String], values: [String]) -> String {
+		columns.isEmpty ? "INSERT INTO \(table) () VALUES ()"
+			: "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(values.joined(separator: ", ")))"
+	}
+
+	func byteLength(_ expr: String) -> String { "OCTET_LENGTH(\(expr))" }
+	func blobPeek(_ column: String, over: Int, keep: Int) -> String {
+		"IF(OCTET_LENGTH(\(column)) > \(over), LEFT(\(column), \(keep)), \(column))"
+	}
+
 	/// 1045 = Access denied
 	func isAuthFailure(_ error: Error) -> Bool {
 		if case .server(let code, _, _) = error as? MySQLError, code == 1045 { return true }

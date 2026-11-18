@@ -778,12 +778,12 @@ final class Session {
 	func runPrivateView(_ v: PrivateView, refresh: Bool = false) async throws -> QueryOutput {
 		if !refresh, let o = privateOutputs[v.tabID] { return o }
 		if !v.schema.isEmpty, currentDB != v.schema {
-			_ = try await query("USE \(dialect.quote(v.schema))")
+			_ = try await query(dialect.use(v.schema))
 			currentDB = v.schema
 		}
 		let paged = SQLSplitter.canAutoLimit(v.sql)
 		let size = QueryOutput.currentPageSize
-		let r = try await query(paged ? "\(v.sql) LIMIT \(size + 1)" : v.sql).last(where: \.isResultSet) ?? QueryResult()
+		let r = try await query(paged ? dialect.paged(v.sql, limit: size + 1) : v.sql).last(where: \.isResultSet) ?? QueryResult()
 		let o = QueryOutput(sql: v.sql, paged: paged, result: r, pageSize: size, session: self)
 		privateOutputs[v.tabID] = o
 		return o

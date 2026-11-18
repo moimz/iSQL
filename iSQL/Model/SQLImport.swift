@@ -216,8 +216,8 @@ final class SQLImportJob {
 			reader = try SQLDumpReader(url: url)
 			let c = try await session.sideConnection(purpose: "SQL 가져오기")
 			conn = c
-			if disableForeignKeys { _ = try await c.query("SET FOREIGN_KEY_CHECKS = 0") }
-			if let schema { _ = try await c.query("USE " + dialect.quote(schema)) }
+			if disableForeignKeys, let off = dialect.foreignKeyChecks(false) { _ = try await c.query(off) }
+			if let schema { _ = try await c.query(dialect.use(schema)) }
 		} catch {
 			finish(error: error.localizedDescription)
 			return

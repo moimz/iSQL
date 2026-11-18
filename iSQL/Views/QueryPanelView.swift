@@ -210,7 +210,7 @@ struct ResultBody: View {
 				ProgressView()
 			}
 		}
-		.sheet(isPresented: $source.showSQL) { SQLPreview(statements: source.changeSQL()) }
+		.sheet(isPresented: $source.showSQL) { SQLPreview(statements: source.changeSQL(), transaction: source.sqlDialect) }
 		.sheet(isPresented: $creatingView) { if let s = output.session { CreateViewSheet(sql: output.sql, session: s) } }
 		Divider()
 		// ⌘S 는 TabArea 하나가 받는다: 결과가 탭을 덮고 있으면 결과를 저장

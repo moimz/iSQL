@@ -295,9 +295,9 @@ final class TableData: ColumnOrderTracking {
 		let blobs = pk.isEmpty ? [] : infos.filter { $0.type.lowercased().hasSuffix("blob") }.map(\.name)
 		let select = blobs.isEmpty ? "*" : (infos.map { c in
 			let q = dialect.quote(c.name)
-			return blobs.contains(c.name) ? "IF(OCTET_LENGTH(\(q)) > \(Self.blobLimit), LEFT(\(q), \(Self.blobPeek)), \(q)) AS \(q)" : q
-		} + blobs.map { "OCTET_LENGTH(\(dialect.quote($0)))" }).joined(separator: ", ")
-		let sql = "SELECT \(select) FROM \(dialect.quote(table: table))\(filter.isEmpty ? "" : " WHERE " + filter)\(order) LIMIT \(pageSize + 1) OFFSET \(newOffset)"
+			return blobs.contains(c.name) ? dialect.blobPeek(q, over: Self.blobLimit, keep: Self.blobPeek) + " AS \(q)" : q
+		} + blobs.map { dialect.byteLength(dialect.quote($0)) }).joined(separator: ", ")
+		let sql = dialect.paged("SELECT \(select) FROM \(dialect.quote(table: table))\(filter.isEmpty ? "" : " WHERE " + filter)\(order)", limit: pageSize + 1, offset: newOffset)
 		do {
 			var r = try await session.query(sql).last ?? QueryResult()
 			// 뒤에 붙인 길이 컬럼을 떼어 큰 칸을 적어 둔다
@@ -410,17 +410,17 @@ final class TableData: ColumnOrderTracking {
 	func changeSQL() -> [String] {
 		var out: [String] = []
 		for r in deleted.sorted() {
-			out.append("DELETE FROM \(dialect.quote(table: table)) WHERE \(keyCondition(r)) LIMIT 1;")
+			out.append(dialect.deleteRow(dialect.quote(table: table), condition: keyCondition(r)) + ";")
 		}
 		for (r, cols) in edits.sorted(by: { $0.key < $1.key }) where !deleted.contains(r) {
 			let sets = cols.sorted { $0.key < $1.key }.map { "\(dialect.quote(columnName($0.key))) = \(dialect.literal($0.value))" }
-			out.append("UPDATE \(dialect.quote(table: table)) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(r)) LIMIT 1;")
+			out.append(dialect.updateRow(dialect.quote(table: table), sets: sets, condition: keyCondition(r)) + ";")
 		}
 		for row in inserted {
 			// NULL 로 남은 칸은 빼서 기본값·자동 증가가 쓰이게 한다
 			let pairs = row.enumerated().filter { $0.element != .null }
-			if pairs.isEmpty { out.append("INSERT INTO \(dialect.quote(table: table)) () VALUES ();"); continue }
-			out.append("INSERT INTO \(dialect.quote(table: table)) (\(pairs.map { dialect.quote(columnName($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { dialect.literal($0.element) }.joined(separator: ", ")));")
+			out.append(dialect.insertRow(dialect.quote(table: table), columns: pairs.map { dialect.quote(columnName($0.offset)) },
+			                             values: pairs.map { dialect.literal($0.element) }) + ";")
 		}
 		return out
 	}
@@ -431,7 +431,7 @@ final class TableData: ColumnOrderTracking {
 		guard !statements.isEmpty else { return true }
 		saveError = nil
 		do {
-			_ = try await session.query("START TRANSACTION")
+			_ = try await session.query(dialect.beginTransaction)
 			for s in statements {
 				let r = try await session.query(s).last
 				// 바꾼 행이 없으면(다른 사람이 먼저 지웠거나 키가 바뀜) 멈춘다
@@ -439,12 +439,12 @@ final class TableData: ColumnOrderTracking {
 					throw DBError.message("대상 행을 찾지 못했습니다. 다른 곳에서 바뀌었을 수 있습니다.\n\(s)")
 				}
 			}
-			_ = try await session.query("COMMIT")
+			_ = try await session.query(dialect.commit)
 			knownTotal = nil   // 행을 넣거나 지웠을 수 있다
 			await load(offset: offset)
 			return true
 		} catch {
-			_ = try? await session.query("ROLLBACK")
+			_ = try? await session.query(dialect.rollback)
 			saveError = error.localizedDescription
 			return false
 		}
@@ -474,7 +474,7 @@ final class TableData: ColumnOrderTracking {
 			guard let cols = partial[r], r < rows.count else { continue }
 			let names = cols.keys.sorted()
 			let whereSQL = pk.map { "\(dialect.quote(columnName($0))) = \(dialect.literal(rows[r][$0]))" }.joined(separator: " AND ")
-			let sql = "SELECT \(names.map { dialect.quote(columnName($0)) }.joined(separator: ", ")) FROM \(dialect.quote(table: table)) WHERE \(whereSQL) LIMIT 1"
+			let sql = dialect.paged("SELECT \(names.map { dialect.quote(columnName($0)) }.joined(separator: ", ")) FROM \(dialect.quote(table: table)) WHERE \(whereSQL)", limit: 1)
 			guard let got = try? await session.query(sql).last?.rows.first, got.count == names.count else { continue }
 			for (k, c) in names.enumerated() { rows[r][c] = got[k] }
 			partial[r] = nil

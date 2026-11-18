@@ -101,8 +101,10 @@ final class DatabaseCopyJob {
 				total = list.count
 				if data { mode = try await pickMode() }
 				// 외래 키 순서와 상관없이 만들고 넣는다 (같은 연결을 쓰므로 끝나면 되돌린다)
-				_ = try await session.query("SET FOREIGN_KEY_CHECKS = 0")
-				fkOff = true
+				if let off = dialect.foreignKeyChecks(false) {
+					_ = try await session.query(off)
+					fkOff = true
+				}
 				for t in list {
 					if cancelled { break }
 					current = t.name
@@ -118,7 +120,7 @@ final class DatabaseCopyJob {
 					done += 1
 				}
 			}
-			if fkOff { _ = try? await session.query("SET FOREIGN_KEY_CHECKS = 1") }
+			if fkOff, let on = dialect.foreignKeyChecks(true) { _ = try? await session.query(on) }
 			// 루틴은 데이터를 다 넣은 뒤에 (트리거가 복제 INSERT 에 돌지 않게)
 			var routineNote = ""
 			if routines && structure && !cancelled { routineNote = try await copyRoutines(target: target) }
@@ -127,7 +129,7 @@ final class DatabaseCopyJob {
 			message = cancelled ? "그만뒀습니다. \(target) 에 테이블 \(done)개까지 복제됐습니다" + (stopped.isEmpty ? "." : " (\(stopped) 는 되돌림).")
 			                    : "\(target) 복제를 마쳤습니다" + (structure ? " (테이블 \(done)개\(routineNote))" : "")
 		} catch {
-			if fkOff { _ = try? await session.query("SET FOREIGN_KEY_CHECKS = 1") }
+			if fkOff, let on = dialect.foreignKeyChecks(true) { _ = try? await session.query(on) }
 			isError = true
 			message = (current.isEmpty ? "" : "\(current): ") + error.localizedDescription
 		}
@@ -234,18 +236,18 @@ final class DatabaseCopyJob {
 		let order = keyed ? " ORDER BY " + t.primaryKey.map(q).joined(separator: ", ") : ""
 
 		if mode == .server { _ = try await session.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED") }
-		_ = try await session.query("START TRANSACTION")
+		_ = try await session.query(dialect.beginTransaction)
 		do {
 			var last: [Value]? = nil
 			var offset = 0
 			while true {
 				if cancelled {
-					_ = try? await session.query("ROLLBACK")
+					_ = try? await session.query(dialect.rollback)
 					return
 				}
 				var cond = ""
 				if keyed, let last { cond = " WHERE " + Self.after(dialect, t.primaryKey.map(q), last) }
-				let limit = keyed ? " LIMIT \(Self.chunk)" : " LIMIT \(Self.chunk) OFFSET \(offset)"
+				let chunkOffset: Int? = keyed ? nil : offset
 				var n = 0
 				switch mode {
 				case .server:
@@ -256,14 +258,14 @@ final class DatabaseCopyJob {
 						n = 0
 						break
 					}
-					n = Int(try await session.query("INSERT INTO \(into) SELECT \(cols) FROM \(from)\(cond)\(order)\(limit)").last?.affectedRows ?? 0)
+					n = Int(try await session.query(dialect.paged("INSERT INTO \(into) SELECT \(cols) FROM \(from)\(cond)\(order)", limit: Self.chunk, offset: chunkOffset)).last?.affectedRows ?? 0)
 					if keyed, n > 0 {
 						let keys = t.primaryKey.map(q).joined(separator: ", ")
 						let desc = t.primaryKey.map { q($0) + " DESC" }.joined(separator: ", ")
-						last = try await session.query("SELECT \(keys) FROM \(target) ORDER BY \(desc) LIMIT 1").last?.rows.first
+						last = try await session.query(dialect.paged("SELECT \(keys) FROM \(target) ORDER BY \(desc)", limit: 1)).last?.rows.first
 					}
 				case .client:
-					let rows = try await session.query("SELECT \(cols) FROM \(from)\(cond)\(order)\(limit)").last?.rows ?? []
+					let rows = try await session.query(dialect.paged("SELECT \(cols) FROM \(from)\(cond)\(order)", limit: Self.chunk, offset: chunkOffset)).last?.rows ?? []
 					n = rows.count
 					if n > 0 {
 						// 문자열 만들기는 메인 스레드 밖에서 (UI 가 멈추지 않게)
@@ -280,9 +282,9 @@ final class DatabaseCopyJob {
 				if rowsTotal < rowsDone { rowsTotal = rowsDone }
 				if n < Self.chunk { break }
 			}
-			_ = try await session.query("COMMIT")
+			_ = try await session.query(dialect.commit)
 		} catch {
-			_ = try? await session.query("ROLLBACK")
+			_ = try? await session.query(dialect.rollback)
 			throw error
 		}
 	}
@@ -344,7 +346,7 @@ final class DatabaseCopyJob {
 		guard !items.isEmpty else { return "" }
 		let c = try await session.sideConnection(purpose: "복제")
 		defer { c.close() }
-		_ = try await c.query("USE \(q(target))")
+		_ = try await c.query(dialect.use(target))
 		var made = 0, events = 0
 		for (k, n) in items {
 			current = "\(k.label) \(n)"

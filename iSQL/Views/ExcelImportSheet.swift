@@ -76,7 +76,7 @@ struct ExcelImportSheet: View {
 		.padding(20)
 		.frame(width: 640)
 		.interactiveDismissDisabled(job.running)
-		.sheet(isPresented: $showSQL) { SQLPreview(statements: [job.createSQL + ";"], title: "새 테이블을 이렇게 만듭니다", transaction: false) }
+		.sheet(isPresented: $showSQL) { SQLPreview(statements: [job.createSQL + ";"], title: "새 테이블을 이렇게 만듭니다") }
 		.onChange(of: job.header) { preview.bump() }
 		.onChange(of: job.typed) { preview.bump() }
 		.onChange(of: job.sheetIndex) { preview.bump() }

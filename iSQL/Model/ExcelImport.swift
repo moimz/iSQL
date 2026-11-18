@@ -335,7 +335,7 @@ final class ExcelImportJob {
 				_ = try await c.query(createSQL)
 				created = true
 			}
-			_ = try await c.query("START TRANSACTION")
+			_ = try await c.query(dialect.beginTransaction)
 			var i = 0
 			while i < rows.count {
 				if cancelled { break }
@@ -360,15 +360,15 @@ final class ExcelImportJob {
 				done = i
 			}
 			if cancelled {
-				_ = try? await c.query("ROLLBACK")
+				_ = try? await c.query(dialect.rollback)
 				message = "그만뒀습니다 · 넣은 행은 모두 되돌렸습니다" + (created ? " (\(tableName) 는 빈 채로 남음)" : "")
 				isError = true
 			} else {
-				_ = try await c.query("COMMIT")
+				_ = try await c.query(dialect.commit)
 				message = "\(tableName) 에 \(rows.count.formatted())행 넣음"
 			}
 		} catch {
-			_ = try? await conn?.query("ROLLBACK")
+			_ = try? await conn?.query(dialect.rollback)
 			message = error.localizedDescription + (created ? "\n넣은 행은 되돌렸습니다 (\(tableName) 는 빈 채로 남음)" : "\n넣은 행은 모두 되돌렸습니다")
 			isError = true
 		}

@@ -129,7 +129,7 @@ struct ExcelSheetSpec {
 		let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
 		return ExcelSheetSpec(name: t.name, comments: Dictionary(info.map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a }),
 		                      total: t.rows.map { Int($0) }) { offset, limit in
-			let r = try await session.query("SELECT * FROM \(q)\(order) LIMIT \(limit) OFFSET \(offset)").last ?? QueryResult()
+			let r = try await session.query(dialect.paged("SELECT * FROM \(q)\(order)", limit: limit, offset: offset)).last ?? QueryResult()
 			return (r.columns, r.rows)
 		}
 	}
@@ -258,8 +258,7 @@ final class ExportJob {
 			-- 만든 시각: \(df.string(from: Date()))
 			-- 데이터: \(o.visibleOnly ? "화면에 보이는 행만" : "전체")
 
-			SET NAMES utf8mb4;
-			SET FOREIGN_KEY_CHECKS = 0;
+			\(dialect.dumpPrologue.map { $0 + ";" }.joined(separator: "\n"))
 
 
 			""")
@@ -296,7 +295,7 @@ final class ExportJob {
 					offset += size
 				}
 			}
-			write("\nSET FOREIGN_KEY_CHECKS = 1;\n")
+			write("\n" + dialect.dumpEpilogue.map { $0 + ";\n" }.joined())
 			if cancelled {
 				message = "그만둠 · \(written.formatted())행까지 썼습니다"
 			} else {
@@ -336,8 +335,7 @@ final class ExportJob {
 			-- DB: \(schema)\(session.server.map { " · 서버 \($0.displayName)" } ?? "")
 			-- 테이블 \(tables.count)개 · 만든 시각: \(df.string(from: Date()))
 
-			SET NAMES utf8mb4;
-			SET FOREIGN_KEY_CHECKS = 0;
+			\(dialect.dumpPrologue.map { $0 + ";" }.joined(separator: "\n"))
 
 
 			""")
@@ -358,7 +356,7 @@ final class ExportJob {
 				var offset = 0
 				let size = 1000
 				while !cancelled {
-					let res = try await session.query("SELECT * FROM \(q)\(order) LIMIT \(size) OFFSET \(offset)").last ?? QueryResult()
+					let res = try await session.query(dialect.paged("SELECT * FROM \(q)\(order)", limit: size, offset: offset)).last ?? QueryResult()
 					let names = res.columns.map { dialect.quote($0.orgName.isEmpty ? $0.name : $0.orgName) }.joined(separator: ", ")
 					let numeric = res.columns.map(\.isNumeric)
 					var i = 0
@@ -377,7 +375,7 @@ final class ExportJob {
 				}
 				write("\n")
 			}
-			write("SET FOREIGN_KEY_CHECKS = 1;\n")
+			write(dialect.dumpEpilogue.map { $0 + ";\n" }.joined())
 			message = cancelled ? "그만둠 · \(written.formatted())행까지 썼습니다" : "테이블 \(tables.count)개 · \(written.formatted())행 내보냄 · \(url.lastPathComponent)"
 		} catch {
 			fail(error.localizedDescription)
@@ -522,7 +520,7 @@ extension TableData: ExportSource {
 		if let sort { orderParts.append(dialect.quote(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
 		orderParts += pk.filter { $0 != sort.map { dialect.quote($0.column) } }
 		let order = orderParts.isEmpty ? "" : " ORDER BY " + orderParts.joined(separator: ", ")
-		let sql = "SELECT * FROM \(dialect.quote(table: table))\(appliedWhere.isEmpty ? "" : " WHERE " + appliedWhere)\(order) LIMIT \(limit) OFFSET \(offset)"
+		let sql = dialect.paged("SELECT * FROM \(dialect.quote(table: table))\(appliedWhere.isEmpty ? "" : " WHERE " + appliedWhere)\(order)", limit: limit, offset: offset)
 		return try await session.query(sql).last?.rows ?? []
 	}
 
@@ -562,7 +560,7 @@ extension QueryOutput: ExportSource {
 	/// 전체: LIMIT 을 자동으로 붙였던 쿼리면 나눠 받고, 직접 LIMIT 을 쓴 쿼리면 지금 결과가 전체
 	func fetchRows(offset: Int, limit: Int) async throws -> [[Value]] {
 		guard paged, let session else { return offset == 0 ? result.rows : [] }
-		return try await session.query("\(sql) LIMIT \(limit) OFFSET \(offset)").last?.rows ?? []
+		return try await session.query(dialect.paged(sql, limit: limit, offset: offset)).last?.rows ?? []
 	}
 
 	var exportSession: Session? { session }

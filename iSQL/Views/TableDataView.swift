@@ -47,7 +47,7 @@ struct TableDetailView: View {
 			if isActive && !data.loaded && !data.loading { await data.load() }
 		}
 		.onChange(of: data.tab) { selection = [] }
-		.sheet(isPresented: Bindable(data).showSQL) { SQLPreview(statements: data.changeSQL()) }
+		.sheet(isPresented: Bindable(data).showSQL) { SQLPreview(statements: data.changeSQL(), transaction: data.dialect) }
 		// 지금 보는 상태(찾기 조건·정렬)를 뷰로
 		.sheet(isPresented: $creatingView) { CreateViewSheet(sql: data.viewSQL, session: session, schema: table.schema, title: "지금 보는 데이터로 뷰 만들기") }
 		.sheet(item: Bindable(data).longEdit) { req in
@@ -208,15 +208,15 @@ struct TableDetailView: View {
 struct SQLPreview: View {
 	let statements: [String]
 	var title = "저장하면 한 트랜잭션으로 실행됩니다"
-	/// START TRANSACTION … COMMIT 로 감싸 보일지 (ALTER 는 감싸지 않는다)
-	var transaction = true
+	/// 트랜잭션 시작 … COMMIT 로 감싸 보일 때 그 문법 (nil 이면 감싸지 않는다: ALTER 등)
+	var transaction: (any SQLDialect)?
 	@Environment(\.dismiss) private var dismiss
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 12) {
 			Text(title).font(.headline)
 			ScrollView {
-				Text((transaction ? ["START TRANSACTION;"] + statements + ["COMMIT;"] : statements).joined(separator: "\n"))
+				Text((transaction.map { [$0.beginTransaction + ";"] + statements + [$0.commit + ";"] } ?? statements).joined(separator: "\n"))
 					.font(.body.monospaced())
 					.textSelection(.enabled)
 					.frame(maxWidth: .infinity, alignment: .leading)

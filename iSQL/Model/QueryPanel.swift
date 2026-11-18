@@ -147,14 +147,14 @@ final class QueryPanel {
 		defer { running = false }
 		do {
 			if !database.isEmpty, database != session.currentDB {
-				_ = try await session.query("USE \(dialect.quote(database))")
+				_ = try await session.query(dialect.use(database))
 				session.currentDB = database
 			}
 			for st in statements {
 				// LIMIT 없는 SELECT 는 한 쪽 행 수만큼만 (쪽을 넘기면 다시 실행)
 				let paged = SQLSplitter.canAutoLimit(st)
 				let size = QueryOutput.currentPageSize
-				let sql = paged ? "\(st) LIMIT \(size + 1)" : st
+				let sql = paged ? dialect.paged(st, limit: size + 1) : st
 				for r in try await session.query(sql) {
 					if r.isResultSet {
 						outs.append(QueryOutput(sql: st, paged: paged, result: r, pageSize: size, session: session))
@@ -200,7 +200,7 @@ final class QueryPanel {
 		var warnCount = 0
 		do {
 			if !database.isEmpty, database != session.currentDB {
-				_ = try await session.query("USE \(dialect.quote(database))")
+				_ = try await session.query(dialect.use(database))
 				session.currentDB = database
 			}
 			for st in statements {
@@ -379,7 +379,7 @@ final class QueryOutput: Identifiable, Pager {
 		error = nil
 		defer { loading = false }
 		do {
-			var r = try await session.query("\(sql) LIMIT \(pageSize + 1) OFFSET \(newOffset)").last ?? QueryResult()
+			var r = try await session.query(dialect.paged(sql, limit: pageSize + 1, offset: newOffset)).last ?? QueryResult()
 			hasMore = r.rows.count > pageSize
 			r.rows = Array(r.rows.prefix(pageSize))
 			offset = newOffset
@@ -656,17 +656,17 @@ final class QueryResultSource: GridSource {
 		guard let t = editTable else { return [] }
 		var out: [String] = []
 		for o in deleted.sorted() {
-			out.append("DELETE FROM \(dialect.quote(table: t)) WHERE \(keyCondition(o)) LIMIT 1;")
+			out.append(dialect.deleteRow(dialect.quote(table: t), condition: keyCondition(o)) + ";")
 		}
 		for (o, cols) in edits.sorted(by: { $0.key < $1.key }) where !deleted.contains(o) {
 			let sets = cols.sorted { $0.key < $1.key }.map { "\(dialect.quote(name($0.key))) = \(dialect.literal($0.value))" }
-			out.append("UPDATE \(dialect.quote(table: t)) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(o)) LIMIT 1;")
+			out.append(dialect.updateRow(dialect.quote(table: t), sets: sets, condition: keyCondition(o)) + ";")
 		}
 		for row in inserted {
 			// NULL 로 남은 칸은 빼서 기본값·자동 증가가 쓰이게
 			let pairs = row.enumerated().filter { $0.element != .null && editableCols.contains($0.offset) }
-			if pairs.isEmpty { out.append("INSERT INTO \(dialect.quote(table: t)) () VALUES ();"); continue }
-			out.append("INSERT INTO \(dialect.quote(table: t)) (\(pairs.map { dialect.quote(name($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { dialect.literal($0.element) }.joined(separator: ", ")));")
+			out.append(dialect.insertRow(dialect.quote(table: t), columns: pairs.map { dialect.quote(name($0.offset)) },
+			                             values: pairs.map { dialect.literal($0.element) }) + ";")
 		}
 		return out
 	}
@@ -680,16 +680,16 @@ final class QueryResultSource: GridSource {
 		saveError = nil
 		defer { saving = false }
 		do {
-			_ = try await session.query("START TRANSACTION")
+			_ = try await session.query(dialect.beginTransaction)
 			for s in statements {
 				let r = try await session.query(s).last
 				if s.hasPrefix("UPDATE") || s.hasPrefix("DELETE"), r?.affectedRows == 0, r?.info.contains("Rows matched: 1") != true {
 					throw DBError.message("대상 행을 찾지 못했습니다. 다른 곳에서 바뀌었을 수 있습니다.\n\(s)")
 				}
 			}
-			_ = try await session.query("COMMIT")
+			_ = try await session.query(dialect.commit)
 		} catch {
-			_ = try? await session.query("ROLLBACK")
+			_ = try? await session.query(dialect.rollback)
 			saveError = error.localizedDescription
 			return
 		}

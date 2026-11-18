@@ -345,7 +345,7 @@ struct StructureBody: View {
 			if !editor.hasChanges && !editor.saving { Task { await editor.load() } }
 		}
 		.sheet(isPresented: Bindable(editor).showSQL) {
-			SQLPreview(statements: [(editor.alterSQL ?? "") + ";"], title: "저장하면 ALTER TABLE 하나로 실행됩니다", transaction: false)
+			SQLPreview(statements: [(editor.alterSQL ?? "") + ";"], title: "저장하면 ALTER TABLE 하나로 실행됩니다")
 		}
 	}
 

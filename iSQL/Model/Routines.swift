@@ -153,7 +153,7 @@ final class RoutineEditor {
 		do {
 			let c = try await session.sideConnection(purpose: kind.label)
 			conn = c
-			_ = try await c.query("USE \(q(schema))")
+			_ = try await c.query(dialect.use(schema))
 			if kind == .view, let old = name, old == newName {
 				// 뷰는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
 				_ = try await c.query(Self.orReplace(sql))
