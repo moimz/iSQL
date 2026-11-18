@@ -264,7 +264,7 @@ final class ExportJob {
 			""")
 		do {
 			if o.includeStructure, src.canExportStructure {
-				if o.includeDrop { write("DROP TABLE IF EXISTS \(table);\n") }
+				if o.includeDrop { write(dialect.dropIfExists(table, view: false) + ";\n") }
 				if let create = try await src.createTableSQL() { write(create + ";\n\n") }
 			}
 			// 숫자 컬럼은 따옴표 없이
@@ -344,7 +344,7 @@ final class ExportJob {
 				let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
 				if o.includeStructure {
-					if o.includeDrop { write(t.isView ? "DROP VIEW IF EXISTS \(dialect.quote(t.name));\n" : "DROP TABLE IF EXISTS \(dialect.quote(t.name));\n") }
+					if o.includeDrop { write(dialect.dropIfExists(dialect.quote(t.name), view: t.isView) + ";\n") }
 					if let create = try await session.meta.createStatement(session.query, .table, schema: schema, name: t.name) { write(create + ";\n\n") }
 				}
 				guard o.includeData, !t.isView else { continue }

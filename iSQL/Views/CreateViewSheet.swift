@@ -38,7 +38,7 @@ struct CreateViewSheet: View {
 	}
 	private var statement: String {
 		let q = dialect.quote(_:)
-		return "CREATE VIEW \(q(schema)).\(q(trimmed)) AS\n\(body_)"
+		return dialect.createViewHead("\(q(schema)).\(q(trimmed))") + " AS\n\(body_)"
 	}
 
 	var body: some View {

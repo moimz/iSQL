@@ -479,15 +479,15 @@ final class Session {
 		case .drop:
 			let views = r.tables.filter(\.isView), bases = r.tables.filter { !$0.isView }
 			do {
-				if !views.isEmpty { _ = try await query("DROP VIEW " + views.map(name).joined(separator: ", ")) }
-				if !bases.isEmpty { _ = try await query("DROP TABLE " + bases.map(name).joined(separator: ", ")) }
+				if !views.isEmpty { _ = try await query(dialect.drop(views.map(name), views: true)) }
+				if !bases.isEmpty { _ = try await query(dialect.drop(bases.map(name), views: false)) }
 			} catch { failure = error.localizedDescription }
 			try? await loadSchema()
 			// 실제로 지워진 것만 탭을 닫는다
 			let left = Set(tables.filter { $0.schema == r.schema }.map(\.name))
 			closeTabs(ofTables: Set(r.tables.map(\.name).filter { !left.contains($0) }.map { r.schema + "." + $0 }))
 		case .dropDatabase:
-			do { _ = try await query("DROP DATABASE " + dialect.quote(r.schema)) } catch { failure = error.localizedDescription }
+			do { _ = try await query(dialect.dropDatabase(r.schema)) } catch { failure = error.localizedDescription }
 			try? await loadSchema()
 			if !databases.contains(r.schema) {
 				closeTabs(ofTables: Set(r.tables.map { r.schema + "." + $0.name }))
@@ -500,7 +500,7 @@ final class Session {
 		case .truncate:
 			// TRUNCATE 는 테이블 하나씩. 외래 키로 막히면 거기서 멈춘다
 			for t in r.tables {
-				do { _ = try await query("TRUNCATE TABLE " + name(t)) } catch { failure = "\(t.name): \(error.localizedDescription)"; break }
+				do { _ = try await query(dialect.truncate(name(t))) } catch { failure = "\(t.name): \(error.localizedDescription)"; break }
 			}
 			try? await loadSchema()
 			// 열린 데이터 탭: 저장 안 한 변경이 없으면 다시 읽고, 있으면 "바뀜" 표시
@@ -814,7 +814,7 @@ final class Session {
 	@discardableResult
 	func dropRoutine(_ r: RoutineInfo) async -> String? {
 		do {
-			_ = try await query("DROP \(r.kind.sqlWord) \(dialect.quote(r.schema)).\(dialect.quote(r.name))")
+			_ = try await query(dialect.dropRoutine(r.kind, dialect.quote(schema: r.schema, table: r.name)))
 		} catch {
 			return error.localizedDescription
 		}

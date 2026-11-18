@@ -290,8 +290,8 @@ final class ExcelImportJob {
 		let names = self.names, kinds = self.kinds
 		var defs = names.indices.map { "\(q(names[$0])) \(Self.sqlType(kinds[$0])) NULL" }
 		let hasID = names.contains { $0.lowercased() == "id" }
-		if addID && !hasID { defs.insert("`id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY", at: 0) }
-		return "CREATE TABLE \(q(schema)).\(q(newName.trimmingCharacters(in: .whitespaces))) (\n  " + defs.joined(separator: ",\n  ") + "\n)"
+		if addID && !hasID { defs.insert(dialect.autoIncrementKeyColumn("id"), at: 0) }
+		return dialect.createTable(schema: schema, name: newName.trimmingCharacters(in: .whitespaces), definitions: defs)
 	}
 
 	// MARK: 넣기

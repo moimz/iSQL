@@ -151,12 +151,10 @@ final class TableInspector {
 
 	/// ADD CONSTRAINT … FOREIGN KEY 절 (ALTER TABLE 뒤에 붙인다)
 	func addForeignKeyClause(_ fk: ForeignKeyInfo) -> String {
-		let named = fk.name.trimmingCharacters(in: .whitespaces).isEmpty ? "" : "CONSTRAINT \(dialect.quote(fk.name)) "
-		let ref = (fk.refSchema == table.schema ? "" : dialect.quote(fk.refSchema) + ".") + dialect.quote(fk.refTable)
-		return "ADD \(named)FOREIGN KEY (\(fk.columns.map(dialect.quote(_:)).joined(separator: ", "))) REFERENCES \(ref) (\(fk.refColumns.map(dialect.quote(_:)).joined(separator: ", "))) ON DELETE \(fk.onDelete) ON UPDATE \(fk.onUpdate)"
+		dialect.addForeignKeyClause(fk, schema: table.schema)
 	}
-	func addForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(dialect.quote(table: table)) " + addForeignKeyClause(fk) }
-	func dropForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(dialect.quote(table: table)) DROP FOREIGN KEY \(dialect.quote(fk.name))" }
+	func addForeignKeySQL(_ fk: ForeignKeyInfo) -> String { dialect.alterTable(dialect.quote(table: table), [addForeignKeyClause(fk)]) }
+	func dropForeignKeySQL(_ fk: ForeignKeyInfo) -> String { dialect.alterTable(dialect.quote(table: table), [dialect.dropForeignKeyClause(fk.name)]) }
 
 	/// 외래 키 고치기: MySQL 은 같은 이름을 한 ALTER 에서 지우고 다시 만들 수 없다(1826) → 지우고 만들기를 따로,
 	/// 만들기가 실패하면 원래 키를 다시 만들어 되돌린다. 실패 글자 (성공이면 nil)
@@ -208,28 +206,19 @@ final class TableInspector {
 	/// 설정을 바꾸는 ALTER (바뀐 것만). 없으면 nil
 	var alterSQL: String? {
 		var parts: [String] = []
-		if editEngine != engine, !editEngine.isEmpty { parts.append("ENGINE=\(editEngine)") }
+		if editEngine != engine, !editEngine.isEmpty { parts.append(dialect.engineClause(editEngine)) }
 		if editCollation != collation, !editCollation.isEmpty {
 			let cs = catalog.charset(of: editCollation) ?? editCharset
-			parts.append(convertColumns ? "CONVERT TO CHARACTER SET \(cs) COLLATE \(editCollation)"
-			                            : "DEFAULT CHARACTER SET \(cs) COLLATE \(editCollation)")
+			parts.append(dialect.charsetClause(cs, collation: editCollation, convert: convertColumns))
 		}
-		if editComment != comment { parts.append("COMMENT=\(dialect.literal(.text(editComment)))") }
-		return parts.isEmpty ? nil : "ALTER TABLE \(dialect.quote(table: table)) " + parts.joined(separator: ", ")
+		if editComment != comment { parts.append(dialect.tableCommentClause(editComment)) }
+		return parts.isEmpty ? nil : dialect.alterTable(dialect.quote(table: table), parts)
 	}
 
-	func autoIncrementSQL(_ n: Int64) -> String { "ALTER TABLE \(dialect.quote(table: table)) AUTO_INCREMENT = \(n)" }
+	func autoIncrementSQL(_ n: Int64) -> String { dialect.alterTable(dialect.quote(table: table), [dialect.autoIncrementClause(n)]) }
 
 	func dropIndexSQL(_ index: IndexInfo) -> String {
-		index.kind == .primary ? "ALTER TABLE \(dialect.quote(table: table)) DROP PRIMARY KEY"
-			: "ALTER TABLE \(dialect.quote(table: table)) DROP INDEX \(dialect.quote(index.name))"
-	}
-
-	/// 인덱스 컬럼 한 칸: 이름, 접두 길이 "name(10)" → `name`(10), 식 "(…)" 은 그대로
-	static func indexPart(_ s: String, _ dialect: any SQLDialect) -> String {
-		if s.hasPrefix("(") { return s }
-		if let m = s.firstMatch(of: /^(.+)\((\d+)\)$/) { return dialect.quote(String(m.1)) + "(\(m.2))" }
-		return dialect.quote(s)
+		dialect.alterTable(dialect.quote(table: table), [dialect.dropIndexClause(index)])
 	}
 
 	/// 인덱스 컬럼 칸의 컬럼 이름 (접두 길이를 뗀다. 식이면 nil)
@@ -241,23 +230,12 @@ final class TableInspector {
 
 	/// 인덱스 고치기: MySQL 에는 인덱스를 고치는 명령이 없어 지우기와 만들기를 한 ALTER 로 (중간에 실패해도 인덱스가 사라진 채 남지 않는다)
 	func editIndexSQL(_ old: IndexInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String?) -> String {
-		let drop = old.kind == .primary ? "DROP PRIMARY KEY" : "DROP INDEX \(dialect.quote(old.name))"
-		let add = Self.addIndexSQL(table: table, kind: kind, name: name, columns: columns, parser: parser, dialect: dialect)
-		let prefix = "ALTER TABLE \(dialect.quote(table: table)) "
-		return prefix + drop + ", " + (add.hasPrefix(prefix) ? String(add.dropFirst(prefix.count)) : add)
+		dialect.alterTable(dialect.quote(table: table), [dialect.dropIndexClause(old),
+		                   dialect.addIndexClause(kind: kind, name: name, columns: columns, parser: parser)])
 	}
 
 	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String? = nil, dialect: any SQLDialect) -> String {
-		let cols = columns.map { indexPart($0, dialect) }.joined(separator: ", ")
-		let n = name.trimmingCharacters(in: .whitespaces)
-		let named = n.isEmpty ? "" : " " + dialect.quote(n)
-		switch kind {
-		case .primary: return "ALTER TABLE \(dialect.quote(table: table)) ADD PRIMARY KEY (\(cols))"
-		case .unique: return "ALTER TABLE \(dialect.quote(table: table)) ADD UNIQUE INDEX\(named) (\(cols))"
-		case .fulltext: return "ALTER TABLE \(dialect.quote(table: table)) ADD FULLTEXT INDEX\(named) (\(cols))" + (parser.map { " WITH PARSER \(dialect.quote($0))" } ?? "")
-		case .spatial: return "ALTER TABLE \(dialect.quote(table: table)) ADD SPATIAL INDEX\(named) (\(cols))"
-		case .index: return "ALTER TABLE \(dialect.quote(table: table)) ADD INDEX\(named) (\(cols))"
-		}
+		dialect.alterTable(dialect.quote(table: table), [dialect.addIndexClause(kind: kind, name: name, columns: columns, parser: parser)])
 	}
 
 	/// "`a``b` …" → a`b (맨 앞 백틱 이름)

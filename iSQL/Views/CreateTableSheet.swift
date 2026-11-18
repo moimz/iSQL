@@ -48,29 +48,8 @@ struct NewColumn: Identifiable, Hashable {
 
 	var isNumeric: Bool { Self.numericTypes.contains(type) }
 
-	/// `name` INT(11) UNSIGNED NOT NULL DEFAULT … AUTO_INCREMENT COMMENT '…'
-	func definition(_ dialect: any SQLDialect) -> String {
-		var s = dialect.quote(name) + " " + type
-		let len = length.trimmingCharacters(in: .whitespaces)
-		if !len.isEmpty, Self.takesLength.contains(type) { s += "(\(len))" }
-		if unsigned && isNumeric { s += " UNSIGNED" }
-		s += nullable && !primary ? " NULL" : " NOT NULL"
-		if let d = defaultSQL(dialect) { s += " DEFAULT " + d }
-		if autoIncrement { s += " AUTO_INCREMENT" }
-		if !comment.isEmpty { s += " COMMENT " + dialect.literal(.text(comment)) }
-		return s
-	}
-
-	private func defaultSQL(_ dialect: any SQLDialect) -> String? {
-		let d = defaultValue.trimmingCharacters(in: .whitespaces)
-		if d.isEmpty || autoIncrement { return nil }
-		let up = d.uppercased()
-		if up == "NULL" || up.hasPrefix("CURRENT_TIMESTAMP") || up == "NOW()" { return up }
-		if isNumeric, Double(d) != nil { return d }
-		// 이미 따옴표로 감쌌으면 그대로
-		if d.count >= 2, d.hasPrefix("'"), d.hasSuffix("'") { return d }
-		return dialect.literal(.text(defaultValue))
-	}
+	/// `name` INT(11) UNSIGNED NOT NULL DEFAULT … (서버 문법으로)
+	func definition(_ dialect: any SQLDialect) -> String { dialect.columnDefinition(self) }
 }
 
 /// 새 테이블 만들기 시트: 이름·코멘트·엔진·문자셋·콜레이션, 컬럼 목록(+ − ↑ ↓), SQL 미리보기 → 만들기
@@ -112,15 +91,9 @@ struct CreateTableSheet: View {
 	/// CREATE TABLE `db`.`이름` ( 컬럼…, PRIMARY KEY (…) ) ENGINE=… DEFAULT CHARSET=… COLLATE=… COMMENT='…'
 	static func createSQL(schema: String, name: String, columns: [NewColumn], engine: String,
 	                      charset: String, collation: String, comment: String, dialect: any SQLDialect) -> String {
-		var lines = columns.map { "  " + $0.definition(dialect) }
-		let keys = columns.filter(\.primary).map { dialect.quote($0.name) }
-		if !keys.isEmpty { lines.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
-		var tail = ")"
-		if !engine.isEmpty { tail += " ENGINE=\(engine)" }
-		if !charset.isEmpty { tail += " DEFAULT CHARSET=\(charset)" }
-		if !collation.isEmpty { tail += " COLLATE=\(collation)" }
-		if !comment.isEmpty { tail += " COMMENT=" + dialect.literal(.text(comment)) }
-		return "CREATE TABLE \(dialect.quote(schema)).\(dialect.quote(name)) (\n" + lines.joined(separator: ",\n") + "\n" + tail
+		dialect.createTable(schema: schema, name: name, columns: columns.map { $0.definition(dialect) },
+		                    primaryKey: columns.filter(\.primary).map { dialect.quote($0.name) },
+		                    engine: engine, charset: charset, collation: collation, comment: comment)
 	}
 
 	/// 만들기 전에 막는 문제 (첫 번째만 보여 준다)

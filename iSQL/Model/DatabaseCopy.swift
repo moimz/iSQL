@@ -80,10 +80,7 @@ final class DatabaseCopyJob {
 		let src = q(source), dst = q(target)
 		var fkOff = false
 		do {
-			var create = "CREATE DATABASE \(dst)"
-			if !charset.isEmpty { create += " CHARACTER SET \(charset)" }
-			if !collation.isEmpty { create += " COLLATE \(collation)" }
-			_ = try await session.query(create)
+			_ = try await session.query(dialect.createDatabase(target, charset: charset, collation: collation))
 
 			if structure {
 				let list = try await tableList()
@@ -146,9 +143,9 @@ final class DatabaseCopyJob {
 		do {
 			if isView {
 				guard let def = try await session.meta.viewDefinition(session.query, schema: source, name: name) else { throw CopyError.noDDL(name) }
-				_ = try await session.query("CREATE VIEW \(db).\(q(newName)) AS \(def)")
+				_ = try await session.query(dialect.createViewHead("\(db).\(q(newName))") + " AS \(def)")
 			} else {
-				_ = try await session.query("CREATE TABLE \(db).\(q(newName)) LIKE \(db).\(q(name))")
+				_ = try await session.query(dialect.createTableLike("\(db).\(q(newName))", like: "\(db).\(q(name))"))
 				if data, let meta = try await tableList().first(where: { $0.name == name && !$0.isView }) {
 					mode = try await pickMode()
 					rowsTotal = meta.approxRows
@@ -269,11 +266,8 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyTable(_ name: String, src: String, dst: String) async throws {
 		guard let session else { return }
-		let q = dialect.quote(_:)
-		guard var ddl = try await session.meta.createStatement(session.query, .table, schema: source, name: name) else { throw CopyError.noDDL(name) }
-		let head = "CREATE TABLE \(q(name))"
-		guard ddl.hasPrefix(head) else { throw CopyError.noDDL(name) }
-		ddl = "CREATE TABLE \(dst).\(q(name))" + ddl.dropFirst(head.count)
+		guard let ddl0 = try await session.meta.createStatement(session.query, .table, schema: source, name: name),
+		      let ddl = dialect.retargetCreateTable(ddl0, name: name, to: "\(dst).\(dialect.quote(name))") else { throw CopyError.noDDL(name) }
 		_ = try await session.query(ddl)
 	}
 
@@ -303,7 +297,7 @@ final class DatabaseCopyJob {
 			guard let ddl0 = try await session.meta.createStatement(session.query, .routine(k), schema: source, name: n) else { throw CopyError.noDDL(n) }
 			let ddl = Self.retarget(ddl0, from: source, to: target, dialect: dialect)
 			do { _ = try await c.query(ddl) } catch { _ = try await c.query(RoutineEditor.stripDefiner(ddl)) }
-			if k == .event { _ = try? await c.query("ALTER EVENT \(q(target)).\(q(n)) DISABLE"); events += 1 }
+			if k == .event { _ = try? await c.query(dialect.setEventEnabled("\(q(target)).\(q(n))", false)); events += 1 }
 			made += 1
 		}
 		return ", 루틴 \(made)개" + (events > 0 ? " — 이벤트 \(events)개는 꺼진 채로" : "")

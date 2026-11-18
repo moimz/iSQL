@@ -125,7 +125,7 @@ struct RoutineMenu: View {
 		if routine.kind == .event, let on = routine.enabled {
 			Button(on ? "이벤트 끄기" : "이벤트 켜기") {
 				Task {
-					_ = try? await session.query("ALTER EVENT \(dialect.quote(routine.schema)).\(dialect.quote(routine.name)) \(on ? "DISABLE" : "ENABLE")")
+					_ = try? await session.query(dialect.setEventEnabled(dialect.quote(schema: routine.schema, table: routine.name), !on))
 					await session.loadRoutines()
 					await session.routineEditor(routine.id)?.load()
 				}

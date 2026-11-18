@@ -17,10 +17,7 @@ struct CreateDatabaseSheet: View {
 	private var canCreate: Bool { !trimmed.isEmpty && !exists && !running }
 
 	private var sql: String {
-		var s = "CREATE DATABASE " + dialect.quote(trimmed)
-		if !charset.isEmpty { s += " CHARACTER SET \(charset)" }
-		if !collation.isEmpty { s += " COLLATE \(collation)" }
-		return s
+		dialect.createDatabase(trimmed, charset: charset, collation: collation)
 	}
 
 	var body: some View {

@@ -147,7 +147,7 @@ struct TableNameSheet: View {
 			let db = q(request.schema)
 			Task { @MainActor in
 				do {
-					_ = try await session.query("RENAME TABLE \(db).\(q(request.table.name)) TO \(db).\(q(new))")
+					_ = try await session.query(dialect.renameTables([(from: "\(db).\(q(request.table.name))", to: "\(db).\(q(new))")]))
 					await session.tableRenamed(schema: request.schema, from: request.table.name, to: new)
 					renaming = false
 					dismiss()

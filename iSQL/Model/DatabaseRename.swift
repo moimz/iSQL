@@ -67,18 +67,15 @@ final class DatabaseRenameJob {
 				if let d = try await session.meta.createStatement(session.query, .view, schema: source, name: v) { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target, dialect: dialect) }
 			}
 			step = "데이터베이스 만드는 중…"
-			var create = "CREATE DATABASE \(dst)"
-			if !charset.isEmpty { create += " CHARACTER SET \(charset)" }
-			if !collation.isEmpty { create += " COLLATE \(collation)" }
-			_ = try await session.query(create)
+			_ = try await session.query(dialect.createDatabase(target, charset: charset, collation: collation))
 			if !tables.isEmpty {
 				step = "테이블 \(tables.count)개 옮기는 중…"
-				let pairs = tables.map { "\(src).\(q($0)) TO \(dst).\(q($0))" }.joined(separator: ", ")
+				let pairs = tables.map { (from: "\(src).\(q($0))", to: "\(dst).\(q($0))") }
 				do {
-					_ = try await session.query("RENAME TABLE \(pairs)")
+					_ = try await session.query(dialect.renameTables(pairs))
 				} catch {
 					// 한 문장이라 테이블은 모두 제자리 → 만든 빈 DB 만 지운다
-					_ = try? await session.query("DROP DATABASE \(dst)")
+					_ = try? await session.query(dialect.dropDatabase(target))
 					throw error
 				}
 			}
@@ -95,13 +92,13 @@ final class DatabaseRenameJob {
 				if made.isEmpty { break }
 				left.removeAll { made.contains($0) }
 			}
-			for v in views where !left.contains(v) { _ = try? await session.query("DROP VIEW \(src).\(q(v))") }
+			for v in views where !left.contains(v) { _ = try? await session.query(dialect.drop(["\(src).\(q(v))"], views: true)) }
 			// 옛 DB 가 비었으면 지운다 (프로시저·이벤트가 있으면 남긴다)
 			let remain = ((try? await session.meta.tableCount(session.query, schema: source)) ?? nil) ?? 1
 			var dropped = false
 			if remain == 0 && routines == 0 && events == 0 {
 				step = "옛 데이터베이스 지우는 중…"
-				_ = try await session.query("DROP DATABASE \(src)")
+				_ = try await session.query(dialect.dropDatabase(source))
 				dropped = true
 			}
 			await session.databaseRenamed(from: source, to: target, droppedOld: dropped)
@@ -127,6 +124,6 @@ final class DatabaseRenameJob {
 		let q = dialect.quote(_:)
 		guard let v = ddl.range(of: " VIEW "), let asAt = ddl.range(of: " AS ", range: v.upperBound..<ddl.endIndex) else { return ddl }
 		let body = ddl[asAt.lowerBound...].replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
-		return "CREATE VIEW \(q(to)).\(q(name))" + body
+		return dialect.createViewHead("\(q(to)).\(q(name))") + body
 	}
 }
