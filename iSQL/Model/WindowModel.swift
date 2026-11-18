@@ -162,6 +162,14 @@ final class WindowModel {
 	/// 퀵 커넥트 화면으로 (접속은 그대로 둔다)
 	func goHome() { currentID = nil }
 
+	/// 보던 접속의 서버 정보 화면으로 (접속은 그대로): 저장한 서버면 목록에서 그 서버를, 아니면 새 접속 칸에 그 정보를
+	/// (사용자 2026-11-18: 접속 중 서버 목록으로 가면 새 접속이 아니라 접속한 서버가 골라진 화면)
+	func showCurrentServerInfo(saved: Bool) {
+		guard let s = current?.server else { goHome(); return }
+		if saved { selectedServerID = s.id } else { draft = s; selectedServerID = Self.newConnectionID }
+		goHome()
+	}
+
 	/// 새 접속 화면
 	func newConnection() {
 		currentID = nil

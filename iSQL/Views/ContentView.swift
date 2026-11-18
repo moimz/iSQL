@@ -57,6 +57,12 @@ struct ContentView: View {
 		.onChange(of: model.currentID == nil || model.sessions.isEmpty) { _, home in
 			if home { model.sidebarMode = .servers }
 		}
+		// 접속한 채로 [서버] 를 누르면: 그 서버를 고른 서버 정보 화면으로 (접속은 그대로)
+		.onChange(of: model.sidebarMode) { _, mode in
+			if mode == .servers, let id = model.currentID {
+				model.showCurrentServerInfo(saved: store.servers.contains { $0.id == id })
+			}
+		}
 		.toolbar {
 			// 제목이자 서버 바꾸기 (둥근 배경 없이 글자만)
 			ToolbarItem(placement: .navigation) {
