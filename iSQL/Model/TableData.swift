@@ -435,7 +435,7 @@ final class TableData: ColumnOrderTracking {
 				let r = try await session.query(s).last
 				// 바꾼 행이 없으면(다른 사람이 먼저 지웠거나 키가 바뀜) 멈춘다
 				if s.hasPrefix("UPDATE") || s.hasPrefix("DELETE"), r?.affectedRows == 0, r?.info.contains("Rows matched: 1") != true {
-					throw MySQLError.protocolError("대상 행을 찾지 못했습니다. 다른 곳에서 바뀌었을 수 있습니다.\n\(s)")
+					throw DBError.message("대상 행을 찾지 못했습니다. 다른 곳에서 바뀌었을 수 있습니다.\n\(s)")
 				}
 			}
 			_ = try await session.query("COMMIT")

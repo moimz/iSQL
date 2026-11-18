@@ -324,7 +324,7 @@ final class ExcelImportJob {
 		}
 		let colList = pairs.map { q($0.name) }.joined(separator: ", ")
 		let rows = dataRows
-		var conn: MySQLConnection?
+		var conn: (any DBConnection)?
 		var created = false
 		do {
 			let c = try await session.sideConnection(purpose: "엑셀 가져오기")

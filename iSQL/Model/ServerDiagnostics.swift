@@ -140,7 +140,7 @@ enum ServerDiagnostics {
 @Observable
 final class ServerStatusMonitor {
 	@ObservationIgnored private weak var session: Session?
-	@ObservationIgnored private var conn: MySQLConnection?
+	@ObservationIgnored private var conn: (any DBConnection)?
 	@ObservationIgnored private var loop: Task<Void, Never>?
 	@ObservationIgnored private var lastQuestions: (count: Int, at: Date)?
 

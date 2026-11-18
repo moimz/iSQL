@@ -137,24 +137,28 @@ final class Session {
 		}
 	}
 
+	/// 접속한 서버의 DB 종류와 SQL 문법 (서버가 없으면 MySQL)
+	var kind: SQLKind { server?.sqlKind ?? .mysql }
+	var dialect: any SQLDialect { kind.dialect }
+
 	private var tunnel: SSHTunnel?
-	private var conn: MySQLConnection?
+	private var conn: (any DBConnection)?
 	/// MCP 가 따로 붙을 곳: SSH 면 이 터널의 로컬 포트, 아니면 서버 주소. 비밀번호는 메모리에만
 	@ObservationIgnored private var sideEndpoint: (host: String, port: Int)?
 	@ObservationIgnored private var sidePassword: String?
 
 	/// 같은 서버에 연결을 하나 더 연다 (MCP 용: USE 를 해도 이 창의 쿼리 패널 기본 DB 가 바뀌지 않게). 터널은 같이 쓴다
 	/// log: false 면 콘솔에 남기지 않는다 (설정 창 상태 탭이 5초마다 읽는 쿼리)
-	func sideConnection(purpose: String = "", log: Bool = true) async throws -> MySQLConnection {
-		guard let server, let e = sideEndpoint else { throw MySQLError.closed }
-		let c = try await MySQLConnection.connect(.init(host: e.host, port: e.port, user: server.user,
-		                                                password: sidePassword ?? "", database: server.database))
+	func sideConnection(purpose: String = "", log: Bool = true) async throws -> any DBConnection {
+		guard let server, let e = sideEndpoint else { throw DBError.closed }
+		let c = try await DB.connect(kind, .init(host: e.host, port: e.port, user: server.user,
+		                                         password: sidePassword ?? "", database: server.database))
 		if log { attachLog(c, purpose: purpose) }
 		return c
 	}
 
 	/// 콘솔에 이 연결의 쿼리를 남긴다 (서버 이름, 용도)
-	func attachLog(_ c: MySQLConnection, purpose: String = "") {
+	func attachLog(_ c: any DBConnection, purpose: String = "") {
 		let name = (server?.displayName ?? "") + (purpose.isEmpty ? "" : " · " + purpose)
 		c.onQuery = { [weak self] sql, seconds, error in
 			DispatchQueue.main.async {
@@ -196,7 +200,7 @@ final class Session {
 		} catch {
 			disconnect()
 			self.server = server
-			if case .server(let code, _, _) = error as? MySQLError, code == 1045 { authFailed = true; Self.failSeq += 1; authFailCount = Self.failSeq }
+			if dialect.isAuthFailure(error) { authFailed = true; Self.failSeq += 1; authFailCount = Self.failSeq }
 			state = .failed(error.localizedDescription)
 		}
 	}
@@ -659,7 +663,7 @@ final class Session {
 	/// 터널(필요하면)과 MySQL 연결을 연다. 접속 시험에서도 쓴다
 	@MainActor
 	static func open(_ server: Server, mysqlPassword: String?, sshSecret: String?,
-	                 progress: (String) -> Void) async throws -> (SSHTunnel?, MySQLConnection) {
+	                 progress: (String) -> Void) async throws -> (SSHTunnel?, any DBConnection) {
 		var tunnel: SSHTunnel?
 		var host = server.host
 		var port = server.port
@@ -672,8 +676,8 @@ final class Session {
 		}
 		progress("MySQL 로그인 중…")
 		do {
-			let c = try await MySQLConnection.connect(.init(host: host, port: port, user: server.user,
-			                                                password: mysqlPassword ?? "", database: server.database))
+			let c = try await DB.connect(server.sqlKind ?? .mysql, .init(host: host, port: port, user: server.user,
+			                                                             password: mysqlPassword ?? "", database: server.database))
 			return (tunnel, c)
 		} catch {
 			tunnel?.close()
@@ -891,7 +895,7 @@ final class Session {
 	}
 
 	func query(_ sql: String) async throws -> [QueryResult] {
-		guard let conn else { throw MySQLError.closed }
+		guard let conn else { throw DBError.closed }
 		return try await conn.query(sql)
 	}
 

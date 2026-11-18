@@ -20,7 +20,10 @@ struct Server: Codable, Identifiable, Hashable {
 	var kind: String? = Server.mysqlKind
 	static let mysqlKind = "mysql"
 	/// 이 버전이 다룰 수 있는 종류인지 (없으면 옛 파일 = mysql)
-	var isSupportedKind: Bool { (kind ?? Self.mysqlKind) == Self.mysqlKind }
+	var isSupportedKind: Bool {
+		// 2.0: SQLKind.supported 에 든 종류만 (지금은 mysql 하나)
+		sqlKind.map { SQLKind.supported.contains($0) } ?? false
+	}
 
 	/// mysql://user@host:port/db (비밀번호·SSH 는 빼고)
 	var connectionString: String {

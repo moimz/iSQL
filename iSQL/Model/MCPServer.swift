@@ -517,9 +517,9 @@ final class MCPServer {
 	}
 
 	/// 서버마다 MCP 전용 연결 (끊겼으면 다시)
-	@ObservationIgnored private var conns: [UUID: (conn: MySQLConnection, tunnel: SSHTunnel?)] = [:]
+	@ObservationIgnored private var conns: [UUID: (conn: any DBConnection, tunnel: SSHTunnel?)] = [:]
 
-	private func connection(_ t: Target) async throws -> MySQLConnection {
+	private func connection(_ t: Target) async throws -> any DBConnection {
 		if let c = conns[t.server.id], c.conn.isOpen { return c.conn }
 		conns[t.server.id]?.tunnel?.close()
 		conns[t.server.id] = nil
@@ -540,8 +540,8 @@ final class MCPServer {
 	private func run(_ t: Target, _ sql: String) async throws -> QueryResult {
 		do {
 			return try await connection(t).rows(sql)
-		} catch MySQLError.server(let code, let state, let message) {
-			throw MySQLError.server(code: code, state: state, message: message)
+		} catch where (t.server.sqlKind ?? .mysql).dialect.isServerError(error) {
+			throw error
 		} catch {
 			conns[t.server.id]?.conn.close()
 			conns[t.server.id] = nil

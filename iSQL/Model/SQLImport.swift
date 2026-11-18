@@ -183,7 +183,7 @@ final class SQLImportJob {
 	var fraction: Double { fileSize > 0 ? min(1, Double(bytesDone) / Double(fileSize)) : 0 }
 
 	@ObservationIgnored private var reader: SQLDumpReader?
-	@ObservationIgnored private var conn: MySQLConnection?
+	@ObservationIgnored private var conn: (any DBConnection)?
 	@ObservationIgnored private var cancelled = false
 	@ObservationIgnored private var started = Date()
 	@ObservationIgnored private var lastUpdate = Date.distantPast

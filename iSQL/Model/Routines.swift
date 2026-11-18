@@ -147,7 +147,7 @@ final class RoutineEditor {
 			message = "CREATE \(kind.sqlWord) `이름` … 꼴이어야 합니다"
 			return nil
 		}
-		var conn: MySQLConnection?
+		var conn: (any DBConnection)?
 		do {
 			let c = try await session.sideConnection(purpose: kind.label)
 			conn = c
