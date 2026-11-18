@@ -69,7 +69,7 @@ struct QuickOpenView: View {
 			HStack(spacing: 16) {
 				hint(["arrow.up", "arrow.down"], "고르기")
 				hint(["return"], "열기")
-				hint(["command", "return"], "오른쪽 분할에 열기")
+				hint(["command", "return"], "분할 화면에서 열기")
 				hint(["escape"], "닫기")
 			}
 			.font(.footnote).foregroundStyle(.secondary)

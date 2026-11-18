@@ -590,7 +590,7 @@ struct AddIndexSheet: View {
 				}
 			}
 			VStack(alignment: .leading, spacing: 6) {
-				Text("컬럼 (누른 순서대로)").foregroundStyle(.secondary)
+				Text("컬럼 (클릭 순서에 따라 인덱스를 생성합니다.)").foregroundStyle(.secondary)
 				ScrollView {
 					LazyVStack(alignment: .leading, spacing: 0) {
 						ForEach(columns) { c in

@@ -278,7 +278,7 @@ final class MCPServer {
 				"protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
 				"capabilities": ["tools": [String: Any]()],
 				"serverInfo": ["name": "iSQL", "version": version],
-				"instructions": "iSQL 앱으로 MySQL 서버에 접근한다. 먼저 list_servers 로 쓸 수 있는 서버와 쿼리 권한을 확인한다.",
+				"instructions": "iSQL 앱으로 DB 서버에 접근한다. 먼저 list_servers 로 쓸 수 있는 서버와 쿼리 권한을 확인한다.",
 			])
 		case "ping":
 			return ok([:])
@@ -305,7 +305,7 @@ final class MCPServer {
 
 	private static let tools: [[String: Any]] = [
 		["name": "list_servers",
-		 "description": "iSQL 이 MCP 에 열어 준 MySQL 서버 목록과 지금 설정(접근 범위·쿼리 권한)",
+		 "description": "iSQL 이 MCP 에 열어 준 DB 서버 목록과 지금 설정(접근 범위·쿼리 권한)",
 		 "inputSchema": ["type": "object", "properties": [String: Any]()]],
 		["name": "list_databases",
 		 "description": "서버의 데이터베이스 목록",

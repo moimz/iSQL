@@ -150,7 +150,7 @@ struct ServerSwitcher: View {
 		.buttonStyle(.plain)
 		.onHover { hover = $0 }
 		.fixedSize()
-		.help("서버 바꾸기")
+		.help("서버 변경")
 	}
 
 	private func showMenu() {
@@ -170,7 +170,7 @@ struct ServerSwitcher: View {
 			if !store.servers.contains(where: { $0.id == id }) {
 				menu.addItem(MenuAction.item("이 접속 저장하기") { model.saveUnsaved(id, to: store) })
 			}
-			menu.addItem(MenuAction.item("닫기") { disconnect(id) })
+			menu.addItem(MenuAction.item("접속 종료 후 닫기") { disconnect(id) })
 		}
 		// 새 접속은 왼쪽 서버 목록 맨 위에 있다
 		if menu.items.isEmpty {
@@ -248,7 +248,7 @@ struct ModeSegment: NSViewRepresentable {
 		let images = ["tablecells", "square.stack.3d.up"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil)! }
 		let c = NSSegmentedControl(images: images, trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
 		c.setToolTip("데이터 (⌘1)", forSegment: 0)
-		c.setToolTip("구조 (⌘2)", forSegment: 1)
+		c.setToolTip("테이블 구조 (⌘2)", forSegment: 1)
 		c.setWidth(36, forSegment: 0)
 		c.setWidth(36, forSegment: 1)
 		c.selectedSegment = selection

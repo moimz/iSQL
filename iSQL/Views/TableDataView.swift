@@ -117,7 +117,7 @@ struct TableDetailView: View {
 					Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange)
 					Text("쿼리로 이 테이블이 바뀌었습니다.")
 					Spacer()
-					Button("다시 읽기") { Task { await data.load(offset: data.offset) } }
+					Button("새로고침") { Task { await data.load(offset: data.offset) } }
 				}
 				.padding(.horizontal, 14).padding(.vertical, 6)
 				.background(Color.orange.opacity(0.12), ignoresSafeAreaEdges: [])
@@ -189,7 +189,7 @@ struct TableDetailView: View {
 			PagerBar(pager: data, reload: {
 				// 다시 읽으면 저장 안 한 변경이 사라지므로 그때는 하지 않는다
 				if data.hasChanges { NSSound.beep() } else { Task { await data.load(offset: data.offset) } }
-			}, reloadHelp: data.hasChanges ? "저장 안 된 변경이 있어 다시 읽지 않습니다" : "데이터 다시 읽기",
+			}, reloadHelp: data.hasChanges ? "저장 안 된 변경이 있어 새로고침하지 않습니다" : "새로고침",
 			   reloading: data.loading)
 		}
 		.controlSize(.large)
@@ -329,8 +329,8 @@ struct FilterBar: View {
 				.overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: whereFocused ? [] : [4, 3])))
 
 				Picker("", selection: $data.matchAll) {
-					Text("모두 만족 (AND)").tag(true)
-					Text("하나라도 (OR)").tag(false)
+					Text("모두 (AND)").tag(true)
+					Text("일부 (OR)").tag(false)
 				}
 				.labelsHidden()
 				.fixedSize()

@@ -71,7 +71,7 @@ struct TableSidebar: View {
 							}
 							.contextMenu {
 								// 보기 → 만들기 → 내보내기·복제·이름 → 삭제 (되돌릴 수 없는 것은 맨 아래)
-								Button("테이블 목록·용량 보기") { session.openDatabase(schema) }
+								Button("전체 테이블 보기") { session.openDatabase(schema) }
 								Divider()
 								Button("새 테이블 만들기…") { session.createTableRequest = CreateTableRequest(schema: schema) }
 								NewRoutineMenu(session: session, schema: schema)
@@ -140,7 +140,7 @@ struct TableSidebar: View {
 					if session.loadingSchema { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 				}
 				.pill()
-				.help("데이터베이스·테이블 목록 다시 읽기")
+				.help("데이터베이스·테이블 목록 새로고침")
 			}
 			.padding(.horizontal, 10)
 			.padding(.vertical, 8)
@@ -263,7 +263,7 @@ struct SchemaHeader: View {
 		.onHover { hover = $0 }
 		// 이름(꺾쇠 밖)을 누르면 DB 개요 탭
 		.onTapGesture(perform: openOverview)
-		.help("눌러서 테이블 목록·용량 보기")
+		.help("눌러서 전체 테이블 보기")
 	}
 }
 
@@ -392,7 +392,7 @@ struct StructureBody: View {
 				if editor.loading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 			}
 			.pill()
-			.help("구조·인덱스·테이블 목록 다시 읽기")
+			.help("구조·인덱스·테이블 목록 새로고침")
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 14)
@@ -444,8 +444,8 @@ struct SidebarTableMenu: View {
 		let pinned = session.pinned.contains(table.id)
 		let items = TableMenu.items(isView: table.isView, name: table.name, capabilities: session.capabilities,
 		                            extra: [
-		                            	.action("오른쪽 분할에 열기") { session.openInSplit?(table) },
-		                            	.action(pinned ? "고정 풀기" : "맨 위에 고정") {
+		                            	.action("분할 화면에서 열기") { session.openInSplit?(table) },
+		                            	.action(pinned ? "고정 해제" : "맨 위에 고정") {
 		                            		if pinned { session.pinned.remove(table.id) } else { session.pinned.insert(table.id) }
 		                            	},
 		                            ] + (table.isView ? [.action("뷰 정의 고치기") { session.openViewDefinition(table) }] : []),

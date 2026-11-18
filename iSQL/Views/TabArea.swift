@@ -114,7 +114,7 @@ struct TabArea: View {
 							.foregroundStyle((structure ? focusedInfoOn : (d.showFilter || !d.whereClause.isEmpty)) ? Color.accentColor : Color.primary)
 					}
 					.help(structure ? "테이블 정보 (⌥⌘I)"
-					      : d.whereClause.isEmpty ? "조건으로 찾기 (⌥⌘F)" : "조건으로 찾기 (⌥⌘F)\nWHERE \(d.whereClause)")
+					      : d.whereClause.isEmpty ? "검색 (⌥⌘F)" : "검색 (⌥⌘F)\nWHERE \(d.whereClause)")
 				}
 				ToolbarSpacer(.fixed)
 				ToolbarItem {
@@ -151,7 +151,7 @@ struct TabArea: View {
 					Image(systemName: "list.bullet.rectangle")
 						.foregroundStyle(model.showConsole ? Color.accentColor : Color.primary)
 				}
-				.help("콘솔: 앱이 서버에 보낸 쿼리 (⇧⌘L)")
+				.help("콘솔 (⇧⌘L)")
 			}
 		}
 		.background {
@@ -407,8 +407,8 @@ struct TabBar: View {
 				        focused: paneFocused,
 				        structure: session.data(tab: id)?.mode == .structure,
 				        menu: TabMenuAction.table(session.table(id), in: session)
-				            + [TabMenuAction(title: "오른쪽 분할로 옮기기") { park(id) }]
-				            + (session.table(id) != nil ? [TabMenuAction(title: "오른쪽 분할에 복제") { duplicate(id) }] : [])
+				            + [TabMenuAction(title: "분할 화면에서 보기") { park(id) }]
+				            + (session.table(id) != nil ? [TabMenuAction(title: "분할 화면에 복제") { duplicate(id) }] : [])
 				            + Self.orderMenu(session.data(tab: id)),
 				        clickable: !covered,
 				        // 다른 탭 닫기: 저장 안 한 변경이 있는 탭은 남긴다 (묻는 창을 여러 번 띄우지 않게)
@@ -754,7 +754,7 @@ struct TabItem: View {
 			         active: active && focused)
 			if stale {
 				Image(systemName: "arrow.clockwise.circle.fill").font(.system(size: 11)).foregroundStyle(.orange)
-					.help("쿼리로 바뀌었습니다. 다시 읽으세요")
+					.help("쿼리로 바뀌었습니다. 새로고침하세요")
 			}
 			// X 는 탭 오른쪽 끝에 (이름이 짧아도 최소 너비 안에서 가운데로 밀리지 않게)
 			Spacer(minLength: 4)

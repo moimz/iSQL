@@ -28,7 +28,7 @@ struct UserAccountsView: View {
 				} description: {
 					Text(e).textSelection(.enabled)
 				} actions: {
-					Button("다시 읽기") { Task { await manager.load() } }
+					Button("새로고침") { Task { await manager.load() } }
 				}
 			} else {
 				// Mail 계정 설정처럼: 목록 상자와 탭 상자는 아래 끝이 맞고, [+ −] [↻] 는 목록 밑에
@@ -87,8 +87,8 @@ struct UserAccountsView: View {
 		} message: {
 			Text(selected?.id == currentID ? "지금 이 계정으로 접속해 있습니다. 지우면 다음 접속부터 들어올 수 없습니다." : "되돌릴 수 없습니다.")
 		}
-		.confirmationDialog("\(confirmRevoke?.db ?? "") 의 권한을 모두 회수할까요?", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
-			Button("회수", role: .destructive) {
+		.confirmationDialog("\(confirmRevoke?.db ?? "")의 권한을 모두 제거할까요?", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
+			Button("제거", role: .destructive) {
 				guard let a = selected, let g = confirmRevoke else { return }
 				confirmRevoke = nil
 				let target = AccountManager.target(g.db, dialect)
@@ -147,7 +147,7 @@ struct UserAccountsView: View {
 			}
 			.buttonStyle(.bordered)
 			.buttonBorderShape(.roundedRectangle)
-			.help("다시 읽기")
+			.help("새로고침")
 		}
 	}
 
@@ -200,7 +200,7 @@ struct UserAccountsView: View {
 					HStack(spacing: 8) {
 						Circle().fill(locked ? Color.orange : Color.green).frame(width: 8, height: 8)
 						Text(locked ? "잠김 (접속할 수 없음)" : "사용 중")
-						Button(locked ? "잠금 풀기" : "잠그기") {
+						Button(locked ? "잠금 해제" : "잠그기") {
 							Task { await manager.run([dialect.setAccountLocked(a.sql(dialect), !locked)], then: a) }
 						}
 						.padding(.leading, 6)
@@ -225,7 +225,7 @@ struct UserAccountsView: View {
 		let changes = AccountManager.globalChangeSQL(a, to: current, dialect)
 		return VStack(alignment: .leading, spacing: 10) {
 			HStack {
-				Text("모든 데이터베이스에 걸리는 권한").foregroundStyle(.secondary)
+				Text("모든 데이터베이스 권한").foregroundStyle(.secondary)
 				Spacer()
 				Button("모두 선택") { editing = Set(Privilege.all.map(\.sql)) }.buttonStyle(.link)
 				Button("모두 해제") { editing = [] }.buttonStyle(.link)
@@ -273,7 +273,7 @@ struct UserAccountsView: View {
 		let list = manager.dbGrants[a.id] ?? []
 		return VStack(alignment: .leading, spacing: 8) {
 			HStack {
-				Text("데이터베이스 하나에만 걸리는 권한").foregroundStyle(.secondary)
+				Text("데이터베이스별 권한").foregroundStyle(.secondary)
 				Spacer()
 				Button("데이터베이스 권한 추가…") { addingDBGrant = true }
 			}
@@ -291,7 +291,7 @@ struct UserAccountsView: View {
 						.frame(maxWidth: .infinity, alignment: .leading)
 					Button { confirmRevoke = g } label: { Image(systemName: "minus.circle") }
 						.buttonStyle(.borderless)
-						.help("이 데이터베이스 권한 모두 회수")
+						.help("데이터베이스 권한 제거")
 				}
 			}
 		}

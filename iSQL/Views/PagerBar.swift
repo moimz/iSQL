@@ -28,7 +28,7 @@ struct PagerBar: View {
 	let pager: Pager
 	/// 맨 오른쪽 다시 읽기 (nil 이면 없음). 제목바 새로 고침을 여기로 옮겼다 (사용자)
 	var reload: (() -> Void)? = nil
-	var reloadHelp = "다시 읽기"
+	var reloadHelp = "새로고침"
 	var reloading = false
 
 	var body: some View {
