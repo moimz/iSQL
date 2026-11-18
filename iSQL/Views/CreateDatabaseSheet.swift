@@ -31,14 +31,16 @@ struct CreateDatabaseSheet: View {
 						.focused($focused)
 						.onSubmit { if canCreate { Task { await create() } } }
 				}
-				GridRow {
-					label("문자셋")
-					PopUp(selection: Binding(get: { charset }, set: pickCharset),
-					      options: options(session.catalog.charsets.map(\.name), current: charset))
-				}
-				GridRow {
-					label("콜레이션")
-					PopUp(selection: $collation, options: options(session.catalog.collations(for: charset), current: collation))
+				if session.capabilities.charsets {
+					GridRow {
+						label("문자셋")
+						PopUp(selection: Binding(get: { charset }, set: pickCharset),
+						      options: options(session.catalog.charsets.map(\.name), current: charset))
+					}
+					GridRow {
+						label("콜레이션")
+						PopUp(selection: $collation, options: options(session.catalog.collations(for: charset), current: collation))
+					}
 				}
 			}
 			if exists {
@@ -94,6 +96,8 @@ struct CreateDatabaseSheet: View {
 	private func loadDefaults() async {
 		try? await session.loadCatalogIfNeeded()
 		guard charset.isEmpty else { return }
+		// 문자셋이 없는 서버 종류면 고를 것이 없다
+		guard session.capabilities.charsets else { return }
 		// 서버 설정에 정해 둔 기본값이 먼저
 		if let cs = session.server?.defaultCharset, !cs.isEmpty {
 			charset = cs

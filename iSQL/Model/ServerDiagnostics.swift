@@ -108,6 +108,9 @@ final class ServerStatusMonitor {
 
 	static let interval: Double = 5
 
+	/// 프로세스 멈추기·끊기가 있는 서버 종류인지
+	var canKill: Bool { session?.capabilities.processKill ?? true }
+
 	init(session: Session) {
 		self.session = session
 		processSource.monitor = self
@@ -159,12 +162,18 @@ final class ServerStatusMonitor {
 			lastQuestions = (s.questions, now)
 			summary = s
 			processes = try await session.meta.processes(run)
-			do {
-				digests = try await session.meta.topQueries(run, limit: 20)
-				digestError = nil
-			} catch {
+			if !session.capabilities.queryDigests {
+				// 쿼리 통계가 없는 서버 종류
 				digests = []
-				digestError = "쿼리 통계를 읽지 못했습니다 (performance_schema 가 꺼져 있거나 권한이 없습니다): \(error.localizedDescription)"
+				digestError = nil
+			} else {
+				do {
+					digests = try await session.meta.topQueries(run, limit: 20)
+					digestError = nil
+				} catch {
+					digests = []
+					digestError = "쿼리 통계를 읽지 못했습니다 (performance_schema 가 꺼져 있거나 권한이 없습니다): \(error.localizedDescription)"
+				}
 			}
 			error = nil
 			updated = now
@@ -254,6 +263,8 @@ final class ProcessListSource: GridSource {
 			}
 		}
 		if own { return [.disabled("iSQL 이 쓰는 연결입니다")] }
+		// 멈추기·끊기가 없는 서버 종류
+		if m.canKill == false { return [] }
 		return [
 			p.command == "Query" ? .action("쿼리 멈추기 (KILL QUERY)…", confirm("이 쿼리를 멈출까요?", false)) : .disabled("쿼리 멈추기 (KILL QUERY)…"),
 			.action("연결 끊기 (KILL)…", confirm("이 연결을 끊을까요?", true)),

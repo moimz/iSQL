@@ -79,10 +79,17 @@ struct TableSidebar: View {
 								Button("데이터베이스 내보내기…") { session.requestExport(schema: schema) }
 								Button("SQL 파일 가져오기…") { session.requestImport(schema: schema) }
 								Button("엑셀 파일 가져오기…") { session.requestExcelImport(schema: schema) }
-								Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }
-								Button("데이터베이스 이름 바꾸기…") { session.renameDatabaseRequest = RenameDatabaseRequest(schema: schema) }
-								Divider()
-								Button("데이터베이스 삭제…", role: .destructive) { session.requestDropDatabase(schema) }
+								let caps = session.capabilities
+								if caps.copyDatabase {
+									Button("데이터베이스 복제…") { session.duplicateRequest = DuplicateRequest(schema: schema) }
+								}
+								if caps.renameDatabase {
+									Button("데이터베이스 이름 바꾸기…") { session.renameDatabaseRequest = RenameDatabaseRequest(schema: schema) }
+								}
+								if caps.multipleDatabases {
+									Divider()
+									Button("데이터베이스 삭제…", role: .destructive) { session.requestDropDatabase(schema) }
+								}
 							}
 						}
 					}
@@ -113,9 +120,12 @@ struct TableSidebar: View {
 			Divider()
 			// [+ −] 데이터베이스 만들기·지우기 (지우기는 지금 탭의 DB) … [모두 펼치기/접기] [다시 읽기]
 			HStack(spacing: 8) {
-				AddRemovePill(addHelp: "새 데이터베이스", add: { session.creatingDatabase = true },
-				              removeHelp: session.currentSchema.map { "데이터베이스 \($0) 삭제…" } ?? "지울 데이터베이스의 탭을 고르세요",
-				              remove: session.currentSchema.map { s in { session.requestDropDatabase(s) } })
+				// DB 가 하나뿐인 종류(SQLite 등)는 만들기·지우기가 없다
+				if session.capabilities.multipleDatabases {
+					AddRemovePill(addHelp: "새 데이터베이스", add: { session.creatingDatabase = true },
+					              removeHelp: session.currentSchema.map { "데이터베이스 \($0) 삭제…" } ?? "지울 데이터베이스의 탭을 고르세요",
+					              remove: session.currentSchema.map { s in { session.requestDropDatabase(s) } })
+				}
 				Spacer(minLength: 0)
 				Button {
 					session.expanded = session.expanded.isEmpty ? Set(session.databases) : []
@@ -432,7 +442,7 @@ struct SidebarTableMenu: View {
 
 	var body: some View {
 		let pinned = session.pinned.contains(table.id)
-		let items = TableMenu.items(isView: table.isView, name: table.name,
+		let items = TableMenu.items(isView: table.isView, name: table.name, capabilities: session.capabilities,
 		                            extra: [
 		                            	.action("오른쪽 분할에 열기") { session.openInSplit?(table) },
 		                            	.action(pinned ? "고정 풀기" : "맨 위에 고정") {

@@ -5,7 +5,10 @@ import AppKit
 @Observable
 final class SettingsTarget {
 	static let shared = SettingsTarget()
-	weak var session: Session?
+	weak var session: Session? {
+		// 서버 종류에 없는 탭(사용자 계정·상태·서버 설정)은 숨긴다
+		didSet { if session !== oldValue { MainActor.assumeIsolated { ServerSettingsWindow.shared.refreshTabs() } } }
+	}
 }
 
 /// 서버 설정 창 (제목바 서버 이름 옆 톱니). ⌘, 는 iSQL 앱 설정(AppSettingsView)이라 이건 따로 된 AppKit 창이다.
@@ -16,6 +19,9 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 	static let width: CGFloat = 830
 
 	private var window: NSWindow?
+	private var tabs: SizingTabViewController?
+	/// 모든 탭 (보일 것만 tabs 에 넣는다)
+	private var items: [String: NSTabViewItem] = [:]
 
 	/// 탭: (값, 이름, 아이콘, 높이)
 	private static let pages: [(key: String, title: String, symbol: String, height: CGFloat)] = [
@@ -25,8 +31,36 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 		("variables", "서버 설정", "slider.horizontal.3", 640),
 	]
 
+	/// 지금 서버 종류에 있는 탭만 (없는 기능은 숨긴다). 접속 안 했으면 모두
+	private static func visibleKeys(_ session: Session?) -> [String] {
+		guard let c = session?.capabilities else { return pages.map(\.key) }
+		return pages.map(\.key).filter { k in
+			switch k {
+			case "accounts": c.accounts
+			case "status": c.serverStatus
+			case "variables": c.serverVariables
+			default: true
+			}
+		}
+	}
+
+	/// 보일 탭이 바뀌었으면 다시 넣는다 (보던 탭이 남아 있으면 그대로, 없으면 일반)
+	func refreshTabs() {
+		guard let tabs else { return }
+		let keys = Self.visibleKeys(SettingsTarget.shared.session)
+		let now = tabs.tabViewItems.compactMap { $0.identifier as? String }
+		guard keys != now else { return }
+		let selected = tabs.tabViewItems.indices.contains(tabs.selectedTabViewItemIndex) ? now[tabs.selectedTabViewItemIndex] : "general"
+		tabs.rebuilding = true
+		for item in tabs.tabViewItems { tabs.removeTabViewItem(item) }
+		for k in keys { if let item = items[k] { tabs.addTabViewItem(item) } }
+		tabs.selectedTabViewItemIndex = keys.firstIndex(of: selected) ?? 0
+		tabs.rebuilding = false
+	}
+
 	func show(store: ServerStore) {
 		if window == nil { build(store) }
+		refreshTabs()
 		window?.makeKeyAndOrderFront(nil)
 		NSApp.activate()
 	}
@@ -41,25 +75,29 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 			host.preferredContentSize = NSSize(width: Self.width, height: p.height)
 			host.title = p.title
 			let item = NSTabViewItem(viewController: host)
+			item.identifier = p.key
 			item.label = p.title
 			item.image = NSImage(systemSymbolName: p.symbol, accessibilityDescription: p.title)
-			tabs.addTabViewItem(item)
+			items[p.key] = item
 		}
+		let keys = Self.visibleKeys(SettingsTarget.shared.session)
+		for k in keys { if let item = items[k] { tabs.addTabViewItem(item) } }
 		// 마지막으로 본 탭 (이 맥에만)
 		let last = UserDefaults.standard.string(forKey: "serverSettingsTab") ?? "general"
-		tabs.selectedTabViewItemIndex = Self.pages.firstIndex { $0.key == last } ?? 0
-		tabs.onSelect = { i in UserDefaults.standard.set(Self.pages[i].key, forKey: "serverSettingsTab") }
+		tabs.selectedTabViewItemIndex = keys.firstIndex(of: last) ?? 0
+		tabs.onSelect = { key in UserDefaults.standard.set(key, forKey: "serverSettingsTab") }
+		self.tabs = tabs
 
 		let w = NSWindow(contentViewController: tabs)
 		w.styleMask = [.titled, .closable, .miniaturizable]
 		w.toolbarStyle = .preference
 		w.titlebarSeparatorStyle = .line
 		w.isReleasedWhenClosed = false
-		w.setContentSize(NSSize(width: Self.width, height: Self.pages[tabs.selectedTabViewItemIndex].height))
+		w.setContentSize(NSSize(width: Self.width, height: tabs.tabViewItems[tabs.selectedTabViewItemIndex].viewController?.preferredContentSize.height ?? 440))
 		w.center()
 		w.setFrameAutosaveName("iSQL.ServerSettings")
 		// 저장해 둔 창 크기가 옛 폭(920)이어도 지금 폭으로 (위치만 이어받는다)
-		w.setContentSize(NSSize(width: Self.width, height: Self.pages[tabs.selectedTabViewItemIndex].height))
+		w.setContentSize(NSSize(width: Self.width, height: tabs.tabViewItems[tabs.selectedTabViewItemIndex].viewController?.preferredContentSize.height ?? 440))
 		w.delegate = self
 		window = w
 	}
@@ -67,12 +105,14 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 
 /// 탭을 바꾸면 그 탭 크기로 창을 맞춘다 (위쪽 모서리는 그대로)
 private final class SizingTabViewController: NSTabViewController {
-	var onSelect: ((Int) -> Void)?
+	var onSelect: ((String) -> Void)?
+	/// 탭을 다시 넣는 중 (보던 탭 기억을 덮어쓰지 않는다)
+	var rebuilding = false
 
 	override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
 		super.tabView(tabView, didSelect: tabViewItem)
 		guard let item = tabViewItem, let vc = item.viewController, let w = view.window else { return }
-		onSelect?(tabView.indexOfTabViewItem(item))
+		if !rebuilding, let key = item.identifier as? String { onSelect?(key) }
 		let content = vc.preferredContentSize
 		var frame = w.frameRect(forContentRect: NSRect(origin: .zero, size: content))
 		frame.origin = NSPoint(x: w.frame.minX, y: w.frame.maxY - frame.height)
@@ -135,9 +175,11 @@ struct ServerSettingsPage: View {
 					Text("위험한 SQL 실행 전에 경고")
 					Text("쿼리 패널에서 DROP·TRUNCATE·ALTER·DELETE·WHERE 없는 UPDATE 를 실행하기 전에 묻습니다")
 				}
-				ServerDefaultCharsetRows(session: session) { s in
-					session.updateServer(s)
-					if store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
+				if session.capabilities.charsets {
+					ServerDefaultCharsetRows(session: session) { s in
+						session.updateServer(s)
+						if store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
+					}
 				}
 			} header: {
 				Text("이 서버 설정")

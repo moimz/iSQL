@@ -51,9 +51,11 @@ struct ImportSheet: View {
 				GridRow {
 					Color.clear.frame(width: 1, height: 1)
 					VStack(alignment: .leading, spacing: 4) {
-						Toggle("외래 키 검사 끄기 (FOREIGN_KEY_CHECKS = 0)", isOn: $disableForeignKeys)
-							.toggleStyle(.checkbox)
-							.disabled(locked)
+						if session.capabilities.foreignKeyChecksToggle {
+							Toggle("외래 키 검사 끄기 (FOREIGN_KEY_CHECKS = 0)", isOn: $disableForeignKeys)
+								.toggleStyle(.checkbox)
+								.disabled(locked)
+						}
 						Text("가져오기 전용 연결로 실행해서 파일의 USE·SET 이 앱의 다른 작업에 남지 않습니다. 오류가 나면 그 문장에서 멈춥니다.")
 							.font(.callout).foregroundStyle(.secondary)
 							.fixedSize(horizontal: false, vertical: true)
@@ -109,7 +111,7 @@ struct ImportSheet: View {
 			}
 			.keyboardShortcut(.cancelAction)
 			Button("가져오기") {
-				Task { await job.start(schema: schema.isEmpty ? nil : schema, disableForeignKeys: disableForeignKeys) }
+				Task { await job.start(schema: schema.isEmpty ? nil : schema, disableForeignKeys: disableForeignKeys && session.capabilities.foreignKeyChecksToggle) }
 			}
 			.buttonStyle(.borderedProminent)
 			.keyboardShortcut(.defaultAction)

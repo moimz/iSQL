@@ -108,6 +108,8 @@ final class StructureEditor: GridSource {
 
 	let table: TableInfo
 	@ObservationIgnored private weak var session: Session?
+	/// 이 서버 종류에 있는 기능 (열 때 정한다)
+	@ObservationIgnored private let caps: SQLCapabilities
 	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
 	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	/// 저장 안 됨 표시를 알릴 곳 (TableData)
@@ -132,6 +134,8 @@ final class StructureEditor: GridSource {
 	init(table: TableInfo, session: Session, columns: [ColumnInfo]) {
 		self.table = table
 		self.session = session
+		caps = session.capabilities
+		gridColumns = Self.columns(caps)
 		originals = columns.map { StructColumn(info: $0) }
 		rows = originals.map { Row(col: $0, original: $0) }
 	}
@@ -318,16 +322,19 @@ final class StructureEditor: GridSource {
 
 	var gridID: String { "structure:" + table.id }
 
-	@ObservationIgnored let gridColumns: [GridColumn] = [
-		GridColumn(key: "name", title: "컬럼", mono: true, width: 200),
-		GridColumn(key: "comment", title: "코멘트", width: 220),
-		GridColumn(key: "type", title: "타입", mono: true, width: 120),
-		GridColumn(key: "length", title: "길이·값", mono: true, width: 110),
-		GridColumn(key: "unsigned", title: "UNSIGNED", center: true, width: 80),
-		GridColumn(key: "null", title: "NULL", center: true, width: 50),
-		GridColumn(key: "default", title: "기본값", width: 140),
-		GridColumn(key: "extra", title: "기타", width: 200),
-	]
+	/// 표 컬럼 (코멘트·UNSIGNED 가 없는 서버 종류면 그 칸을 뺀다)
+	@ObservationIgnored let gridColumns: [GridColumn]
+
+	private static func columns(_ caps: SQLCapabilities) -> [GridColumn] {
+		[GridColumn(key: "name", title: "컬럼", mono: true, width: 200)]
+		+ (caps.columnComment ? [GridColumn(key: "comment", title: "코멘트", width: 220)] : [])
+		+ [GridColumn(key: "type", title: "타입", mono: true, width: 120),
+		   GridColumn(key: "length", title: "길이·값", mono: true, width: 110)]
+		+ (caps.unsignedColumns ? [GridColumn(key: "unsigned", title: "UNSIGNED", center: true, width: 80)] : [])
+		+ [GridColumn(key: "null", title: "NULL", center: true, width: 50),
+		   GridColumn(key: "default", title: "기본값", width: 140),
+		   GridColumn(key: "extra", title: "기타", width: 200)]
+	}
 
 	var rowCount: Int { rows.count }
 	var canEdit: Bool { loaded && !table.isView }
@@ -418,7 +425,7 @@ final class StructureEditor: GridSource {
 		case "extra":
 			var l: [String?] = ["없음"]
 			if c.isNumeric { l.append("auto_increment") }
-			if ["DATETIME", "TIMESTAMP"].contains(c.type) { l.append("on update CURRENT_TIMESTAMP") }
+			if caps.onUpdateTimestamp && ["DATETIME", "TIMESTAMP"].contains(c.type) { l.append("on update CURRENT_TIMESTAMP") }
 			return l
 		default: return nil
 		}

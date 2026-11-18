@@ -54,7 +54,7 @@ enum GridMenuItem {
 /// 테이블 하나의 오른쪽 클릭 메뉴 (사이드바 테이블·DB 개요에서 하나 골랐을 때 같은 순서).
 /// 자주 쓰는 것 위, 되돌릴 수 없는 것 맨 아래
 enum TableMenu {
-	static func items(isView: Bool, name: String? = nil, extra: [GridMenuItem] = [], open: @escaping () -> Void, export: @escaping () -> Void,
+	static func items(isView: Bool, name: String? = nil, capabilities caps: SQLCapabilities, extra: [GridMenuItem] = [], open: @escaping () -> Void, export: @escaping () -> Void,
 	                  importExcel: (() -> Void)? = nil,
 	                  duplicate: (() -> Void)? = nil, rename: (() -> Void)? = nil,
 	                  truncate: (() -> Void)? = nil, drop: (() -> Void)? = nil) -> [GridMenuItem] {
@@ -68,11 +68,12 @@ enum TableMenu {
 		}] } ?? []) + extra + [
 			.separator,
 			.action("\(kind) 내보내기…", export),
-		] + (isView ? [] : [item("엑셀에서 가져오기…", importExcel)]) + [
-			item("\(kind) 복제…", duplicate),
+		] + (isView ? [] : [item("엑셀에서 가져오기…", importExcel)])
+			// 테이블 복제는 CREATE TABLE … LIKE 가 있는 종류만 (뷰는 정의로 복제)
+			+ (isView || caps.createTableLike ? [item("\(kind) 복제…", duplicate)] : []) + [
 			item("\(kind) 이름 바꾸기…", rename),
 			.separator,
-		] + (isView ? [] : [item("테이블 비우기…", truncate)]) + [
+		] + (isView || !caps.truncate ? [] : [item("테이블 비우기…", truncate)]) + [
 			item("\(kind) 삭제…", drop),
 		]
 	}

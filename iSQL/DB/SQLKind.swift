@@ -44,6 +44,20 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		}
 	}
 
+	/// 이 종류에 있는 기능. 계정 관리·iModules 내보내기는 MySQL 에서만 (사용자 2026-11-18).
+	/// 나머지는 종류마다 붙일 때 정한다 (지금은 MySQL 과 같게)
+	var capabilities: SQLCapabilities {
+		var c = SQLCapabilities.mysql
+		if self != .mysql {
+			c.accounts = false
+			c.iModulesExport = false
+		}
+		#if DEBUG
+		c = c.applyingDebugOverrides()
+		#endif
+		return c
+	}
+
 	/// 이 종류의 메타데이터 읽기. 아직 모두 MySQL
 	var meta: any SQLMeta {
 		switch self {

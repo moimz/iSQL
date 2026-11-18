@@ -404,6 +404,7 @@ final class MCPServer {
 			return json(out.count == 1 ? out[0] : out)
 		case "server_status":
 			let t = try target(a)
+			guard t.capabilities.serverStatus else { throw MCPFailure("\(t.server.displayName) (\(t.server.kindLabel)) 는 서버 상태를 지원하지 않습니다") }
 			let run: DBRun = { sql in [try await self.run(t, sql)] }
 			let s = try await t.meta.serverSummary(run)
 			let sleeping = (a["include_sleeping"] as? Bool) ?? false
@@ -427,6 +428,7 @@ final class MCPServer {
 			return json(d)
 		case "top_queries":
 			let t = try target(a)
+			guard t.capabilities.queryDigests else { throw MCPFailure("\(t.server.displayName) (\(t.server.kindLabel)) 는 쿼리 통계를 지원하지 않습니다") }
 			let limit = min(max((a["limit"] as? Int) ?? 20, 1), 200)
 			let list = try await t.meta.topQueries({ sql in [try await self.run(t, sql)] }, limit: limit)
 			note("top_queries · \(t.server.displayName)")
@@ -482,6 +484,7 @@ final class MCPServer {
 		let session: Session?
 		var dialect: any SQLDialect { (server.sqlKind ?? .mysql).dialect }
 		var meta: any SQLMeta { (server.sqlKind ?? .mysql).meta }
+		var capabilities: SQLCapabilities { (server.sqlKind ?? .mysql).capabilities }
 	}
 
 	/// 지금 범위에서 MCP 에 열린 서버들

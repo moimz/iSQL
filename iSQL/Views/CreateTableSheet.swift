@@ -57,6 +57,8 @@ struct CreateTableSheet: View {
 	let schema: String
 	let session: Session
 	private var dialect: any SQLDialect { session.dialect }
+	/// 이 서버 종류에 있는 기능 (없는 칸은 숨긴다)
+	private var caps: SQLCapabilities { session.capabilities }
 	@Environment(\.dismiss) private var dismiss
 
 	@State private var name = ""
@@ -148,20 +150,28 @@ struct CreateTableSheet: View {
 				TextField("테이블 이름", text: $name)
 					.textFieldStyle(.roundedBorder)
 					.focused($focus, equals: .table)
-				label("코멘트")
-				TextField("", text: $comment)
-					.textFieldStyle(.roundedBorder)
+				if caps.tableComment {
+					label("코멘트")
+					TextField("", text: $comment)
+						.textFieldStyle(.roundedBorder)
+				}
 			}
-			GridRow {
-				label("엔진")
-				PopUp(selection: $engine, options: options(session.catalog.engines, current: engine))
-				label("문자셋")
-				HStack(spacing: 10) {
-					PopUp(selection: Binding(get: { charset }, set: pickCharset),
-					      options: options(session.catalog.charsets.map(\.name), current: charset))
-						.frame(width: 150)
-					Text("콜레이션").foregroundStyle(.secondary)
-					PopUp(selection: $collation, options: options(session.catalog.collations(for: charset), current: collation))
+			if caps.engines || caps.charsets {
+				GridRow {
+					if caps.engines {
+						label("엔진")
+						PopUp(selection: $engine, options: options(session.catalog.engines, current: engine))
+					}
+					if caps.charsets {
+						label("문자셋")
+						HStack(spacing: 10) {
+							PopUp(selection: Binding(get: { charset }, set: pickCharset),
+							      options: options(session.catalog.charsets.map(\.name), current: charset))
+								.frame(width: 150)
+							Text("콜레이션").foregroundStyle(.secondary)
+							PopUp(selection: $collation, options: options(session.catalog.collations(for: charset), current: collation))
+						}
+					}
 				}
 			}
 		}
@@ -178,12 +188,12 @@ struct CreateTableSheet: View {
 				Text("이름").frame(width: W.name, alignment: .leading)
 				Text("종류").frame(width: W.type, alignment: .leading)
 				Text("길이·값").frame(width: W.length, alignment: .leading)
-				Text("UNSIGNED").frame(width: W.unsigned)
+				if caps.unsignedColumns { Text("UNSIGNED").frame(width: W.unsigned) }
 				Text("NULL").frame(width: W.check)
 				Text("기본값").frame(width: W.value, alignment: .leading)
 				Text("AI").frame(width: W.check).help("AUTO_INCREMENT")
 				Text("PK").frame(width: W.check).help("기본 키 (PRIMARY KEY)")
-				Text("코멘트").frame(maxWidth: .infinity, alignment: .leading)
+				if caps.columnComment { Text("코멘트").frame(maxWidth: .infinity, alignment: .leading) } else { Spacer() }
 			}
 			.font(.callout).foregroundStyle(.secondary)
 			.padding(.horizontal, 8)
@@ -224,7 +234,7 @@ struct CreateTableSheet: View {
 				.focused($focus, equals: .length(col.id))
 				.frame(width: W.length)
 				.disabled(!NewColumn.takesLength.contains(col.type))
-			check(c.unsigned).frame(width: W.unsigned).disabled(!col.isNumeric)
+			if caps.unsignedColumns { check(c.unsigned).frame(width: W.unsigned).disabled(!col.isNumeric) }
 			check(c.nullable).frame(width: W.check).disabled(col.primary)
 			TextField(col.autoIncrement ? "" : "없음", text: c.defaultValue)
 				.focused($focus, equals: .value(col.id))
@@ -235,9 +245,13 @@ struct CreateTableSheet: View {
 				c.wrappedValue.primary = on
 				if on { c.wrappedValue.nullable = false }
 			})).frame(width: W.check)
-			TextField("", text: c.comment)
-				.focused($focus, equals: .comment(col.id))
-				.frame(maxWidth: .infinity)
+			if caps.columnComment {
+				TextField("", text: c.comment)
+					.focused($focus, equals: .comment(col.id))
+					.frame(maxWidth: .infinity)
+			} else {
+				Spacer()
+			}
 		}
 		.textFieldStyle(.roundedBorder)
 		.padding(.horizontal, 8)
@@ -359,16 +373,16 @@ struct CreateTableSheet: View {
 	@MainActor
 	private func loadDefaults() async {
 		try? await session.loadCatalogIfNeeded()
-		if engine.isEmpty {
+		if caps.engines && engine.isEmpty {
 			let e = (try? await session.meta.defaultEngine(session.query)) ?? nil
 			engine = e ?? (session.catalog.engines.contains("InnoDB") ? "InnoDB" : session.catalog.engines.first ?? "")
 		}
-		if charset.isEmpty, let cs = session.server?.defaultCharset, !cs.isEmpty {
+		if caps.charsets, charset.isEmpty, let cs = session.server?.defaultCharset, !cs.isEmpty {
 			// 서버 설정에 정해 둔 기본값이 먼저
 			charset = cs
 			collation = session.server?.defaultCollation.flatMap { $0.isEmpty ? nil : $0 } ?? session.catalog.defaultCollation(for: cs) ?? ""
 		}
-		if charset.isEmpty {
+		if caps.charsets && charset.isEmpty {
 			let r = (try? await session.meta.schemaDefaults(session.query, schema: schema)) ?? nil
 			charset = r?.charset ?? ""
 			collation = r?.collation ?? ""

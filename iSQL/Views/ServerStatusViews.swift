@@ -29,15 +29,20 @@ struct ServerStatusTab: View {
 			}
 			if let s = monitor.summary { cards(s).padding(.horizontal, 16).padding(.bottom, 6) }
 			HStack {
-				Picker("", selection: $page) {
-					Text("프로세스 \(monitor.processes.count)").tag(0)
-					Text("쿼리 통계").tag(1)
+				// 쿼리 통계가 없는 서버 종류면 프로세스 목록만
+				if session.capabilities.queryDigests {
+					Picker("", selection: $page) {
+						Text("프로세스 \(monitor.processes.count)").tag(0)
+						Text("쿼리 통계").tag(1)
+					}
+					.pickerStyle(.segmented)
+					.labelsHidden()
+					.fixedSize()
+				} else {
+					Text("프로세스 \(monitor.processes.count)").font(.headline)
 				}
-				.pickerStyle(.segmented)
-				.labelsHidden()
-				.fixedSize()
 				Spacer()
-				Text(page == 0 ? "노랑: 10초 넘게 도는 쿼리 · 빨강: 잠금 대기 · 오른쪽 클릭으로 멈추기·끊기"
+				Text(page == 0 ? "노랑: 10초 넘게 도는 쿼리 · 빨강: 잠금 대기" + (session.capabilities.processKill ? " · 오른쪽 클릭으로 멈추기·끊기" : "")
 				               : "서버가 켜진 뒤(또는 통계를 비운 뒤) 오래 걸린 쿼리 순, 값은 ? 로 묶음")
 					.font(.callout).foregroundStyle(.secondary).lineLimit(1)
 			}

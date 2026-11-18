@@ -55,6 +55,8 @@ final class TableInspector {
 	@ObservationIgnored private weak var session: Session?
 	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
 	var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
+	/// 이 서버 종류에 있는 기능 (없는 칸은 패널에서 숨긴다)
+	var capabilities: SQLCapabilities { session?.capabilities ?? SQLKind.mysql.capabilities }
 
 	private(set) var loading = false
 	private(set) var error: String?

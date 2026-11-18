@@ -152,12 +152,14 @@ final class DatabaseOverview: GridSource {
 			return [
 				.action("선택 테이블 \(picked.count)개 내보내기…") { [weak self] in self?.requestExportPicked() },
 				.separator,
+			] + (session?.capabilities.truncate == false ? [] : [
 				.action("선택 테이블 \(picked.count)개 비우기…") { [weak self] in guard let self else { return }; self.session?.requestTruncate(schema: self.schema, picked) },
+			]) + [
 				.action("선택 테이블 \(picked.count)개 삭제…") { [weak self] in guard let self else { return }; self.session?.requestDrop(schema: self.schema, picked) },
 			]
 		}
 		guard let s = stat(at: row) else { return [] }
-		return TableMenu.items(isView: s.isView, name: s.name,
+		return TableMenu.items(isView: s.isView, name: s.name, capabilities: session?.capabilities ?? SQLKind.mysql.capabilities,
 		                       open: { [weak self] in self?.activateRow(row) },
 		                       export: { [weak self] in guard let self else { return }; self.session?.requestExport(.table(self.schema, s)) },
 		                       importExcel: { [weak self] in guard let self else { return }; let sess = self.session, schema = self.schema; MainActor.assumeIsolated { sess?.requestExcelImport(schema: schema, table: s.name) } },

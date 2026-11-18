@@ -10,7 +10,7 @@ struct RoutineGroups: View {
 	var search = ""
 
 	var body: some View {
-		ForEach(RoutineKind.routineKinds, id: \.self) { kind in
+		ForEach(session.capabilities.routineKinds, id: \.self) { kind in
 			let all = session.routines(schema, kind)
 			let items = search.isEmpty ? all : all.filter { $0.name.lowercased().contains(search.lowercased()) }
 			if !items.isEmpty {
@@ -41,9 +41,13 @@ struct NewRoutineMenu: View {
 	private var dialect: any SQLDialect { session.dialect }
 	let schema: String
 	var body: some View {
-		Menu("새로 만들기") {
-			ForEach(RoutineKind.routineKinds, id: \.self) { k in
-				Button("\(k.label)…") { session.newRoutine(k, schema: schema) }
+		// 루틴이 없는 서버 종류면 메뉴째 숨긴다
+		let kinds = session.capabilities.routineKinds
+		if !kinds.isEmpty {
+			Menu("새로 만들기") {
+				ForEach(kinds, id: \.self) { k in
+					Button("\(k.label)…") { session.newRoutine(k, schema: schema) }
+				}
 			}
 		}
 	}
@@ -187,12 +191,14 @@ struct RoutineTabView: View {
 						.toggleStyle(.switch).controlSize(.small)
 				}
 				Spacer()
-				Picker("DEFINER", selection: $editor.keepDefiner) {
-					Text("원래 DEFINER 유지").tag(true)
-					Text("지금 계정으로").tag(false)
+				if session.capabilities.routineDefiner {
+					Picker("DEFINER", selection: $editor.keepDefiner) {
+						Text("원래 DEFINER 유지").tag(true)
+						Text("지금 계정으로").tag(false)
+					}
+					.fixedSize()
+					.help("저장할 때 DEFINER=… 를 그대로 둘지, 빼서 지금 접속한 계정으로 만들지")
 				}
-				.fixedSize()
-				.help("저장할 때 DEFINER=… 를 그대로 둘지, 빼서 지금 접속한 계정으로 만들지")
 				if !editor.isNew && (editor.kind == .procedure || editor.kind == .function) {
 					Button("실행…") { running = true }.disabled(info == nil)
 						.help("인자를 넣어 CALL / SELECT 문을 쿼리 패널에 넣습니다")

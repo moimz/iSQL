@@ -47,12 +47,16 @@ struct ExportSheet: View {
 			TabView(selection: $format) {
 				sqlTab.tabItem { Text("SQL") }.tag(Format.sql)
 				excelTab.tabItem { Text("Excel") }.tag(Format.excel)
-				imodulesTab.tabItem { Text("iModules") }.tag(Format.imodules)
+				// iModules 는 MySQL 에서만 (iModules 가 여러 DB 를 지원하면 하나씩 붙인다, 사용자 2026-11-18)
+				if session.capabilities.iModulesExport {
+					imodulesTab.tabItem { Text("iModules") }.tag(Format.imodules)
+				}
 			}
 			// 시트 창은 처음에 크기 0 으로 만들어져 NSTabView 가 그때 탭 너비를 재고 다시 안 잰다(탭 이름이 "S…" 로 잘림).
 			// → 시트가 뜬 뒤 한 번 다시 만든다 (tabsReady). 크기는 옵션 줄 수만큼 직접 준다
 			.frame(width: 400, height: tabHeight)
 			.id(tabsReady)
+			.onAppear { if format == .imodules && !session.capabilities.iModulesExport { format = .sql } }
 			HStack {
 				Spacer()
 				Button("취소", role: .cancel) { dismiss() }

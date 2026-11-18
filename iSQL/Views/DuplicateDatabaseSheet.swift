@@ -57,9 +57,11 @@ struct DuplicateDatabaseSheet: View {
 				Toggle("데이터 복제", isOn: $data)
 					.disabled(!structure)
 					.padding(.leading, 20)
-				Toggle("프로시저 · 함수 · 트리거 · 이벤트 복제 (이벤트는 꺼진 채로)", isOn: $routines)
-					.disabled(!structure)
-					.padding(.leading, 20)
+				if session.capabilities.copyRoutines {
+					Toggle("프로시저 · 함수 · 트리거 · 이벤트 복제 (이벤트는 꺼진 채로)", isOn: $routines)
+						.disabled(!structure)
+						.padding(.leading, 20)
+				}
 			}
 			.toggleStyle(.checkbox)
 			.disabled(job.running || job.finished)
@@ -76,7 +78,7 @@ struct DuplicateDatabaseSheet: View {
 					}
 					.keyboardShortcut(.cancelAction)
 					Button("복제") {
-						Task { await job.run(to: trimmed, structure: structure, data: structure && data, routines: structure && routines) }
+						Task { await job.run(to: trimmed, structure: structure, data: structure && data, routines: structure && routines && session.capabilities.copyRoutines) }
 					}
 					.buttonStyle(.borderedProminent)
 					.keyboardShortcut(.defaultAction)

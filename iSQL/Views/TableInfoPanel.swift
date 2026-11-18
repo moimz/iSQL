@@ -90,13 +90,16 @@ struct TableInfoPanel: View {
 	@State private var editingAuto = false
 	@State private var autoText = ""
 
+	/// 이 서버 종류에 있는 기능 (없는 칸은 숨긴다)
+	private var caps: SQLCapabilities { inspector.capabilities }
+
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 22) {
-				settings
+				if caps.engines || caps.charsets || caps.tableComment { settings }
 				stats
 				indexList
-				if !inspector.table.isView { foreignKeyList }
+				if !inspector.table.isView && caps.foreignKeys { foreignKeyList }
 				createStatement
 			}
 			.padding(16)
@@ -123,7 +126,7 @@ struct TableInfoPanel: View {
 			Text(failure ?? "")
 		}
 		.sheet(isPresented: $addingIndex) {
-			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
+			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect, capabilities: inspector.capabilities, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize) { sql in
 				Task { failure = await inspector.run(sql) }
 			}
@@ -149,7 +152,7 @@ struct TableInfoPanel: View {
 			                edit: { old, new in Task { failure = await inspector.editForeignKey(old, to: new) } })
 		}
 		.sheet(item: $editingIndex) { ix in
-			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect,
+			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect, capabilities: inspector.capabilities,
 			              hasPrimary: ix.kind != .primary && inspector.indexes.contains { $0.kind == .primary },
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize,
 			              editing: ix, inspector: inspector) { sql in
@@ -167,28 +170,34 @@ struct TableInfoPanel: View {
 				Text(e).foregroundStyle(.red).font(.callout).textSelection(.enabled)
 			}
 			Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-				GridRow {
-					label("엔진")
-					PopUp(selection: Bindable(inspector).editEngine, options: options(inspector.catalog.engines, current: inspector.engine))
+				if caps.engines {
+					GridRow {
+						label("엔진")
+						PopUp(selection: Bindable(inspector).editEngine, options: options(inspector.catalog.engines, current: inspector.engine))
+					}
 				}
-				GridRow {
-					label("문자셋")
-					PopUp(selection: Binding(get: { inspector.editCharset }, set: { inspector.pickCharset($0) }),
-					      options: options(inspector.catalog.charsets.map(\.name), current: inspector.editCharset))
+				if caps.charsets {
+					GridRow {
+						label("문자셋")
+						PopUp(selection: Binding(get: { inspector.editCharset }, set: { inspector.pickCharset($0) }),
+						      options: options(inspector.catalog.charsets.map(\.name), current: inspector.editCharset))
+					}
+					GridRow {
+						label("콜레이션")
+						PopUp(selection: Bindable(inspector).editCollation,
+						      options: options(inspector.catalog.collations(for: inspector.editCharset), current: inspector.editCollation))
+					}
 				}
-				GridRow {
-					label("콜레이션")
-					PopUp(selection: Bindable(inspector).editCollation,
-					      options: options(inspector.catalog.collations(for: inspector.editCharset), current: inspector.editCollation))
-				}
-				GridRow(alignment: .top) {
-					label("코멘트").padding(.top, 4)
-					TextField("", text: Bindable(inspector).editComment, axis: .vertical)
-						.lineLimit(2...6)
-						.textFieldStyle(.roundedBorder)
+				if caps.tableComment {
+					GridRow(alignment: .top) {
+						label("코멘트").padding(.top, 4)
+						TextField("", text: Bindable(inspector).editComment, axis: .vertical)
+							.lineLimit(2...6)
+							.textFieldStyle(.roundedBorder)
+					}
 				}
 			}
-			if inspector.editCollation != inspector.collation {
+			if caps.charsets && inspector.editCollation != inspector.collation {
 				Toggle("기존 컬럼도 변환 (CONVERT TO)", isOn: Bindable(inspector).convertColumns)
 					.toggleStyle(.checkbox)
 					.help("끄면 앞으로 만들 컬럼의 기본값만 바뀝니다. 켜면 모든 문자 컬럼의 데이터를 변환합니다 (큰 테이블은 오래 걸립니다)")
@@ -252,7 +261,7 @@ struct TableInfoPanel: View {
 						Text(inspector.autoIncrement.map { String($0) } ?? "—")
 							.foregroundStyle(inspector.autoIncrement == nil ? .secondary : .primary).monospacedDigit()
 						Spacer(minLength: 0)
-						if inspector.autoIncrement != nil && !inspector.table.isView {
+						if inspector.autoIncrement != nil && !inspector.table.isView && caps.autoIncrementEdit {
 							Button("바꾸기…") {
 								autoText = inspector.autoIncrement.map { String($0) } ?? ""
 								editingAuto = true
@@ -262,7 +271,7 @@ struct TableInfoPanel: View {
 						}
 					}
 				}
-				stat("행 형식", inspector.rowFormat)
+				if caps.rowFormat { stat("행 형식", inspector.rowFormat) }
 				stat("만든 시각", inspector.created)
 				stat("고친 시각", inspector.updated)
 			}
@@ -505,6 +514,8 @@ struct AddIndexSheet: View {
 	let table: TableInfo
 	let columns: [ColumnInfo]
 	let dialect: any SQLDialect
+	/// 고를 수 있는 인덱스 종류 (FULLTEXT·SPATIAL 이 없는 종류도 있다)
+	var capabilities = SQLKind.mysql.capabilities
 	let hasPrimary: Bool
 	/// 서버의 전문 검색 파서 (ngram 이 있으면 FULLTEXT 에 n-gram 선택)
 	var parsers: [String] = []
@@ -556,7 +567,8 @@ struct AddIndexSheet: View {
 			Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
 				GridRow {
 					Text("종류").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-					PopUp(selection: $kind, options: [("INDEX", .index), ("UNIQUE", .unique), ("FULLTEXT", .fulltext), ("SPATIAL", .spatial)]
+					PopUp(selection: $kind, options: [("INDEX", .index), ("UNIQUE", .unique)]
+					      + (capabilities.fulltextIndex ? [("FULLTEXT", .fulltext)] : []) + (capabilities.spatialIndex ? [("SPATIAL", .spatial)] : [])
 					      + (hasPrimary ? [] : [("PRIMARY KEY", IndexInfo.Kind.primary)]))
 						.frame(width: 180)
 				}

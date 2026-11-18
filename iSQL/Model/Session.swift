@@ -140,6 +140,8 @@ final class Session {
 	var dialect: any SQLDialect { kind.dialect }
 	/// 메타데이터 읽기 (테이블 목록·인덱스·CREATE 문 …)
 	var meta: any SQLMeta { kind.meta }
+	/// 이 서버 종류에 있는 기능 (없는 메뉴·탭·칸은 숨긴다)
+	var capabilities: SQLCapabilities { kind.capabilities }
 
 	private var tunnel: SSHTunnel?
 	private var conn: (any DBConnection)?
