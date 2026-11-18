@@ -63,6 +63,9 @@ struct ContentView: View {
 		.onChange(of: model.sidebarMode) { _, mode in
 			if mode == .servers, let id = model.currentID {
 				model.showCurrentServerInfo(saved: store.servers.contains { $0.id == id })
+			} else if mode == .tables {
+				// 서버 목록에서 고른 서버가 접속 중이면 그 서버 화면으로 (아니면 "접속한 서버가 아닙니다")
+				model.returnToSelectedConnection()
 			}
 		}
 		.toolbar {

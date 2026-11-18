@@ -170,6 +170,14 @@ final class WindowModel {
 		goHome()
 	}
 
+	/// 서버 목록에서 고른 서버(빠른 접속이면 새 접속 칸의 서버)가 접속 중이면 그 서버 화면으로 (사이드바 [테이블], 사용자 2026-11-18).
+	/// 접속 중이 아니면 그대로 → 사이드바는 "접속한 서버가 아닙니다"
+	func returnToSelectedConnection() {
+		guard currentID == nil else { return }
+		let id = selectedServerID == Self.newConnectionID ? draft.id : selectedServerID
+		if let id, sessions[id]?.isConnected == true { currentID = id }
+	}
+
 	/// 새 접속 화면. 새 접속 칸에 접속 중인 서버 정보(저장 안 한 빠른 접속)가 들어 있으면 빈 칸으로
 	func newConnection() {
 		if sessions[draft.id] != nil { draft = Server() }
