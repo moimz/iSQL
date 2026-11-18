@@ -131,8 +131,17 @@ private struct MCPSettingsPage: View {
 		switch mcp.status {
 		case .running(let p):
 			// 포트는 숫자 서식(8,799) 없이
-			Label("\(String(p)) 포트에서 받는 중 — \(mcp.endpoint)", systemImage: "circle.fill")
-				.foregroundStyle(.green).font(.callout)
+			// 주소는 고를 수 있고, 연결 칸까지 내려가지 않아도 바로 복사
+			HStack(spacing: 8) {
+				Label("\(String(p)) 포트에서 받는 중 — \(mcp.endpoint)", systemImage: "circle.fill")
+					.foregroundStyle(.green).font(.callout)
+					.textSelection(.enabled)
+				Spacer()
+				Button("주소 복사") {
+					NSPasteboard.general.clearContents()
+					NSPasteboard.general.setString(mcp.endpoint, forType: .string)
+				}
+			}
 		case .failed(let e):
 			Label("열지 못했습니다: \(e)", systemImage: "exclamationmark.triangle.fill")
 				.foregroundStyle(.orange).font(.callout)
