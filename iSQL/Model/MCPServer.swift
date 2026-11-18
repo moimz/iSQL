@@ -368,7 +368,7 @@ final class MCPServer {
 			let db = try string(a, "database")
 			let r = try await run(t, """
 				SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT FROM information_schema.TABLES
-				 WHERE TABLE_SCHEMA = \(literal(.text(db))) ORDER BY TABLE_NAME
+				 WHERE TABLE_SCHEMA = \(t.dialect.literal(.text(db))) ORDER BY TABLE_NAME
 				""")
 			note("list_tables · \(t.server.displayName) · \(db)")
 			return json(r.rows.map { row in
@@ -378,7 +378,7 @@ final class MCPServer {
 		case "describe_table":
 			let t = try target(a)
 			let db = try string(a, "database"), table = try string(a, "table")
-			let r = try await run(t, "SHOW CREATE TABLE \(quoteName(db)).\(quoteName(table))")
+			let r = try await run(t, "SHOW CREATE TABLE \(t.dialect.quote(db)).\(t.dialect.quote(table))")
 			note("describe_table · \(t.server.displayName) · \(db).\(table)")
 			return r.rows.first?[safe: 1]?.string ?? ""
 		case "run_query":
@@ -394,7 +394,7 @@ final class MCPServer {
 				}
 			}
 			let c = try await connection(t)
-			if let db = a["database"] as? String, !db.isEmpty { _ = try await c.query("USE \(quoteName(db))") }
+			if let db = a["database"] as? String, !db.isEmpty { _ = try await c.query("USE \(t.dialect.quote(db))") }
 			var out: [[String: Any]] = []
 			for s in statements {
 				for r in try await c.query(s) { out.append(describe(r, maxRows: maxRows)) }
@@ -483,6 +483,7 @@ final class MCPServer {
 		let server: Server
 		/// 앱에서 접속해 있으면 그 세션
 		let session: Session?
+		var dialect: any SQLDialect { (server.sqlKind ?? .mysql).dialect }
 	}
 
 	/// 지금 범위에서 MCP 에 열린 서버들
@@ -540,7 +541,7 @@ final class MCPServer {
 	private func run(_ t: Target, _ sql: String) async throws -> QueryResult {
 		do {
 			return try await connection(t).rows(sql)
-		} catch where (t.server.sqlKind ?? .mysql).dialect.isServerError(error) {
+		} catch where t.dialect.isServerError(error) {
 			throw error
 		} catch {
 			conns[t.server.id]?.conn.close()

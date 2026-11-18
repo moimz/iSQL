@@ -5,6 +5,7 @@ import AppKit
 /// 오른쪽 탭 상자 [일반 | 전역 권한 | 데이터베이스별 권한 | SHOW GRANTS]
 struct UserAccountsView: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	@Bindable var manager: AccountManager
 	@State private var selectedID: String?
 	/// 전역 권한 체크를 바꾸는 중 (적용 전)
@@ -51,12 +52,12 @@ struct UserAccountsView: View {
 			if let a = selected { Task { await manager.loadGrants(a) } }
 		}
 		.sheet(isPresented: $addingUser) {
-			AddUserSheet(databases: session.databases) { user, host, password, makeDB in
-				var sql = [AccountManager.createSQL(user: user, host: host, password: password)]
+			AddUserSheet(dialect: dialect, databases: session.databases) { user, host, password, makeDB in
+				var sql = [AccountManager.createSQL(user: user, host: host, password: password, dialect)]
 				let a = DBAccount(user: user, host: host)
 				if makeDB {
-					sql.append("CREATE DATABASE IF NOT EXISTS \(quoteName(user))")
-					sql.append("GRANT ALL PRIVILEGES ON \(AccountManager.target(user)) TO \(a.sql)")
+					sql.append("CREATE DATABASE IF NOT EXISTS \(dialect.quote(user))")
+					sql.append("GRANT ALL PRIVILEGES ON \(AccountManager.target(user, dialect)) TO \(a.sql(dialect))")
 				}
 				let ok = await manager.run(sql, then: a)
 				if ok { selectedID = a.id; if makeDB { try? await session.loadSchema() } }
@@ -65,23 +66,23 @@ struct UserAccountsView: View {
 		}
 		.sheet(isPresented: $changingPassword) {
 			if let a = selected {
-				PasswordSheet(account: a) { pw in
-					await manager.run(["ALTER USER \(a.sql) IDENTIFIED BY \(literal(.text(pw)))"], then: a)
+				PasswordSheet(account: a, dialect: dialect) { pw in
+					await manager.run(["ALTER USER \(a.sql(dialect)) IDENTIFIED BY \(dialect.literal(.text(pw)))"], then: a)
 				}
 			}
 		}
 		.sheet(isPresented: $addingDBGrant) {
 			if let a = selected {
-				DBGrantSheet(account: a, databases: session.databases) { db, privs in
-					guard let sql = Privilege.grantSQL(privs, on: AccountManager.target(db), to: a) else { return true }
+				DBGrantSheet(account: a, dialect: dialect, databases: session.databases) { db, privs in
+					guard let sql = Privilege.grantSQL(privs, on: AccountManager.target(db, dialect), to: a, dialect) else { return true }
 					return await manager.run([sql], then: a)
 				}
 			}
 		}
-		.confirmationDialog("계정 \(selected?.sql ?? "") 을(를) 삭제할까요?", isPresented: $confirmDrop) {
+		.confirmationDialog("계정 \(selected?.sql(dialect) ?? "") 을(를) 삭제할까요?", isPresented: $confirmDrop) {
 			Button("계정 삭제", role: .destructive) {
 				guard let a = selected else { return }
-				Task { if await manager.run(["DROP USER \(a.sql)"]) { selectedID = nil } }
+				Task { if await manager.run(["DROP USER \(a.sql(dialect))"]) { selectedID = nil } }
 			}
 		} message: {
 			Text(selected?.id == currentID ? "지금 이 계정으로 접속해 있습니다. 지우면 다음 접속부터 들어올 수 없습니다." : "되돌릴 수 없습니다.")
@@ -90,9 +91,9 @@ struct UserAccountsView: View {
 			Button("회수", role: .destructive) {
 				guard let a = selected, let g = confirmRevoke else { return }
 				confirmRevoke = nil
-				let target = AccountManager.target(g.db)
-				var sql = ["REVOKE ALL PRIVILEGES ON \(target) FROM \(a.sql)"]
-				if g.privileges.contains("GRANT OPTION") { sql.append("REVOKE GRANT OPTION ON \(target) FROM \(a.sql)") }
+				let target = AccountManager.target(g.db, dialect)
+				var sql = ["REVOKE ALL PRIVILEGES ON \(target) FROM \(a.sql(dialect))"]
+				if g.privileges.contains("GRANT OPTION") { sql.append("REVOKE GRANT OPTION ON \(target) FROM \(a.sql(dialect))") }
 				Task { await manager.run(sql, then: a) }
 			}
 		}
@@ -185,7 +186,7 @@ struct UserAccountsView: View {
 			GridRow {
 				label("계정")
 				HStack(spacing: 8) {
-					Text(a.sql).font(.body.monospaced()).textSelection(.enabled)
+					Text(a.sql(dialect)).font(.body.monospaced()).textSelection(.enabled)
 					if a.id == currentID { Text("지금 접속한 계정").font(.caption.weight(.semibold)).foregroundStyle(.green) }
 				}
 			}
@@ -200,7 +201,7 @@ struct UserAccountsView: View {
 						Circle().fill(locked ? Color.orange : Color.green).frame(width: 8, height: 8)
 						Text(locked ? "잠김 (접속할 수 없음)" : "사용 중")
 						Button(locked ? "잠금 풀기" : "잠그기") {
-							Task { await manager.run(["ALTER USER \(a.sql) ACCOUNT \(locked ? "UNLOCK" : "LOCK")"], then: a) }
+							Task { await manager.run(["ALTER USER \(a.sql(dialect)) ACCOUNT \(locked ? "UNLOCK" : "LOCK")"], then: a) }
 						}
 						.padding(.leading, 6)
 					}
@@ -221,7 +222,7 @@ struct UserAccountsView: View {
 	// 전역 권한: 데이터 / 구조 / 관리 세 칸 체크박스
 	private func globalSection(_ a: DBAccount) -> some View {
 		let current = editing ?? a.global
-		let changes = AccountManager.globalChangeSQL(a, to: current)
+		let changes = AccountManager.globalChangeSQL(a, to: current, dialect)
 		return VStack(alignment: .leading, spacing: 10) {
 			HStack {
 				Text("모든 데이터베이스에 걸리는 권한").foregroundStyle(.secondary)
@@ -312,6 +313,7 @@ struct UserAccountsView: View {
 
 /// 사용자 추가: 이름, 호스트(% / localhost / 직접), 비밀번호, (선택) 같은 이름의 DB 와 모든 권한
 struct AddUserSheet: View {
+	let dialect: any SQLDialect
 	let databases: [String]
 	let create: (String, String, String, Bool) async -> Bool
 	@Environment(\.dismiss) private var dismiss
@@ -367,7 +369,7 @@ struct AddUserSheet: View {
 			if let p = problem {
 				Label(p, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).font(.callout)
 			} else if !user.isEmpty {
-				Text(AccountManager.createSQL(user: user, host: host, password: password.isEmpty ? "" : "••••"))
+				Text(AccountManager.createSQL(user: user, host: host, password: password.isEmpty ? "" : "••••", dialect))
 					.font(.callout.monospaced()).foregroundStyle(.secondary)
 			}
 			HStack {
@@ -397,6 +399,7 @@ struct AddUserSheet: View {
 /// 비밀번호 바꾸기
 struct PasswordSheet: View {
 	let account: DBAccount
+	let dialect: any SQLDialect
 	let change: (String) async -> Bool
 	@Environment(\.dismiss) private var dismiss
 	@State private var password = ""
@@ -405,7 +408,7 @@ struct PasswordSheet: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
-			Text("\(account.sql) 비밀번호 바꾸기").font(.headline)
+			Text("\(account.sql(dialect)) 비밀번호 바꾸기").font(.headline)
 			PasswordField(placeholder: "새 비밀번호", text: $password)
 			PasswordField(placeholder: "새 비밀번호 확인", text: $confirm)
 			if !confirm.isEmpty && password != confirm {
@@ -432,6 +435,7 @@ struct PasswordSheet: View {
 /// 데이터베이스 권한 추가: DB 고르기 + 권한 체크 (기본: 데이터 넷)
 struct DBGrantSheet: View {
 	let account: DBAccount
+	let dialect: any SQLDialect
 	let databases: [String]
 	let grant: (String, Set<String>) async -> Bool
 	@Environment(\.dismiss) private var dismiss
@@ -443,7 +447,7 @@ struct DBGrantSheet: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
-			Text("\(account.sql) 에 데이터베이스 권한 추가").font(.headline)
+			Text("\(account.sql(dialect)) 에 데이터베이스 권한 추가").font(.headline)
 			HStack {
 				Text("데이터베이스").foregroundStyle(.secondary)
 				PopUp(selection: $db, options: databases.map { ($0, Optional($0)) })
@@ -470,7 +474,7 @@ struct DBGrantSheet: View {
 					}
 				}
 			}
-			if let sql = Privilege.grantSQL(privs, on: AccountManager.target(db), to: account), !db.isEmpty {
+			if let sql = Privilege.grantSQL(privs, on: AccountManager.target(db, dialect), to: account, dialect), !db.isEmpty {
 				Text(sql).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
 					.fixedSize(horizontal: false, vertical: true)
 			}

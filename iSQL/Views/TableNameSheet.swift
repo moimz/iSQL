@@ -13,6 +13,7 @@ struct TableNameRequest: Identifiable {
 struct TableNameSheet: View {
 	let request: TableNameRequest
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	@State private var name: String
 	@State private var withData = true
 	@State private var job: DatabaseCopyJob
@@ -142,7 +143,7 @@ struct TableNameSheet: View {
 		case .rename:
 			renaming = true
 			error = nil
-			let q = TableInspector.ident
+			let q = dialect.quote(_:)
 			let db = q(request.schema)
 			Task { @MainActor in
 				do {

@@ -8,6 +8,8 @@ import Observation
 final class DatabaseCopyJob {
 	let source: String
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	/// 원본의 문자셋·콜레이션 (시트에 보여 주고 새 DB 에 그대로)
 	private(set) var charset = ""
@@ -32,7 +34,7 @@ final class DatabaseCopyJob {
 	func loadSettings() async {
 		guard let session else { return }
 		let r = try? await session.query("""
-			SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(literal(.text(source)))
+			SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(dialect.literal(.text(source)))
 			""").last
 		charset = r?.rows.first?[safe: 0]?.string ?? ""
 		collation = r?.rows.first?[safe: 1]?.string ?? ""
@@ -85,7 +87,7 @@ final class DatabaseCopyJob {
 		rowsTotal = 0
 		defer { running = false; finished = true }
 
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let src = q(source), dst = q(target)
 		var fkOff = false
 		do {
@@ -148,11 +150,11 @@ final class DatabaseCopyJob {
 		current = newName
 		rowsDone = 0
 		defer { running = false; finished = true }
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let db = q(source)
 		do {
 			if isView {
-				let r = try await session.query("SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = \(literal(.text(source))) AND TABLE_NAME = \(literal(.text(name)))").last
+				let r = try await session.query("SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = \(dialect.literal(.text(source))) AND TABLE_NAME = \(dialect.literal(.text(name)))").last
 				guard let def = r?.rows.first?.first?.string else { throw CopyError.noDDL(name) }
 				_ = try await session.query("CREATE VIEW \(db).\(q(newName)) AS \(def)")
 			} else {
@@ -181,7 +183,7 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func tableList() async throws -> [TableMeta] {
 		guard let session else { return [] }
-		let s = literal(.text(source))
+		let s = dialect.literal(.text(source))
 		let t = try await session.query("""
 			SELECT TABLE_NAME, TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(s) ORDER BY TABLE_NAME
 			""").last ?? QueryResult()
@@ -222,7 +224,7 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyData(_ t: TableMeta, src: String, dst: String, dstName: String? = nil) async throws {
 		guard let session, !t.columns.isEmpty else { return }
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let cols = t.columns.map(q).joined(separator: ", ")
 		let target = "\(dst).\(q(dstName ?? t.name))"
 		let from = "\(src).\(q(t.name))", into = "\(target) (\(cols))"
@@ -242,7 +244,7 @@ final class DatabaseCopyJob {
 					return
 				}
 				var cond = ""
-				if keyed, let last { cond = " WHERE " + Self.after(t.primaryKey.map(q), last) }
+				if keyed, let last { cond = " WHERE " + Self.after(dialect, t.primaryKey.map(q), last) }
 				let limit = keyed ? " LIMIT \(Self.chunk)" : " LIMIT \(Self.chunk) OFFSET \(offset)"
 				var n = 0
 				switch mode {
@@ -267,7 +269,8 @@ final class DatabaseCopyJob {
 						// 문자열 만들기는 메인 스레드 밖에서 (UI 가 멈추지 않게)
 						let head = "INSERT INTO \(into) VALUES "
 						let batch = Self.clientBatch
-						let statements = await Task.detached { Self.inserts(head: head, rows: rows, batch: batch) }.value
+						let d = dialect
+						let statements = await Task.detached { Self.inserts(d, head: head, rows: rows, batch: batch) }.value
 						for sql in statements { _ = try await session.query(sql) }
 						if keyed, let r = rows.last { last = keyIdx.map { r[$0] } }
 					}
@@ -285,14 +288,14 @@ final class DatabaseCopyJob {
 	}
 
 	/// (a, b) > (1, 2) — 기본 키 다음부터 (컬럼 하나면 a > 1)
-	private static func after(_ keys: [String], _ values: [Value]) -> String {
-		if keys.count == 1 { return "\(keys[0]) > \(literal(values[0]))" }
-		return "(" + keys.joined(separator: ", ") + ") > (" + values.map(literal).joined(separator: ", ") + ")"
+	private static func after(_ dialect: any SQLDialect, _ keys: [String], _ values: [Value]) -> String {
+		if keys.count == 1 { return "\(keys[0]) > \(dialect.literal(values[0]))" }
+		return "(" + keys.joined(separator: ", ") + ") > (" + values.map(dialect.literal).joined(separator: ", ") + ")"
 	}
 
-	nonisolated private static func inserts(head: String, rows: [[Value]], batch: Int) -> [String] {
+	nonisolated private static func inserts(_ dialect: any SQLDialect, head: String, rows: [[Value]], batch: Int) -> [String] {
 		stride(from: 0, to: rows.count, by: batch).map { i in
-			head + rows[i..<min(i + batch, rows.count)].map { "(" + $0.map(literal).joined(separator: ", ") + ")" }.joined(separator: ", ")
+			head + rows[i..<min(i + batch, rows.count)].map { "(" + $0.map(dialect.literal).joined(separator: ", ") + ")" }.joined(separator: ", ")
 		}
 	}
 
@@ -301,7 +304,7 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyTable(_ name: String, src: String, dst: String) async throws {
 		guard let session else { return }
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let r = try await session.query("SHOW CREATE TABLE \(src).\(q(name))").last ?? QueryResult()
 		guard var ddl = r.rows.first?[safe: 1]?.string else { throw CopyError.noDDL(name) }
 		let head = "CREATE TABLE \(q(name))"
@@ -314,11 +317,11 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyView(_ name: String, src: String, target: String) async throws {
 		guard let session else { return }
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let r = try await session.query("SHOW CREATE VIEW \(src).\(q(name))").last ?? QueryResult()
 		guard let ddl = r.rows.first?[safe: 1]?.string, ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
 		// "VIEW `원본`.`v` AS …" 처럼 DB 가 붙어 와서 " VIEW `v`" 로 찾으면 못 찾았다 → 이름 바꾸기와 같은 고치기
-		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target))
+		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target, dialect: dialect))
 	}
 
 	/// 프로시저·함수·트리거·이벤트를 새 DB 에: SHOW CREATE 를 읽어 `원본`. 을 `새`. 로 바꾸고 USE 새 DB 에서 만든다.
@@ -326,8 +329,8 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyRoutines(target: String) async throws -> String {
 		guard let session else { return "" }
-		let q = TableInspector.ident
-		let s = literal(.text(source))
+		let q = dialect.quote(_:)
+		let s = dialect.literal(.text(source))
 		var items: [(RoutineKind, String)] = []
 		for r in (try await session.query("SELECT ROUTINE_TYPE, ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = \(s)").last?.rows ?? []) {
 			items.append((r[safe: 0]?.string == "FUNCTION" ? .function : .procedure, r[safe: 1]?.string ?? ""))
@@ -347,7 +350,7 @@ final class DatabaseCopyJob {
 			current = "\(k.label) \(n)"
 			let r = try await session.query("SHOW CREATE \(k.sqlWord) \(q(source)).\(q(n))").last ?? QueryResult()
 			guard !r.rows.isEmpty, let ddl0 = r.string(0, k.createColumn) else { throw CopyError.noDDL(n) }
-			let ddl = Self.retarget(ddl0, from: source, to: target)
+			let ddl = Self.retarget(ddl0, from: source, to: target, dialect: dialect)
 			do { _ = try await c.query(ddl) } catch { _ = try await c.query(RoutineEditor.stripDefiner(ddl)) }
 			if k == .event { _ = try? await c.query("ALTER EVENT \(q(target)).\(q(n)) DISABLE"); events += 1 }
 			made += 1
@@ -356,8 +359,8 @@ final class DatabaseCopyJob {
 	}
 
 	/// 정의 안의 DB 참조를 새 DB 로: `원본`. 과 따옴표 없는 원본. 둘 다 (프로시저 본문은 쓴 그대로 와서 따옴표가 없을 수 있다)
-	static func retarget(_ ddl: String, from: String, to: String) -> String {
-		let q = TableInspector.ident
+	static func retarget(_ ddl: String, from: String, to: String, dialect: any SQLDialect) -> String {
+		let q = dialect.quote(_:)
 		var s = ddl.replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
 		let name = NSRegularExpression.escapedPattern(for: from)
 		s = s.replacingOccurrences(of: #"(?<![\w`$.])"# + name + #"\.(?=[`\w])"#, with: NSRegularExpression.escapedTemplate(for: q(to) + "."), options: .regularExpression)

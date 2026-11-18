@@ -19,6 +19,8 @@ final class ExcelImportJob {
 	enum Target: Hashable { case newTable, existing }
 
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	let schema: String
 	private(set) var url: URL
 	private(set) var fileSize: Int64 = 0
@@ -284,7 +286,7 @@ final class ExcelImportJob {
 
 	/// 새 테이블 CREATE 문 (미리 보기에도)
 	var createSQL: String {
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let names = self.names, kinds = self.kinds
 		var defs = names.indices.map { "\(q(names[$0])) \(Self.sqlType(kinds[$0])) NULL" }
 		let hasID = names.contains { $0.lowercased() == "id" }
@@ -303,7 +305,7 @@ final class ExcelImportJob {
 		message = nil
 		isError = false
 		done = 0
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let names = self.names, kinds = self.kinds
 		let tableName = target == .newTable ? newName.trimmingCharacters(in: .whitespaces) : existingName
 		let full = "\(q(schema)).\(q(tableName))"
@@ -344,7 +346,7 @@ final class ExcelImportJob {
 						guard var s = Self.text(v) else { return "NULL" }
 						if p.dateOnly, s.count > 10 { s = String(s.prefix(10)) }
 						if p.numeric, Double(s) != nil { return s }
-						return literal(.text(s))
+						return dialect.literal(.text(s))
 					}.joined(separator: ", ") + ")"
 				}
 				do {

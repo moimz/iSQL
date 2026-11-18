@@ -123,7 +123,7 @@ struct TableInfoPanel: View {
 			Text(failure ?? "")
 		}
 		.sheet(isPresented: $addingIndex) {
-			AddIndexSheet(table: inspector.table, columns: columns, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
+			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect, hasPrimary: inspector.indexes.contains { $0.kind == .primary },
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize) { sql in
 				Task { failure = await inspector.run(sql) }
 			}
@@ -149,7 +149,7 @@ struct TableInfoPanel: View {
 			                edit: { old, new in Task { failure = await inspector.editForeignKey(old, to: new) } })
 		}
 		.sheet(item: $editingIndex) { ix in
-			AddIndexSheet(table: inspector.table, columns: columns,
+			AddIndexSheet(table: inspector.table, columns: columns, dialect: inspector.dialect,
 			              hasPrimary: ix.kind != .primary && inspector.indexes.contains { $0.kind == .primary },
 			              parsers: inspector.catalog.fulltextParsers, ngramTokenSize: inspector.catalog.ngramTokenSize,
 			              editing: ix, inspector: inspector) { sql in
@@ -504,6 +504,7 @@ struct TableInfoPanel: View {
 struct AddIndexSheet: View {
 	let table: TableInfo
 	let columns: [ColumnInfo]
+	let dialect: any SQLDialect
 	let hasPrimary: Bool
 	/// 서버의 전문 검색 파서 (ngram 이 있으면 FULLTEXT 에 n-gram 선택)
 	var parsers: [String] = []
@@ -546,7 +547,7 @@ struct AddIndexSheet: View {
 	private var sql: String {
 		let n = nameEdited ? name : autoName, parser = canNgram && ngram ? "ngram" : nil
 		if let ix = editing, let inspector { return inspector.editIndexSQL(ix, kind: kind, name: n, columns: picked, parser: parser) }
-		return TableInspector.addIndexSQL(table: table, kind: kind, name: n, columns: picked, parser: parser)
+		return TableInspector.addIndexSQL(table: table, kind: kind, name: n, columns: picked, parser: parser, dialect: dialect)
 	}
 
 	var body: some View {

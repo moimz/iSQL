@@ -49,19 +49,19 @@ struct NewColumn: Identifiable, Hashable {
 	var isNumeric: Bool { Self.numericTypes.contains(type) }
 
 	/// `name` INT(11) UNSIGNED NOT NULL DEFAULT … AUTO_INCREMENT COMMENT '…'
-	var definition: String {
-		var s = quoteName(name) + " " + type
+	func definition(_ dialect: any SQLDialect) -> String {
+		var s = dialect.quote(name) + " " + type
 		let len = length.trimmingCharacters(in: .whitespaces)
 		if !len.isEmpty, Self.takesLength.contains(type) { s += "(\(len))" }
 		if unsigned && isNumeric { s += " UNSIGNED" }
 		s += nullable && !primary ? " NULL" : " NOT NULL"
-		if let d = defaultSQL { s += " DEFAULT " + d }
+		if let d = defaultSQL(dialect) { s += " DEFAULT " + d }
 		if autoIncrement { s += " AUTO_INCREMENT" }
-		if !comment.isEmpty { s += " COMMENT " + literal(.text(comment)) }
+		if !comment.isEmpty { s += " COMMENT " + dialect.literal(.text(comment)) }
 		return s
 	}
 
-	private var defaultSQL: String? {
+	private func defaultSQL(_ dialect: any SQLDialect) -> String? {
 		let d = defaultValue.trimmingCharacters(in: .whitespaces)
 		if d.isEmpty || autoIncrement { return nil }
 		let up = d.uppercased()
@@ -69,7 +69,7 @@ struct NewColumn: Identifiable, Hashable {
 		if isNumeric, Double(d) != nil { return d }
 		// 이미 따옴표로 감쌌으면 그대로
 		if d.count >= 2, d.hasPrefix("'"), d.hasSuffix("'") { return d }
-		return literal(.text(defaultValue))
+		return dialect.literal(.text(defaultValue))
 	}
 }
 
@@ -77,6 +77,7 @@ struct NewColumn: Identifiable, Hashable {
 struct CreateTableSheet: View {
 	let schema: String
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	@Environment(\.dismiss) private var dismiss
 
 	@State private var name = ""
@@ -105,21 +106,21 @@ struct CreateTableSheet: View {
 
 	private var sql: String {
 		Self.createSQL(schema: schema, name: trimmedName, columns: columns, engine: engine,
-		               charset: charset, collation: collation, comment: comment)
+		               charset: charset, collation: collation, comment: comment, dialect: dialect)
 	}
 
 	/// CREATE TABLE `db`.`이름` ( 컬럼…, PRIMARY KEY (…) ) ENGINE=… DEFAULT CHARSET=… COLLATE=… COMMENT='…'
 	static func createSQL(schema: String, name: String, columns: [NewColumn], engine: String,
-	                      charset: String, collation: String, comment: String) -> String {
-		var lines = columns.map { "  " + $0.definition }
-		let keys = columns.filter(\.primary).map { quoteName($0.name) }
+	                      charset: String, collation: String, comment: String, dialect: any SQLDialect) -> String {
+		var lines = columns.map { "  " + $0.definition(dialect) }
+		let keys = columns.filter(\.primary).map { dialect.quote($0.name) }
 		if !keys.isEmpty { lines.append("  PRIMARY KEY (\(keys.joined(separator: ", ")))") }
 		var tail = ")"
 		if !engine.isEmpty { tail += " ENGINE=\(engine)" }
 		if !charset.isEmpty { tail += " DEFAULT CHARSET=\(charset)" }
 		if !collation.isEmpty { tail += " COLLATE=\(collation)" }
-		if !comment.isEmpty { tail += " COMMENT=" + literal(.text(comment)) }
-		return "CREATE TABLE \(quoteName(schema)).\(quoteName(name)) (\n" + lines.joined(separator: ",\n") + "\n" + tail
+		if !comment.isEmpty { tail += " COMMENT=" + dialect.literal(.text(comment)) }
+		return "CREATE TABLE \(dialect.quote(schema)).\(dialect.quote(name)) (\n" + lines.joined(separator: ",\n") + "\n" + tail
 	}
 
 	/// 만들기 전에 막는 문제 (첫 번째만 보여 준다)
@@ -396,7 +397,7 @@ struct CreateTableSheet: View {
 		}
 		if charset.isEmpty {
 			let r = try? await session.query("""
-				SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(literal(.text(schema)))
+				SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(dialect.literal(.text(schema)))
 				""").last
 			charset = r?.rows.first?[safe: 0]?.string ?? ""
 			collation = r?.rows.first?[safe: 1]?.string ?? ""

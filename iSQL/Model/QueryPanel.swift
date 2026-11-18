@@ -9,6 +9,8 @@ import Observation
 @Observable
 final class QueryPanel {
 	@ObservationIgnored private(set) weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	@ObservationIgnored private let serverID: UUID?
 
 	var open = false
@@ -145,7 +147,7 @@ final class QueryPanel {
 		defer { running = false }
 		do {
 			if !database.isEmpty, database != session.currentDB {
-				_ = try await session.query("USE \(quoteName(database))")
+				_ = try await session.query("USE \(dialect.quote(database))")
 				session.currentDB = database
 			}
 			for st in statements {
@@ -198,7 +200,7 @@ final class QueryPanel {
 		var warnCount = 0
 		do {
 			if !database.isEmpty, database != session.currentDB {
-				_ = try await session.query("USE \(quoteName(database))")
+				_ = try await session.query("USE \(dialect.quote(database))")
 				session.currentDB = database
 			}
 			for st in statements {
@@ -312,6 +314,8 @@ final class QueryOutput: Identifiable, Pager {
 	/// LIMIT 을 자동으로 붙였는지 (= 쪽을 넘길 수 있는지)
 	let paged: Bool
 	@ObservationIgnored private(set) weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	private(set) var result: QueryResult
 	private(set) var source: QueryResultSource
 	private(set) var offset = 0
@@ -452,6 +456,8 @@ final class QueryResultSource: GridSource {
 	private(set) var gridVersion = 0
 	@ObservationIgnored let gridID = UUID().uuidString
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	/// 고칠 수 있으면 그 테이블
 	@ObservationIgnored private(set) var editTable: TableInfo?
@@ -551,11 +557,12 @@ final class QueryResultSource: GridSource {
 		guard let t = cols.first?.orgTable, !t.isEmpty,
 		      cols.allSatisfy({ $0.orgTable == t && !$0.orgName.isEmpty }),
 		      Set(cols.map(\.orgName)).count == cols.count else { return nil }
-		return InsertTarget(table: quoteName(t), columns: cols.map(\.orgName),
+		return InsertTarget(table: dialect.quote(t), columns: cols.map(\.orgName),
 		                    primaryKey: Set(cols.indices.filter { cols[$0].isPrimaryKey }))
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+	var sqlDialect: any SQLDialect { dialect }
 	func isBinaryColumn(_ col: Int) -> Bool { result.columns.indices.contains(col) && result.columns[col].isBinary }
 
 	func isEditable(_ row: Int, _ col: Int) -> Bool {
@@ -640,7 +647,7 @@ final class QueryResultSource: GridSource {
 	private func keyCondition(_ o: Int) -> String {
 		keyCols.map { i in
 			let v = result.rows[o][i]
-			return v == .null ? "\(quoteName(name(i))) IS NULL" : "\(quoteName(name(i))) = \(literal(v))"
+			return v == .null ? "\(dialect.quote(name(i))) IS NULL" : "\(dialect.quote(name(i))) = \(dialect.literal(v))"
 		}.joined(separator: " AND ")
 	}
 
@@ -649,17 +656,17 @@ final class QueryResultSource: GridSource {
 		guard let t = editTable else { return [] }
 		var out: [String] = []
 		for o in deleted.sorted() {
-			out.append("DELETE FROM \(t.quoted) WHERE \(keyCondition(o)) LIMIT 1;")
+			out.append("DELETE FROM \(dialect.quote(table: t)) WHERE \(keyCondition(o)) LIMIT 1;")
 		}
 		for (o, cols) in edits.sorted(by: { $0.key < $1.key }) where !deleted.contains(o) {
-			let sets = cols.sorted { $0.key < $1.key }.map { "\(quoteName(name($0.key))) = \(literal($0.value))" }
-			out.append("UPDATE \(t.quoted) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(o)) LIMIT 1;")
+			let sets = cols.sorted { $0.key < $1.key }.map { "\(dialect.quote(name($0.key))) = \(dialect.literal($0.value))" }
+			out.append("UPDATE \(dialect.quote(table: t)) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(o)) LIMIT 1;")
 		}
 		for row in inserted {
 			// NULL 로 남은 칸은 빼서 기본값·자동 증가가 쓰이게
 			let pairs = row.enumerated().filter { $0.element != .null && editableCols.contains($0.offset) }
-			if pairs.isEmpty { out.append("INSERT INTO \(t.quoted) () VALUES ();"); continue }
-			out.append("INSERT INTO \(t.quoted) (\(pairs.map { quoteName(name($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { literal($0.element) }.joined(separator: ", ")));")
+			if pairs.isEmpty { out.append("INSERT INTO \(dialect.quote(table: t)) () VALUES ();"); continue }
+			out.append("INSERT INTO \(dialect.quote(table: t)) (\(pairs.map { dialect.quote(name($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { dialect.literal($0.element) }.joined(separator: ", ")));")
 		}
 		return out
 	}

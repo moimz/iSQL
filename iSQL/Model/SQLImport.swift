@@ -165,6 +165,8 @@ final class SQLImportJob {
 	}
 
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	private(set) var url: URL
 	private(set) var fileSize: Int64 = 0
 
@@ -215,7 +217,7 @@ final class SQLImportJob {
 			let c = try await session.sideConnection(purpose: "SQL 가져오기")
 			conn = c
 			if disableForeignKeys { _ = try await c.query("SET FOREIGN_KEY_CHECKS = 0") }
-			if let schema { _ = try await c.query("USE " + TableInspector.ident(schema)) }
+			if let schema { _ = try await c.query("USE " + dialect.quote(schema)) }
 		} catch {
 			finish(error: error.localizedDescription)
 			return

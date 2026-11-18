@@ -48,8 +48,6 @@ struct TableInfo: Identifiable, Hashable {
 	var engine = ""
 	var rowsExact: Bool { engine.uppercased() == "MYISAM" || engine.uppercased() == "ARIA" }
 	var id: String { schema + "." + name }
-	/// SQL 에 쓰는 이름
-	var quoted: String { "`\(schema.replacingOccurrences(of: "`", with: "``"))`.`\(name.replacingOccurrences(of: "`", with: "``"))`" }
 }
 
 struct ColumnInfo: Identifiable, Hashable {
@@ -472,7 +470,7 @@ final class Session {
 	/// 확인받은 삭제·비우기 실행. 일부만 됐을 수 있으니 실패해도 목록·탭을 맞춘다
 	@MainActor
 	func perform(_ r: TableActionRequest) async {
-		func name(_ t: TableStat) -> String { quoteName(r.schema) + "." + quoteName(t.name) }
+		func name(_ t: TableStat) -> String { dialect.quote(r.schema) + "." + dialect.quote(t.name) }
 		var failure: String?
 		switch r.kind {
 		case .drop:
@@ -486,7 +484,7 @@ final class Session {
 			let left = Set(tables.filter { $0.schema == r.schema }.map(\.name))
 			closeTabs(ofTables: Set(r.tables.map(\.name).filter { !left.contains($0) }.map { r.schema + "." + $0 }))
 		case .dropDatabase:
-			do { _ = try await query("DROP DATABASE " + quoteName(r.schema)) } catch { failure = error.localizedDescription }
+			do { _ = try await query("DROP DATABASE " + dialect.quote(r.schema)) } catch { failure = error.localizedDescription }
 			try? await loadSchema()
 			if !databases.contains(r.schema) {
 				closeTabs(ofTables: Set(r.tables.map { r.schema + "." + $0.name }))
@@ -780,7 +778,7 @@ final class Session {
 	func runPrivateView(_ v: PrivateView, refresh: Bool = false) async throws -> QueryOutput {
 		if !refresh, let o = privateOutputs[v.tabID] { return o }
 		if !v.schema.isEmpty, currentDB != v.schema {
-			_ = try await query("USE \(quoteName(v.schema))")
+			_ = try await query("USE \(dialect.quote(v.schema))")
 			currentDB = v.schema
 		}
 		let paged = SQLSplitter.canAutoLimit(v.sql)
@@ -861,7 +859,7 @@ final class Session {
 	@discardableResult
 	func dropRoutine(_ r: RoutineInfo) async -> String? {
 		do {
-			_ = try await query("DROP \(r.kind.sqlWord) \(TableInspector.ident(r.schema)).\(TableInspector.ident(r.name))")
+			_ = try await query("DROP \(r.kind.sqlWord) \(dialect.quote(r.schema)).\(dialect.quote(r.name))")
 		} catch {
 			return error.localizedDescription
 		}

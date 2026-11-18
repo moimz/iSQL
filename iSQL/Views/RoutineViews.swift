@@ -4,6 +4,7 @@ import AppKit
 /// 사이드바 DB 아래 루틴 묶음: ▸ 프로시저 N · 함수 N · 트리거 N · 이벤트 N (있는 것만). 오른쪽 클릭으로 새로 만들기
 struct RoutineGroups: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	let schema: String
 	/// 사이드바 찾기 글 (있으면 이름이 걸린 것만, 펼쳐서)
 	var search = ""
@@ -37,6 +38,7 @@ struct RoutineGroups: View {
 /// 루틴 묶음이 하나도 없는 DB 의 오른쪽 클릭에 붙는 "새로 만들기" 메뉴
 struct NewRoutineMenu: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	let schema: String
 	var body: some View {
 		Menu("새로 만들기") {
@@ -111,6 +113,7 @@ private struct RoutineRow: View {
 /// 루틴 오른쪽 클릭: 열기 · 이름 복사 · (이벤트) 켜기/끄기 · 새로 만들기 · 지우기
 struct RoutineMenu: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	let routine: RoutineInfo
 
 	var body: some View {
@@ -122,7 +125,7 @@ struct RoutineMenu: View {
 		if routine.kind == .event, let on = routine.enabled {
 			Button(on ? "이벤트 끄기" : "이벤트 켜기") {
 				Task {
-					_ = try? await session.query("ALTER EVENT \(TableInspector.ident(routine.schema)).\(TableInspector.ident(routine.name)) \(on ? "DISABLE" : "ENABLE")")
+					_ = try? await session.query("ALTER EVENT \(dialect.quote(routine.schema)).\(dialect.quote(routine.name)) \(on ? "DISABLE" : "ENABLE")")
 					await session.loadRoutines()
 					await session.routineEditor(routine.id)?.load()
 				}
@@ -159,6 +162,7 @@ enum RoutineDrop {
 /// 루틴 탭: 위 줄(종류·이름·이벤트 켜기·DEFINER·되돌리기·지우기·저장) + SQL 편집기
 struct RoutineTabView: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	let tab: String
 	@Bindable var editor: RoutineEditor
 
@@ -263,6 +267,7 @@ struct RoutineTabView: View {
 /// 값은 글자로 넣으면 따옴표를 붙이고, 숫자 타입이면 그대로. @변수 나 = 로 시작하면 식 그대로. 비우면 NULL. OUT 인자는 @이름 으로 받고 뒤에 SELECT
 struct RoutineRunSheet: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	let kind: RoutineKind
 	let schema: String
 	let name: String
@@ -323,7 +328,7 @@ struct RoutineRunSheet: View {
 	private func load() async {
 		let r = try? await session.query("""
 			SELECT PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER FROM information_schema.PARAMETERS
-			 WHERE SPECIFIC_SCHEMA = \(literal(.text(schema))) AND SPECIFIC_NAME = \(literal(.text(name))) AND ORDINAL_POSITION > 0
+			 WHERE SPECIFIC_SCHEMA = \(dialect.literal(.text(schema))) AND SPECIFIC_NAME = \(dialect.literal(.text(name))) AND ORDINAL_POSITION > 0
 			 ORDER BY ORDINAL_POSITION
 			""").last
 		params = (r?.rows ?? []).map { Param(mode: $0[safe: 0]?.string ?? "IN", name: $0[safe: 1]?.string ?? "", type: $0[safe: 2]?.string ?? "") }
@@ -339,11 +344,11 @@ struct RoutineRunSheet: View {
 		if v.hasPrefix("@") { return v }
 		if v.hasPrefix("=") { return String(v.dropFirst()) }
 		if p.numeric, Double(v) != nil { return v }
-		return literal(.text(v))
+		return dialect.literal(.text(v))
 	}
 
 	private var sql: String {
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let args = params.indices.map(value).joined(separator: ", ")
 		if kind == .function { return "SELECT \(q(schema)).\(q(name))(\(args));" }
 		var s = "CALL \(q(schema)).\(q(name))(\(args));"

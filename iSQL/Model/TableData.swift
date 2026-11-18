@@ -10,6 +10,7 @@ final class TableData: ColumnOrderTracking {
 	/// 이 데이터가 붙은 탭 id (같은 테이블을 두 탭에 열면 탭마다 따로)
 	let tab: String
 	let session: Session
+	var dialect: any SQLDialect { session.dialect }
 
 	private(set) var columns: [Column] = []
 	/// 서버에서 읽은 그대로의 행 (고친 값은 edits 에 따로 있다)
@@ -128,7 +129,7 @@ final class TableData: ColumnOrderTracking {
 
 	/// 필터 줄로 만든 WHERE 절
 	func generatedWhere() -> String {
-		let parts = filters.compactMap(\.sql)
+		let parts = filters.compactMap { $0.sql(dialect) }
 		if parts.count <= 1 { return parts.first ?? "" }
 		return parts.map { "(\($0))" }.joined(separator: matchAll ? " AND " : " OR ")
 	}
@@ -208,7 +209,7 @@ final class TableData: ColumnOrderTracking {
 		defer { counting = false }
 		let filter = appliedWhere
 		do {
-			let r = try await session.query("SELECT COUNT(*) FROM \(table.quoted)\(filter.isEmpty ? "" : " WHERE " + filter)").last
+			let r = try await session.query("SELECT COUNT(*) FROM \(dialect.quote(table: table))\(filter.isEmpty ? "" : " WHERE " + filter)").last
 			// 세는 동안 조건이 바뀌었으면 버린다
 			if filter == appliedWhere, let n = r?.rows.first?.first?.string.flatMap({ Int($0) }) { knownTotal = n }
 		} catch {
@@ -280,11 +281,11 @@ final class TableData: ColumnOrderTracking {
 		loading = true
 		error = nil
 		defer { loading = false }
-		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { quoteName($0.name) }
+		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		// 고른 정렬이 먼저, 같은 값끼리는 기본 키 순
 		var orderParts: [String] = []
-		if let sort { orderParts.append(quoteName(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
-		orderParts += pk.filter { $0 != sort.map { quoteName($0.column) } }
+		if let sort { orderParts.append(dialect.quote(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
+		orderParts += pk.filter { $0 != sort.map { dialect.quote($0.column) } }
 		let order = orderParts.isEmpty ? "" : " ORDER BY " + orderParts.joined(separator: ", ")
 		let filter = whereClause.trimmingCharacters(in: .whitespacesAndNewlines)
 		if filter != appliedWhere { knownTotal = nil }
@@ -293,10 +294,10 @@ final class TableData: ColumnOrderTracking {
 		let infos = session.columns[table.id] ?? []
 		let blobs = pk.isEmpty ? [] : infos.filter { $0.type.lowercased().hasSuffix("blob") }.map(\.name)
 		let select = blobs.isEmpty ? "*" : (infos.map { c in
-			let q = quoteName(c.name)
+			let q = dialect.quote(c.name)
 			return blobs.contains(c.name) ? "IF(OCTET_LENGTH(\(q)) > \(Self.blobLimit), LEFT(\(q), \(Self.blobPeek)), \(q)) AS \(q)" : q
-		} + blobs.map { "OCTET_LENGTH(\(quoteName($0)))" }).joined(separator: ", ")
-		let sql = "SELECT \(select) FROM \(table.quoted)\(filter.isEmpty ? "" : " WHERE " + filter)\(order) LIMIT \(pageSize + 1) OFFSET \(newOffset)"
+		} + blobs.map { "OCTET_LENGTH(\(dialect.quote($0)))" }).joined(separator: ", ")
+		let sql = "SELECT \(select) FROM \(dialect.quote(table: table))\(filter.isEmpty ? "" : " WHERE " + filter)\(order) LIMIT \(pageSize + 1) OFFSET \(newOffset)"
 		do {
 			var r = try await session.query(sql).last ?? QueryResult()
 			// 뒤에 붙인 길이 컬럼을 떼어 큰 칸을 적어 둔다
@@ -409,17 +410,17 @@ final class TableData: ColumnOrderTracking {
 	func changeSQL() -> [String] {
 		var out: [String] = []
 		for r in deleted.sorted() {
-			out.append("DELETE FROM \(table.quoted) WHERE \(keyCondition(r)) LIMIT 1;")
+			out.append("DELETE FROM \(dialect.quote(table: table)) WHERE \(keyCondition(r)) LIMIT 1;")
 		}
 		for (r, cols) in edits.sorted(by: { $0.key < $1.key }) where !deleted.contains(r) {
-			let sets = cols.sorted { $0.key < $1.key }.map { "\(quoteName(columnName($0.key))) = \(literal($0.value))" }
-			out.append("UPDATE \(table.quoted) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(r)) LIMIT 1;")
+			let sets = cols.sorted { $0.key < $1.key }.map { "\(dialect.quote(columnName($0.key))) = \(dialect.literal($0.value))" }
+			out.append("UPDATE \(dialect.quote(table: table)) SET \(sets.joined(separator: ", ")) WHERE \(keyCondition(r)) LIMIT 1;")
 		}
 		for row in inserted {
 			// NULL 로 남은 칸은 빼서 기본값·자동 증가가 쓰이게 한다
 			let pairs = row.enumerated().filter { $0.element != .null }
-			if pairs.isEmpty { out.append("INSERT INTO \(table.quoted) () VALUES ();"); continue }
-			out.append("INSERT INTO \(table.quoted) (\(pairs.map { quoteName(columnName($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { literal($0.element) }.joined(separator: ", ")));")
+			if pairs.isEmpty { out.append("INSERT INTO \(dialect.quote(table: table)) () VALUES ();"); continue }
+			out.append("INSERT INTO \(dialect.quote(table: table)) (\(pairs.map { dialect.quote(columnName($0.offset)) }.joined(separator: ", "))) VALUES (\(pairs.map { dialect.literal($0.element) }.joined(separator: ", ")));")
 		}
 		return out
 	}
@@ -454,10 +455,10 @@ final class TableData: ColumnOrderTracking {
 	/// 지금 보는 상태의 SELECT (뷰로 만들기): DB 까지 붙인 테이블 + 적용한 찾기 조건 + 정렬
 	var viewSQL: String {
 		// 컬럼을 옮기거나 숨겼으면 보이는 순서대로 이름을 적는다
-		let cols = visibleColumns.map { $0.filter { columns.indices.contains($0) }.map { quoteName(columnName($0)) }.joined(separator: ", ") }
-		var s = "SELECT \(cols.flatMap { $0.isEmpty ? nil : $0 } ?? "*") FROM \(quoteName(table.schema)).\(quoteName(table.name))"
+		let cols = visibleColumns.map { $0.filter { columns.indices.contains($0) }.map { dialect.quote(columnName($0)) }.joined(separator: ", ") }
+		var s = "SELECT \(cols.flatMap { $0.isEmpty ? nil : $0 } ?? "*") FROM \(dialect.quote(table.schema)).\(dialect.quote(table.name))"
 		if !appliedWhere.isEmpty { s += " WHERE " + appliedWhere }
-		if let sort { s += " ORDER BY " + quoteName(sort.column) + (sort.ascending ? " ASC" : " DESC") }
+		if let sort { s += " ORDER BY " + dialect.quote(sort.column) + (sort.ascending ? " ASC" : " DESC") }
 		return s
 	}
 
@@ -472,8 +473,8 @@ final class TableData: ColumnOrderTracking {
 		for r in sel.sorted() {
 			guard let cols = partial[r], r < rows.count else { continue }
 			let names = cols.keys.sorted()
-			let whereSQL = pk.map { "\(quoteName(columnName($0))) = \(literal(rows[r][$0]))" }.joined(separator: " AND ")
-			let sql = "SELECT \(names.map { quoteName(columnName($0)) }.joined(separator: ", ")) FROM \(table.quoted) WHERE \(whereSQL) LIMIT 1"
+			let whereSQL = pk.map { "\(dialect.quote(columnName($0))) = \(dialect.literal(rows[r][$0]))" }.joined(separator: " AND ")
+			let sql = "SELECT \(names.map { dialect.quote(columnName($0)) }.joined(separator: ", ")) FROM \(dialect.quote(table: table)) WHERE \(whereSQL) LIMIT 1"
 			guard let got = try? await session.query(sql).last?.rows.first, got.count == names.count else { continue }
 			for (k, c) in names.enumerated() { rows[r][c] = got[k] }
 			partial[r] = nil
@@ -488,7 +489,7 @@ final class TableData: ColumnOrderTracking {
 	private func keyCondition(_ row: Int) -> String {
 		keyIndices.map { i in
 			let v = rows[row][i]
-			return v == .null ? "\(quoteName(columnName(i))) IS NULL" : "\(quoteName(columnName(i))) = \(literal(v))"
+			return v == .null ? "\(dialect.quote(columnName(i))) IS NULL" : "\(dialect.quote(columnName(i))) = \(dialect.literal(v))"
 		}.joined(separator: " AND ")
 	}
 }
@@ -505,30 +506,6 @@ struct LongEditRequest: Identifiable {
 	let wasNull: Bool
 	/// 컬럼 타입이 JSON (서버가 다시 쓰므로 한 줄로 저장)
 	var jsonColumn = false
-}
-
-func quoteName(_ s: String) -> String { "`" + s.replacingOccurrences(of: "`", with: "``") + "`" }
-
-/// MySQL 문자열 리터럴 (숫자 컬럼도 '123' 으로 넣으면 서버가 바꿔 준다)
-func literal(_ v: Value) -> String {
-	switch v {
-	case .null: return "NULL"
-	case .bytes(let d): return d.isEmpty ? "''" : "X'" + d.map { String(format: "%02X", $0) }.joined() + "'"
-	case .text(let s):
-		var out = "'"
-		for ch in s.unicodeScalars {
-			switch ch {
-			case "\\": out += "\\\\"
-			case "'": out += "\\'"
-			case "\0": out += "\\0"
-			case "\n": out += "\\n"
-			case "\r": out += "\\r"
-			case "\u{1A}": out += "\\Z"
-			default: out.unicodeScalars.append(ch)
-			}
-		}
-		return out + "'"
-	}
 }
 
 // MARK: - 공용 표(TableGrid)에 대기
@@ -607,11 +584,12 @@ extension TableData: GridSource {
 
 	var insertTarget: InsertTarget? {
 		guard !table.isView else { return nil }
-		return InsertTarget(table: quoteName(table.name), columns: columns.map(\.name),
+		return InsertTarget(table: dialect.quote(table.name), columns: columns.map(\.name),
 		                    primaryKey: Set(keyIndices))
 	}
 
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { value(row, col) }
+	var sqlDialect: any SQLDialect { dialect }
 	func hasPartialRows(_ rows: IndexSet) -> Bool { hasPartial(rows: rows) }
 	func loadFullRows(_ rows: IndexSet) async { await loadFull(rows: rows) }
 	func isBinaryColumn(_ col: Int) -> Bool { columns.indices.contains(col) && columns[col].isBinary }

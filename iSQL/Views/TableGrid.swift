@@ -128,6 +128,8 @@ protocol GridSource: AnyObject {
 	var insertTarget: InsertTarget? { get }
 	/// SQL 리터럴로 바꿀 칸 값 (바이너리는 X'..'). nil 이면 보이는 글자로
 	func sqlValue(_ row: Int, _ col: Int) -> Value?
+	/// "SQL 로 복사"·"INSERT 문으로 복사" 에 쓰는 SQL 문법 (기본: MySQL — 서버와 상관없는 표)
+	var sqlDialect: any SQLDialect { get }
 	/// 바이너리(BLOB·BINARY) 컬럼인지 (훑어보기·파일로 저장·불러오기 메뉴)
 	func isBinaryColumn(_ col: Int) -> Bool
 	/// 파일 내용을 바이너리 칸에 넣기 (저장할 때 반영). 못 하면 false
@@ -166,6 +168,7 @@ extension GridSource {
 	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
 	var insertTarget: InsertTarget? { nil }
 	func sqlValue(_ row: Int, _ col: Int) -> Value? { nil }
+	var sqlDialect: any SQLDialect { SQLKind.mysql.dialect }
 	func isBinaryColumn(_ col: Int) -> Bool { false }
 	func setBinary(_ row: Int, _ col: Int, _ data: Data) -> Bool { false }
 	func hasPartialRows(_ rows: IndexSet) -> Bool { false }
@@ -1441,7 +1444,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		func sqlLiteral(_ row: Int, _ col: Int) -> String {
 			let v = source.sqlValue(row, col) ?? (source.cell(row, col).text.map(Value.text) ?? .null)
 			if case .text(let t) = v, columns[col].numeric, Double(t) != nil, !t.isEmpty { return t }
-			return literal(v)
+			return source.sqlDialect.literal(v)
 		}
 
 		/// 고른 행을 JSON 으로: 한 행이면 객체 하나, 여러 행이면 배열. 컬럼 순서 그대로,
@@ -1487,7 +1490,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			let cols = t.columns.indices.filter { !(skipKey && t.primaryKey.contains($0)) && $0 < columns.count }
 			guard !cols.isEmpty, !table.selectedRowIndexes.isEmpty else { return }
 			let values = table.selectedRowIndexes.map { r in "(" + cols.map { sqlLiteral(r, $0) }.joined(separator: ", ") + ")" }
-			let sql = "INSERT INTO \(t.table) (" + cols.map { quoteName(t.columns[$0]) }.joined(separator: ", ") + ") VALUES\n"
+			let sql = "INSERT INTO \(t.table) (" + cols.map { source.sqlDialect.quote(t.columns[$0]) }.joined(separator: ", ") + ") VALUES\n"
 				+ values.joined(separator: ",\n") + ";"
 			NSPasteboard.general.clearContents()
 			NSPasteboard.general.setString(sql, forType: .string)

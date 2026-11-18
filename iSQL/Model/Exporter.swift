@@ -122,10 +122,11 @@ struct ExcelSheetSpec {
 	/// DB 의 테이블 하나 (기본 키 순서로 나눠 받는다)
 	@MainActor
 	static func table(session: Session, schema: String, _ t: TableStat) -> ExcelSheetSpec {
+		let dialect = session.dialect
 		let info = session.columns[schema + "." + t.name] ?? []
-		let pk = info.filter { $0.key == "PRI" }.map { quoteName($0.name) }
+		let pk = info.filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		let order = pk.isEmpty ? "" : " ORDER BY " + pk.joined(separator: ", ")
-		let q = "\(quoteName(schema)).\(quoteName(t.name))"
+		let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
 		return ExcelSheetSpec(name: t.name, comments: Dictionary(info.map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a }),
 		                      total: t.rows.map { Int($0) }) { offset, limit in
 			let r = try await session.query("SELECT * FROM \(q)\(order) LIMIT \(limit) OFFSET \(offset)").last ?? QueryResult()
@@ -226,6 +227,7 @@ final class ExportJob {
 	/// SQL 파일로 내보낸다. 데이터는 1000행씩 받아 바로 쓴다 (큰 테이블도 메모리를 많이 안 쓰게)
 	@MainActor
 	func exportSQL(_ src: ExportSource, options o: SQLExportOptions, to url: URL) async {
+		let dialect = src.exportSession?.dialect ?? SQLKind.mysql.dialect
 		guard !running else { return }
 		running = true
 		cancelled = false
@@ -246,9 +248,9 @@ final class ExportJob {
 		defer { try? fh.close() }
 		func write(_ s: String) { fh.write(Data(s.utf8)) }
 
-		let table = quoteName(o.tableName)
+		let table = dialect.quote(o.tableName)
 		let cols = src.exportColumns
-		let colList = cols.map { quoteName($0.name) }.joined(separator: ", ")
+		let colList = cols.map { dialect.quote($0.name) }.joined(separator: ", ")
 		let df = ISO8601DateFormatter()
 		write("""
 			-- iSQL 내보내기
@@ -269,7 +271,7 @@ final class ExportJob {
 			// 숫자 컬럼은 따옴표 없이
 			func value(_ v: Value, _ numeric: Bool) -> String {
 				if numeric, case .text(let s) = v, Double(s) != nil { return s }
-				return literal(v)
+				return dialect.literal(v)
 			}
 			func writeRows(_ rows: [[Value]]) {
 				// 100행씩 묶은 INSERT
@@ -308,6 +310,7 @@ final class ExportJob {
 	/// DB 의 여러 테이블을 한 SQL 파일로. 테이블마다 구조(선택)와 데이터(선택, 1000행씩)
 	@MainActor
 	func exportDatabase(session: Session, schema: String, tables: [TableStat], options o: DatabaseExportOptions, to url: URL) async {
+		let dialect = session.dialect
 		guard !running else { return }
 		running = true
 		cancelled = false
@@ -340,32 +343,32 @@ final class ExportJob {
 			""")
 		do {
 			for t in tables where !cancelled {
-				let q = "\(quoteName(schema)).\(quoteName(t.name))"
+				let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
 				if o.includeStructure {
-					if o.includeDrop { write(t.isView ? "DROP VIEW IF EXISTS \(quoteName(t.name));\n" : "DROP TABLE IF EXISTS \(quoteName(t.name));\n") }
+					if o.includeDrop { write(t.isView ? "DROP VIEW IF EXISTS \(dialect.quote(t.name));\n" : "DROP TABLE IF EXISTS \(dialect.quote(t.name));\n") }
 					// 뷰도 SHOW CREATE TABLE 이 CREATE VIEW 를 준다
 					let r = try await session.query("SHOW CREATE TABLE \(q)").last
 					if let create = r?.rows.first.flatMap({ $0.count > 1 ? $0[1].string : nil }) { write(create + ";\n\n") }
 				}
 				guard o.includeData, !t.isView else { continue }
 				let cols = (session.columns[schema + "." + t.name] ?? [])
-				let pk = cols.filter { $0.key == "PRI" }.map { quoteName($0.name) }
+				let pk = cols.filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 				let order = pk.isEmpty ? "" : " ORDER BY " + pk.joined(separator: ", ")
 				var offset = 0
 				let size = 1000
 				while !cancelled {
 					let res = try await session.query("SELECT * FROM \(q)\(order) LIMIT \(size) OFFSET \(offset)").last ?? QueryResult()
-					let names = res.columns.map { quoteName($0.orgName.isEmpty ? $0.name : $0.orgName) }.joined(separator: ", ")
+					let names = res.columns.map { dialect.quote($0.orgName.isEmpty ? $0.name : $0.orgName) }.joined(separator: ", ")
 					let numeric = res.columns.map(\.isNumeric)
 					var i = 0
 					while i < res.rows.count {
 						let chunk = res.rows[i..<min(i + 100, res.rows.count)]
 						let values = chunk.map { r in "(" + r.enumerated().map { e in
 							if e.offset < numeric.count, numeric[e.offset], case .text(let v) = e.element, Double(v) != nil { return v }
-							return literal(e.element)
+							return dialect.literal(e.element)
 						}.joined(separator: ", ") + ")" }
-						write("INSERT INTO \(quoteName(t.name)) (\(names)) VALUES\n" + values.joined(separator: ",\n") + ";\n")
+						write("INSERT INTO \(dialect.quote(t.name)) (\(names)) VALUES\n" + values.joined(separator: ",\n") + ";\n")
 						i += 100
 					}
 					written += res.rows.count
@@ -508,18 +511,18 @@ extension TableData: ExportSource {
 	var visibleRows: [[Value]] { rows }
 
 	func createTableSQL() async throws -> String? {
-		let r = try await session.query("SHOW CREATE TABLE \(table.quoted)").last
+		let r = try await session.query("SHOW CREATE TABLE \(dialect.quote(table: table))").last
 		return r?.rows.first.flatMap { $0.count > 1 ? $0[1].string : nil }
 	}
 
 	/// 화면과 같은 조건(appliedWhere)·정렬로 전체를 나눠 받는다
 	func fetchRows(offset: Int, limit: Int) async throws -> [[Value]] {
-		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { quoteName($0.name) }
+		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		var orderParts: [String] = []
-		if let sort { orderParts.append(quoteName(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
-		orderParts += pk.filter { $0 != sort.map { quoteName($0.column) } }
+		if let sort { orderParts.append(dialect.quote(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
+		orderParts += pk.filter { $0 != sort.map { dialect.quote($0.column) } }
 		let order = orderParts.isEmpty ? "" : " ORDER BY " + orderParts.joined(separator: ", ")
-		let sql = "SELECT * FROM \(table.quoted)\(appliedWhere.isEmpty ? "" : " WHERE " + appliedWhere)\(order) LIMIT \(limit) OFFSET \(offset)"
+		let sql = "SELECT * FROM \(dialect.quote(table: table))\(appliedWhere.isEmpty ? "" : " WHERE " + appliedWhere)\(order) LIMIT \(limit) OFFSET \(offset)"
 		return try await session.query(sql).last?.rows ?? []
 	}
 
@@ -551,7 +554,7 @@ extension QueryOutput: ExportSource {
 
 	func createTableSQL() async throws -> String? {
 		guard let t = singleTable, let session else { return nil }
-		let name = t.schema.isEmpty ? quoteName(t.table) : "\(quoteName(t.schema)).\(quoteName(t.table))"
+		let name = t.schema.isEmpty ? dialect.quote(t.table) : "\(dialect.quote(t.schema)).\(dialect.quote(t.table))"
 		let r = try await session.query("SHOW CREATE TABLE \(name)").last
 		return r?.rows.first.flatMap { $0.count > 1 ? $0[1].string : nil }
 	}
@@ -592,6 +595,7 @@ extension ExportJob {
 	/// columns{type,length,is_null,default,comment}, indexes{"a,b": primary_key|unique|index|fulltext}, auto_increment, comment, datas[행 객체]
 	@MainActor
 	func exportIModules(session: Session, schema: String, tables: [TableStat], options o: IModulesExportOptions, to url: URL) async {
+		let dialect = session.dialect
 		guard begin(url: url, total: o.includeData ? tables.map { $0.rows.map { Int($0) } }.reduce(0) { a, b in a.flatMap { x in b.map { x + $0 } } } : nil) else { return }
 		defer { end() }
 		var notes: [String] = []
@@ -605,7 +609,7 @@ extension ExportJob {
 			w("{\n")
 			for (ti, t) in list.enumerated() where !cancelledFlag {
 				let name = o.prefix.isEmpty || !t.name.hasPrefix(o.prefix) ? t.name : String(t.name.dropFirst(o.prefix.count))
-				let q = "\(quoteName(schema)).\(quoteName(t.name))"
+				let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
 				let cols = try await session.query("SHOW FULL COLUMNS FROM \(q)").last ?? QueryResult()
 				let idx = try await session.query("SHOW INDEX FROM \(q)").last ?? QueryResult()
 				w("    \(Self.json(name)): {\n        \"columns\": {\n")
@@ -674,7 +678,7 @@ extension ExportJob {
 				w("\n    }" + (ti < list.count - 1 ? "," : "") + "\n")
 			}
 			w("}\n")
-			let fk = (try? await session.query("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = \(literal(.text(schema)))").last?.rows.first?.first?.string) ?? nil
+			let fk = (try? await session.query("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = \(dialect.literal(.text(schema)))").last?.rows.first?.first?.string) ?? nil
 			if let fk, let n = Int(fk), n > 0 { notes.append("외래 키 \(n)개 (iModules 형식에 없음)") }
 			let head = "테이블 \(list.count)개" + (o.includeData ? " · \(writtenCount.formatted())행" : "") + " 내보냄 · \(url.lastPathComponent)"
 			finish(notes.isEmpty ? head : head + "\n빠진 것: " + notes.prefix(8).joined(separator: ", ") + (notes.count > 8 ? " 외 \(notes.count - 8)개" : ""))

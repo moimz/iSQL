@@ -9,12 +9,12 @@ struct FilterRow: Identifiable, Equatable {
 	var value = ""
 
 	/// 이 줄이 만드는 조건 (값이 필요한데 비었으면 nil)
-	var sql: String? {
+	func sql(_ dialect: any SQLDialect) -> String? {
 		guard enabled, !column.isEmpty else { return nil }
-		let c = quoteName(column)
+		let c = dialect.quote(column)
 		let v = value
 		if op.needsValue && v.isEmpty { return nil }
-		func lit(_ s: String) -> String { literal(.text(s)) }
+		func lit(_ s: String) -> String { dialect.literal(.text(s)) }
 		func likeEscaped(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") }
 		switch op {
 		case .eq: return "\(c) = \(lit(v))"

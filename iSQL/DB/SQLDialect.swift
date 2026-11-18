@@ -22,4 +22,6 @@ protocol SQLDialect: Sendable {
 
 extension SQLDialect {
 	func quote(schema: String, table: String) -> String { quote(schema) + "." + quote(table) }
+	/// 테이블 (스키마.테이블)
+	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
 }

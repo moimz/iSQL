@@ -40,7 +40,7 @@ struct StructColumn: Equatable {
 	}
 
 	/// 이름 뒤에 오는 정의: int unsigned NOT NULL DEFAULT … AUTO_INCREMENT COMMENT '…'
-	var definition: String {
+	func definition(_ dialect: any SQLDialect) -> String {
 		var s = type
 		let len = length.trimmingCharacters(in: .whitespaces)
 		if !len.isEmpty, takesLength { s += "(\(len))" }
@@ -52,16 +52,16 @@ struct StructColumn: Equatable {
 		}
 		if let g = generated { s += " GENERATED ALWAYS AS (\(generationExpr)) \(g)" }
 		s += nullable ? " NULL" : " NOT NULL"
-		if let d = defaultValue, !autoIncrement, generated == nil { s += " DEFAULT " + Self.defaultSQL(d, expr: defaultExpr, numeric: isNumeric) }
+		if let d = defaultValue, !autoIncrement, generated == nil { s += " DEFAULT " + Self.defaultSQL(d, expr: defaultExpr, numeric: isNumeric, dialect) }
 		if !onUpdate.isEmpty { s += " " + onUpdate }
 		if autoIncrement { s += " AUTO_INCREMENT" }
-		if !comment.isEmpty { s += " COMMENT " + literal(.text(comment)) }
+		if !comment.isEmpty { s += " COMMENT " + dialect.literal(.text(comment)) }
 		return s
 	}
 
 	/// 기본값 SQL: NULL·CURRENT_TIMESTAMP·NOW() 는 그대로, 숫자 종류의 숫자도 그대로, 이미 '…' 로 감쌌으면 그대로, 나머지는 따옴표.
 	/// 서버가 식이라고 알려 준 기본값은 (식) 으로
-	static func defaultSQL(_ d: String, expr: Bool, numeric: Bool) -> String {
+	static func defaultSQL(_ d: String, expr: Bool, numeric: Bool, _ dialect: any SQLDialect) -> String {
 		let t = d.trimmingCharacters(in: .whitespaces)
 		let up = t.uppercased()
 		if up == "NULL" { return "NULL" }
@@ -69,7 +69,7 @@ struct StructColumn: Equatable {
 		if expr { return t.hasPrefix("(") ? t : "(\(t))" }
 		if numeric, Double(t) != nil { return t }
 		if t.count >= 2, t.hasPrefix("'"), t.hasSuffix("'") { return t }
-		return literal(.text(d))
+		return dialect.literal(.text(d))
 	}
 
 	/// information_schema.COLUMNS 한 줄에서
@@ -138,6 +138,8 @@ final class StructureEditor: GridSource {
 
 	let table: TableInfo
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	/// 저장 안 됨 표시를 알릴 곳 (TableData)
 	@ObservationIgnored var onChange: (() -> Void)?
 
@@ -173,8 +175,8 @@ final class StructureEditor: GridSource {
 		defer { loading = false }
 		do {
 			let rs = try await session.query("""
-				SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(literal(.text(table.schema))) AND TABLE_NAME = \(literal(.text(table.name))) ORDER BY ORDINAL_POSITION;
-				SHOW CREATE TABLE \(table.quoted)
+				SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(dialect.literal(.text(table.schema))) AND TABLE_NAME = \(dialect.literal(.text(table.name))) ORDER BY ORDINAL_POSITION;
+				SHOW CREATE TABLE \(dialect.quote(table: table))
 				""")
 			guard let cols = rs.first else { return }
 			let list = cols.rows.indices.map { StructColumn(row: cols, $0) }
@@ -235,7 +237,7 @@ final class StructureEditor: GridSource {
 	/// 그래서 이름을 서로 바꿔도(test→test5, hello→test) 꼬이지 않는다
 	private var clauses: [String] {
 		var out: [String] = []
-		for r in rows where r.deleted { if let o = r.original { out.append("DROP COLUMN \(quoteName(o.name))") } }
+		for r in rows where r.deleted { if let o = r.original { out.append("DROP COLUMN \(dialect.quote(o.name))") } }
 		let final = rows.filter { !$0.deleted }
 		// 그대로 둘 컬럼: 원래 순서를 지키는 가장 긴 줄 (나머지만 옮긴다)
 		let survivors = final.compactMap(\.original?.name)
@@ -243,16 +245,16 @@ final class StructureEditor: GridSource {
 		let stay = Self.longestIncreasing(survivors.map { originalIndex[$0] ?? 0 }).map { survivors[$0] }
 		let staySet = Set(stay)
 		for (i, r) in final.enumerated() {
-			let pos = i == 0 ? " FIRST" : " AFTER \(quoteName(final[i - 1].col.name))"
+			let pos = i == 0 ? " FIRST" : " AFTER \(dialect.quote(final[i - 1].col.name))"
 			guard let o = r.original else {
-				out.append("ADD COLUMN \(quoteName(r.col.name)) \(r.col.definition)\(pos)")
+				out.append("ADD COLUMN \(dialect.quote(r.col.name)) \(r.col.definition(dialect))\(pos)")
 				continue
 			}
 			let moved = !staySet.contains(o.name)
 			let sameDef = r.col.sameDefinition(o)
 			guard moved || !sameDef || r.col.name != o.name else { continue }
-			let def = sameDef ? (rawDefinitions[o.name] ?? r.col.definition) : r.col.definition
-			out.append("CHANGE COLUMN \(quoteName(o.name)) \(quoteName(r.col.name)) \(def)\(moved ? pos : "")")
+			let def = sameDef ? (rawDefinitions[o.name] ?? r.col.definition(dialect)) : r.col.definition(dialect)
+			out.append("CHANGE COLUMN \(dialect.quote(o.name)) \(dialect.quote(r.col.name)) \(def)\(moved ? pos : "")")
 		}
 		return out
 	}
@@ -273,7 +275,7 @@ final class StructureEditor: GridSource {
 	var alterSQL: String? {
 		let c = clauses
 		guard !c.isEmpty else { return nil }
-		return "ALTER TABLE \(table.quoted)\n  " + c.joined(separator: ",\n  ")
+		return "ALTER TABLE \(dialect.quote(table: table))\n  " + c.joined(separator: ",\n  ")
 	}
 
 	/// 저장 전에 막을 문제

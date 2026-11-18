@@ -10,6 +10,8 @@ import Observation
 final class DatabaseRenameJob {
 	let source: String
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	private(set) var loaded = false
 	private(set) var charset = ""
@@ -32,7 +34,7 @@ final class DatabaseRenameJob {
 		self.session = session
 	}
 
-	private func lit(_ s: String) -> String { literal(.text(s)) }
+	private func lit(_ s: String) -> String { dialect.literal(.text(s)) }
 
 	@MainActor
 	func load() async {
@@ -60,7 +62,7 @@ final class DatabaseRenameJob {
 		message = nil
 		isError = false
 		defer { running = false }
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		let src = q(source), dst = q(target)
 		do {
 			// 뷰 정의는 테이블을 옮기기 전에 읽는다: 옮긴 뒤에는 옛 뷰가 없는 테이블을 가리켜 SHOW CREATE VIEW 가 거부된다(오류 1356)
@@ -68,7 +70,7 @@ final class DatabaseRenameJob {
 			for v in views {
 				step = "뷰 \(v) 읽는 중…"
 				let r = try await session.query("SHOW CREATE VIEW \(src).\(q(v))").last
-				if let d = r?.rows.first?[safe: 1]?.string { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target) }
+				if let d = r?.rows.first?[safe: 1]?.string { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target, dialect: dialect) }
 			}
 			step = "데이터베이스 만드는 중…"
 			var create = "CREATE DATABASE \(dst)"
@@ -127,8 +129,8 @@ final class DatabaseRenameJob {
 
 	/// SHOW CREATE VIEW 를 새 DB 용으로: DEFINER·ALGORITHM 을 빼고(권한 오류 방지), `옛`. 참조를 `새`. 로
 	/// DB 를 붙여 읽으면 "VIEW `db`.`v` AS …", 안 붙이면 "VIEW `v` AS …" 로 온다 → 둘 다 " AS " 뒤 본문만 쓴다
-	static func rewriteView(_ ddl: String, name: String, from: String, to: String) -> String {
-		let q = TableInspector.ident
+	static func rewriteView(_ ddl: String, name: String, from: String, to: String, dialect: any SQLDialect) -> String {
+		let q = dialect.quote(_:)
 		guard let v = ddl.range(of: " VIEW "), let asAt = ddl.range(of: " AS ", range: v.upperBound..<ddl.endIndex) else { return ddl }
 		let body = ddl[asAt.lowerBound...].replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
 		return "CREATE VIEW \(q(to)).\(q(name))" + body

@@ -3,6 +3,7 @@ import SwiftUI
 /// 새 데이터베이스 (사이드바 하단바 +). 이름과 문자셋·콜레이션(서버 기본값) → CREATE DATABASE
 struct CreateDatabaseSheet: View {
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	@Environment(\.dismiss) private var dismiss
 	@State private var name = ""
 	@State private var charset = ""
@@ -16,7 +17,7 @@ struct CreateDatabaseSheet: View {
 	private var canCreate: Bool { !trimmed.isEmpty && !exists && !running }
 
 	private var sql: String {
-		var s = "CREATE DATABASE " + quoteName(trimmed)
+		var s = "CREATE DATABASE " + dialect.quote(trimmed)
 		if !charset.isEmpty { s += " CHARACTER SET \(charset)" }
 		if !collation.isEmpty { s += " COLLATE \(collation)" }
 		return s

@@ -52,12 +52,6 @@ enum SQLCompleter {
 
 	private static let reserved: Set<String> = Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC", "RANGE", "READ", "WRITE", "RANK"])
 
-	/// 이름이 그대로 쓸 수 있는 식별자면 그대로, 아니면 백틱
-	static func ident(_ name: String) -> String {
-		let ok = name.first.map { $0 == "_" || $0 == "$" || ($0.isASCII && $0.isLetter) } == true
-			&& name.allSatisfy { $0 == "_" || $0 == "$" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
-		return ok && !reserved.contains(name.uppercased()) ? name : "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
-	}
 
 	private static func isIdent(_ c: unichar) -> Bool {
 		guard let u = UnicodeScalar(c) else { return false }
@@ -137,6 +131,9 @@ enum SQLCompleter {
 		}()
 		var items: [CompletionItem] = []
 
+		/// 이름이 그대로 쓸 수 있는 식별자면 그대로, 아니면 감싸기 (서버 종류의 문법으로)
+		let dialect = session.dialect
+		func ident(_ name: String) -> String { dialect.quoteIfNeeded(name, reserved: reserved) }
 		func columns(of t: TableInfo) -> [CompletionItem] {
 			(session.columns[t.id] ?? []).map {
 				CompletionItem(kind: .column, insert: ident($0.name), label: $0.name, detail: $0.type, comment: $0.comment)

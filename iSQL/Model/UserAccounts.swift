@@ -13,7 +13,7 @@ struct DBAccount: Identifiable, Hashable {
 
 	var id: String { user + "@" + host }
 	/// SQL 에 쓰는 이름 'user'@'host'
-	var sql: String { literal(.text(user)) + "@" + literal(.text(host)) }
+	func sql(_ dialect: any SQLDialect) -> String { dialect.literal(.text(user)) + "@" + dialect.literal(.text(host)) }
 }
 
 /// 데이터베이스 하나에 준 권한 (mysql.db 한 줄)
@@ -71,17 +71,17 @@ struct Privilege: Hashable {
 	]
 
 	/// GRANT 문에 쓸 권한 목록 (GRANT OPTION 은 따로 뺀다: "GRANT … WITH GRANT OPTION")
-	static func grantSQL(_ privs: Set<String>, on target: String, to account: DBAccount) -> String? {
+	static func grantSQL(_ privs: Set<String>, on target: String, to account: DBAccount, _ dialect: any SQLDialect) -> String? {
 		let normal = all.map(\.sql).filter { privs.contains($0) && $0 != "GRANT OPTION" }
 		let withGrant = privs.contains("GRANT OPTION")
 		if normal.isEmpty && !withGrant { return nil }
-		if normal.isEmpty { return "GRANT USAGE ON \(target) TO \(account.sql) WITH GRANT OPTION" }
-		return "GRANT \(normal.joined(separator: ", ")) ON \(target) TO \(account.sql)" + (withGrant ? " WITH GRANT OPTION" : "")
+		if normal.isEmpty { return "GRANT USAGE ON \(target) TO \(account.sql(dialect)) WITH GRANT OPTION" }
+		return "GRANT \(normal.joined(separator: ", ")) ON \(target) TO \(account.sql(dialect))" + (withGrant ? " WITH GRANT OPTION" : "")
 	}
 
-	static func revokeSQL(_ privs: Set<String>, on target: String, from account: DBAccount) -> String? {
+	static func revokeSQL(_ privs: Set<String>, on target: String, from account: DBAccount, _ dialect: any SQLDialect) -> String? {
 		let list = all.map(\.sql).filter { privs.contains($0) }
-		return list.isEmpty ? nil : "REVOKE \(list.joined(separator: ", ")) ON \(target) FROM \(account.sql)"
+		return list.isEmpty ? nil : "REVOKE \(list.joined(separator: ", ")) ON \(target) FROM \(account.sql(dialect))"
 	}
 }
 
@@ -89,6 +89,8 @@ struct Privilege: Hashable {
 @Observable
 final class AccountManager {
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	private(set) var accounts: [DBAccount] = []
 	private(set) var dbGrants: [String: [DBGrant]] = [:]
@@ -150,7 +152,7 @@ final class AccountManager {
 	@MainActor
 	func loadGrants(_ a: DBAccount) async {
 		guard let session else { return }
-		showGrants[a.id] = (try? await session.query("SHOW GRANTS FOR \(a.sql)").last?.rows.compactMap { $0.first?.string }) ?? []
+		showGrants[a.id] = (try? await session.query("SHOW GRANTS FOR \(a.sql(dialect))").last?.rows.compactMap { $0.first?.string }) ?? []
 	}
 
 	/// 문장들을 차례로 실행하고 다시 읽는다. 실패하면 runError
@@ -171,17 +173,17 @@ final class AccountManager {
 
 	// MARK: 문장 만들기
 
-	static func createSQL(user: String, host: String, password: String) -> String {
+	static func createSQL(user: String, host: String, password: String, _ dialect: any SQLDialect) -> String {
 		let a = DBAccount(user: user, host: host)
-		return "CREATE USER \(a.sql)" + (password.isEmpty ? "" : " IDENTIFIED BY " + literal(.text(password)))
+		return "CREATE USER \(a.sql(dialect))" + (password.isEmpty ? "" : " IDENTIFIED BY " + dialect.literal(.text(password)))
 	}
 
 	/// 전역 권한을 지금 → 바꾼 것으로
-	static func globalChangeSQL(_ a: DBAccount, to wanted: Set<String>) -> [String] {
-		[Privilege.revokeSQL(a.global.subtracting(wanted), on: "*.*", from: a),
-		 Privilege.grantSQL(wanted.subtracting(a.global), on: "*.*", to: a)].compactMap { $0 }
+	static func globalChangeSQL(_ a: DBAccount, to wanted: Set<String>, _ dialect: any SQLDialect) -> [String] {
+		[Privilege.revokeSQL(a.global.subtracting(wanted), on: "*.*", from: a, dialect),
+		 Privilege.grantSQL(wanted.subtracting(a.global), on: "*.*", to: a, dialect)].compactMap { $0 }
 	}
 
 	/// DB 이름(mysql.db 의 Db, 와일드카드 \_ 그대로)을 `db`.* 로
-	static func target(_ db: String) -> String { quoteName(db) + ".*" }
+	static func target(_ db: String, _ dialect: any SQLDialect) -> String { dialect.quote(db) + ".*" }
 }

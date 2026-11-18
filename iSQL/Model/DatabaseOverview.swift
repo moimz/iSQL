@@ -24,6 +24,8 @@ struct TableStat: Hashable {
 final class DatabaseOverview: GridSource {
 	let schema: String
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 	private(set) var stats: [TableStat] = []
 	private(set) var loading = false
 	private(set) var error: String?
@@ -58,7 +60,7 @@ final class DatabaseOverview: GridSource {
 			let r = try await session.query("""
 				SELECT TABLE_NAME, TABLE_TYPE, ENGINE, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, DATA_FREE, AUTO_INCREMENT,
 				       TABLE_COLLATION, TABLE_COMMENT, COALESCE(UPDATE_TIME, CREATE_TIME)
-				  FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(literal(.text(schema))) ORDER BY TABLE_NAME
+				  FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(dialect.literal(.text(schema))) ORDER BY TABLE_NAME
 				""").last ?? QueryResult()
 			stats = r.rows.map { v in
 				func i(_ k: Int) -> Int64? { v[safe: k]?.string.flatMap { Int64($0) } }

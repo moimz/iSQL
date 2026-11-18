@@ -53,6 +53,8 @@ struct ForeignKeyInfo: Identifiable, Hashable {
 final class TableInspector {
 	let table: TableInfo
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	private(set) var loading = false
 	private(set) var error: String?
@@ -116,7 +118,7 @@ final class TableInspector {
 		defer { loading = false }
 		do {
 			try await session.loadCatalogIfNeeded()
-			let lit = { (s: String) in literal(.text(s)) }
+			let lit = { [dialect] (s: String) in dialect.literal(.text(s)) }
 			let r = try await session.query("""
 				SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH, DATA_FREE,
 				       AUTO_INCREMENT, ROW_FORMAT, CREATE_TIME, UPDATE_TIME
@@ -130,7 +132,7 @@ final class TableInspector {
 				autoIncrement = n(8); rowFormat = s(9); created = s(10); updated = s(11)
 			}
 			resetEdits()
-			createSQL = (try? await session.query("SHOW CREATE TABLE \(table.quoted)").last?.rows.first?[safe: 1]?.string) ?? ""
+			createSQL = (try? await session.query("SHOW CREATE TABLE \(dialect.quote(table: table))").last?.rows.first?[safe: 1]?.string) ?? ""
 			// information_schema 의 AUTO_INCREMENT 는 MySQL 8 에서 하루까지 묵을 수 있다 → CREATE 문의 값을 쓴다
 			if let m = createSQL.firstMatch(of: /\)[^)]*\bAUTO_INCREMENT=(\d+)/) { autoIncrement = Int64(m.1) }
 			try await loadIndexes()
@@ -144,7 +146,7 @@ final class TableInspector {
 	@MainActor
 	private func loadIndexes() async throws {
 		guard let session else { return }
-		let r = try await session.query("SHOW INDEX FROM \(table.quoted)").last ?? QueryResult()
+		let r = try await session.query("SHOW INDEX FROM \(dialect.quote(table: table))").last ?? QueryResult()
 		func col(_ name: String) -> Int? { r.columns.firstIndex { $0.name.caseInsensitiveCompare(name) == .orderedSame } }
 		guard let iName = col("Key_name"), let iCol = col("Column_name") else { indexes = []; return }
 		let iNonUnique = col("Non_unique"), iSub = col("Sub_part"), iType = col("Index_type"), iCard = col("Cardinality")
@@ -183,7 +185,7 @@ final class TableInspector {
 	@MainActor
 	private func loadForeignKeys() async throws {
 		guard let session, !table.isView else { foreignKeys = []; referencedBy = []; return }
-		let lit = { (s: String) in literal(.text(s)) }
+		let lit = { [dialect] (s: String) in dialect.literal(.text(s)) }
 		func read(_ whereSQL: String) async throws -> [ForeignKeyInfo] {
 			let r = try await session.query("""
 				SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME,
@@ -212,12 +214,12 @@ final class TableInspector {
 
 	/// ADD CONSTRAINT … FOREIGN KEY 절 (ALTER TABLE 뒤에 붙인다)
 	func addForeignKeyClause(_ fk: ForeignKeyInfo) -> String {
-		let named = fk.name.trimmingCharacters(in: .whitespaces).isEmpty ? "" : "CONSTRAINT \(Self.ident(fk.name)) "
-		let ref = (fk.refSchema == table.schema ? "" : Self.ident(fk.refSchema) + ".") + Self.ident(fk.refTable)
-		return "ADD \(named)FOREIGN KEY (\(fk.columns.map(Self.ident).joined(separator: ", "))) REFERENCES \(ref) (\(fk.refColumns.map(Self.ident).joined(separator: ", "))) ON DELETE \(fk.onDelete) ON UPDATE \(fk.onUpdate)"
+		let named = fk.name.trimmingCharacters(in: .whitespaces).isEmpty ? "" : "CONSTRAINT \(dialect.quote(fk.name)) "
+		let ref = (fk.refSchema == table.schema ? "" : dialect.quote(fk.refSchema) + ".") + dialect.quote(fk.refTable)
+		return "ADD \(named)FOREIGN KEY (\(fk.columns.map(dialect.quote(_:)).joined(separator: ", "))) REFERENCES \(ref) (\(fk.refColumns.map(dialect.quote(_:)).joined(separator: ", "))) ON DELETE \(fk.onDelete) ON UPDATE \(fk.onUpdate)"
 	}
-	func addForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(table.quoted) " + addForeignKeyClause(fk) }
-	func dropForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(table.quoted) DROP FOREIGN KEY \(Self.ident(fk.name))" }
+	func addForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(dialect.quote(table: table)) " + addForeignKeyClause(fk) }
+	func dropForeignKeySQL(_ fk: ForeignKeyInfo) -> String { "ALTER TABLE \(dialect.quote(table: table)) DROP FOREIGN KEY \(dialect.quote(fk.name))" }
 
 	/// 외래 키 고치기: MySQL 은 같은 이름을 한 ALTER 에서 지우고 다시 만들 수 없다(1826) → 지우고 만들기를 따로,
 	/// 만들기가 실패하면 원래 키를 다시 만들어 되돌린다. 실패 글자 (성공이면 nil)
@@ -245,7 +247,7 @@ final class TableInspector {
 		guard let session, !counting, !table.isView else { return }
 		counting = true
 		defer { counting = false }
-		if let r = try? await session.query("SELECT COUNT(*) FROM \(table.quoted)").last, let v = r.rows.first?.first?.string {
+		if let r = try? await session.query("SELECT COUNT(*) FROM \(dialect.quote(table: table))").last, let v = r.rows.first?.first?.string {
 			exactRows = Int64(v)
 		}
 	}
@@ -275,22 +277,22 @@ final class TableInspector {
 			parts.append(convertColumns ? "CONVERT TO CHARACTER SET \(cs) COLLATE \(editCollation)"
 			                            : "DEFAULT CHARACTER SET \(cs) COLLATE \(editCollation)")
 		}
-		if editComment != comment { parts.append("COMMENT=\(literal(.text(editComment)))") }
-		return parts.isEmpty ? nil : "ALTER TABLE \(table.quoted) " + parts.joined(separator: ", ")
+		if editComment != comment { parts.append("COMMENT=\(dialect.literal(.text(editComment)))") }
+		return parts.isEmpty ? nil : "ALTER TABLE \(dialect.quote(table: table)) " + parts.joined(separator: ", ")
 	}
 
-	func autoIncrementSQL(_ n: Int64) -> String { "ALTER TABLE \(table.quoted) AUTO_INCREMENT = \(n)" }
+	func autoIncrementSQL(_ n: Int64) -> String { "ALTER TABLE \(dialect.quote(table: table)) AUTO_INCREMENT = \(n)" }
 
 	func dropIndexSQL(_ index: IndexInfo) -> String {
-		index.kind == .primary ? "ALTER TABLE \(table.quoted) DROP PRIMARY KEY"
-			: "ALTER TABLE \(table.quoted) DROP INDEX \(Self.ident(index.name))"
+		index.kind == .primary ? "ALTER TABLE \(dialect.quote(table: table)) DROP PRIMARY KEY"
+			: "ALTER TABLE \(dialect.quote(table: table)) DROP INDEX \(dialect.quote(index.name))"
 	}
 
 	/// 인덱스 컬럼 한 칸: 이름, 접두 길이 "name(10)" → `name`(10), 식 "(…)" 은 그대로
-	static func indexPart(_ s: String) -> String {
+	static func indexPart(_ s: String, _ dialect: any SQLDialect) -> String {
 		if s.hasPrefix("(") { return s }
-		if let m = s.firstMatch(of: /^(.+)\((\d+)\)$/) { return ident(String(m.1)) + "(\(m.2))" }
-		return ident(s)
+		if let m = s.firstMatch(of: /^(.+)\((\d+)\)$/) { return dialect.quote(String(m.1)) + "(\(m.2))" }
+		return dialect.quote(s)
 	}
 
 	/// 인덱스 컬럼 칸의 컬럼 이름 (접두 길이를 뗀다. 식이면 nil)
@@ -302,22 +304,22 @@ final class TableInspector {
 
 	/// 인덱스 고치기: MySQL 에는 인덱스를 고치는 명령이 없어 지우기와 만들기를 한 ALTER 로 (중간에 실패해도 인덱스가 사라진 채 남지 않는다)
 	func editIndexSQL(_ old: IndexInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String?) -> String {
-		let drop = old.kind == .primary ? "DROP PRIMARY KEY" : "DROP INDEX \(Self.ident(old.name))"
-		let add = Self.addIndexSQL(table: table, kind: kind, name: name, columns: columns, parser: parser)
-		let prefix = "ALTER TABLE \(table.quoted) "
+		let drop = old.kind == .primary ? "DROP PRIMARY KEY" : "DROP INDEX \(dialect.quote(old.name))"
+		let add = Self.addIndexSQL(table: table, kind: kind, name: name, columns: columns, parser: parser, dialect: dialect)
+		let prefix = "ALTER TABLE \(dialect.quote(table: table)) "
 		return prefix + drop + ", " + (add.hasPrefix(prefix) ? String(add.dropFirst(prefix.count)) : add)
 	}
 
-	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String? = nil) -> String {
-		let cols = columns.map(indexPart).joined(separator: ", ")
+	static func addIndexSQL(table: TableInfo, kind: IndexInfo.Kind, name: String, columns: [String], parser: String? = nil, dialect: any SQLDialect) -> String {
+		let cols = columns.map { indexPart($0, dialect) }.joined(separator: ", ")
 		let n = name.trimmingCharacters(in: .whitespaces)
-		let named = n.isEmpty ? "" : " " + ident(n)
+		let named = n.isEmpty ? "" : " " + dialect.quote(n)
 		switch kind {
-		case .primary: return "ALTER TABLE \(table.quoted) ADD PRIMARY KEY (\(cols))"
-		case .unique: return "ALTER TABLE \(table.quoted) ADD UNIQUE INDEX\(named) (\(cols))"
-		case .fulltext: return "ALTER TABLE \(table.quoted) ADD FULLTEXT INDEX\(named) (\(cols))" + (parser.map { " WITH PARSER \(ident($0))" } ?? "")
-		case .spatial: return "ALTER TABLE \(table.quoted) ADD SPATIAL INDEX\(named) (\(cols))"
-		case .index: return "ALTER TABLE \(table.quoted) ADD INDEX\(named) (\(cols))"
+		case .primary: return "ALTER TABLE \(dialect.quote(table: table)) ADD PRIMARY KEY (\(cols))"
+		case .unique: return "ALTER TABLE \(dialect.quote(table: table)) ADD UNIQUE INDEX\(named) (\(cols))"
+		case .fulltext: return "ALTER TABLE \(dialect.quote(table: table)) ADD FULLTEXT INDEX\(named) (\(cols))" + (parser.map { " WITH PARSER \(dialect.quote($0))" } ?? "")
+		case .spatial: return "ALTER TABLE \(dialect.quote(table: table)) ADD SPATIAL INDEX\(named) (\(cols))"
+		case .index: return "ALTER TABLE \(dialect.quote(table: table)) ADD INDEX\(named) (\(cols))"
 		}
 	}
 
@@ -337,8 +339,6 @@ final class TableInspector {
 		}
 		return nil
 	}
-
-	static func ident(_ s: String) -> String { "`" + s.replacingOccurrences(of: "`", with: "``") + "`" }
 
 	/// ALTER 하나를 실행하고 다시 읽는다 (사이드바 코멘트·구조의 키도 바뀌므로 스키마도). 실패하면 오류 글자
 	@MainActor

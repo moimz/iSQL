@@ -5,6 +5,7 @@ import SwiftUI
 struct CreateViewSheet: View {
 	let sql: String
 	let session: Session
+	private var dialect: any SQLDialect { session.dialect }
 	var title = "쿼리 결과로 뷰 만들기"
 	@State private var name = ""
 	@State private var schema: String
@@ -36,7 +37,7 @@ struct CreateViewSheet: View {
 			: session.tables.contains { $0.schema == schema && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
 	}
 	private var statement: String {
-		let q = TableInspector.ident
+		let q = dialect.quote(_:)
 		return "CREATE VIEW \(q(schema)).\(q(trimmed)) AS\n\(body_)"
 	}
 

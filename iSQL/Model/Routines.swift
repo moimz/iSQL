@@ -79,6 +79,8 @@ final class RoutineEditor {
 	/// 지금 이름 (새로 만드는 중이면 nil)
 	private(set) var name: String?
 	@ObservationIgnored private weak var session: Session?
+	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
+	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
 
 	var text = ""
 	private(set) var original = ""
@@ -105,7 +107,7 @@ final class RoutineEditor {
 		}
 	}
 
-	private var q: (String) -> String { TableInspector.ident }
+	private var q: (String) -> String { dialect.quote(_:) }
 
 	@MainActor
 	func load() async {
