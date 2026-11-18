@@ -14,6 +14,14 @@ struct Server: Codable, Identifiable, Hashable {
 	/// 접속하자마자 고를 DB (비어 있으면 고르지 않음)
 	var database = ""
 
+	/// DB 종류. 2.0 의 SQLKind 이름과 같다 (mysql · mariadb · postgres · sqlserver · sqlite · oracle).
+	/// 1.0 은 mysql 만 다룬다: 옛 파일(없음)은 읽을 때 "mysql" 로 적어 두고, 다른 종류는 목록에 넣지 않고 파일도 건드리지 않는다.
+	/// 모르는 값이 와도 읽기가 실패하지 않게 enum 이 아닌 문자열 (사용자 2026-11-18, 2.0 대비)
+	var kind: String? = Server.mysqlKind
+	static let mysqlKind = "mysql"
+	/// 이 버전이 다룰 수 있는 종류인지 (없으면 옛 파일 = mysql)
+	var isSupportedKind: Bool { (kind ?? Self.mysqlKind) == Self.mysqlKind }
+
 	/// mysql://user@host:port/db (비밀번호·SSH 는 빼고)
 	var connectionString: String {
 		let u = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user

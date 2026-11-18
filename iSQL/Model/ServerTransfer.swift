@@ -129,7 +129,8 @@ enum ServerTransfer {
 	/// 새 서버는 무조건 그룹 없음(그룹을 만들지 않는다), 이미 있는 서버를 덮어쓰면 이 맥에서 넣어 둔 그룹 그대로
 	@MainActor
 	static func apply(_ items: [Item], store: ServerStore, keyPassphrases: [UUID: String]) throws {
-		for item in items {
+		// 2.0 에서 내보낸 다른 DB 종류(mariadb·postgres 등) 서버는 1.0 에 넣지 않는다
+		for item in items where item.server.isSupportedKind {
 			var s = item.server
 			// 덮어쓸 때 그룹·목록 순서는 이 맥에서 정해 둔 그대로
 			let old = store.servers.first { $0.id == s.id }

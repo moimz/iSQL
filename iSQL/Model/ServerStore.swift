@@ -100,9 +100,22 @@ final class ServerStore {
 		StorageLocation.shared.downloadAll()
 		let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
 		var loaded: [Server] = []
+		var hidden: Set<UUID> = []
 		for f in files where f.pathExtension == "json" {
-			if let data = try? Data(contentsOf: f), let s = try? Self.decoder.decode(Server.self, from: data) { loaded.append(s) }
+			guard let data = try? Data(contentsOf: f), var s = try? Self.decoder.decode(Server.self, from: data) else { continue }
+			// 2.0 에서 만든 다른 DB 종류(mariadb·postgres 등)는 목록에 넣지 않고 파일도 건드리지 않는다
+			guard s.isSupportedKind else { hidden.insert(s.id); continue }
+			// 옛 파일(kind 없음)에는 "mysql" 을 적어 둔다. 고친 시각(modified)과 모르는 칸은 그대로
+			if s.kind == nil {
+				s.kind = Server.mysqlKind
+				if var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+					obj["kind"] = Server.mysqlKind
+					if let out = Self.json(obj) { StorageLocation.write(out, to: f) }
+				}
+			}
+			loaded.append(s)
 		}
+		hiddenIDs = hidden
 		// 아직 안 받은 파일의 서버는 지우지 않고 그대로 둔다
 		let waiting = StorageLocation.shared.placeholderIDs()
 		for s in servers where waiting.contains(s.id) && !loaded.contains(where: { $0.id == s.id }) { loaded.append(s) }
@@ -113,14 +126,64 @@ final class ServerStore {
 	}
 
 	func save(_ server: Server) {
+		// 2.0 의 다른 DB 종류 서버 파일은 1.0 이 절대 다시 쓰지 않는다
+		// (.isql 가져오기로 들어온 다른 종류 서버도 1.0 에는 넣지 않는다)
+		guard !hiddenIDs.contains(server.id), server.isSupportedKind else { return }
 		var s = server
 		s.modified = Date()
+		if s.kind == nil { s.kind = Server.mysqlKind }
 		if let i = servers.firstIndex(where: { $0.id == s.id }) { servers[i] = s } else { servers.append(s) }
-		guard let data = try? Self.encoder.encode(s) else { return }
-		StorageLocation.write(data, to: dir.appendingPathComponent(s.id.uuidString + ".json"))
+		guard var data = try? Self.encoder.encode(s) else { return }
+		let file = dir.appendingPathComponent(s.id.uuidString + ".json")
+		if let old = try? Data(contentsOf: file), let merged = Self.keepingUnknownKeys(new: data, old: old) { data = merged }
+		StorageLocation.write(data, to: file)
+	}
+
+	/// 2.0 에서 만든 다른 DB 종류라 목록에 넣지 않은 서버 id. 저장·삭제 대상에서 빠진다
+	private(set) var hiddenIDs: Set<UUID> = []
+
+	/// 새로 쓸 내용에 원래 파일의 "이 버전이 모르는 칸"을 다시 붙인다 (2.0 이 넣은 새 칸을 1.0 이 지우지 않게).
+	/// 모르는 칸 = 원래 파일에는 있는데, 원래 파일을 읽어 다시 쓰면 사라지는 칸. 안쪽 객체(ssh 등)도 같은 방식
+	static func keepingUnknownKeys(new: Data, old: Data) -> Data? {
+		guard let oldObj = (try? JSONSerialization.jsonObject(with: old)) as? [String: Any],
+		      let oldServer = try? decoder.decode(Server.self, from: old),
+		      let roundTrip = (try? encoder.encode(oldServer)).flatMap({ (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }),
+		      var newObj = (try? JSONSerialization.jsonObject(with: new)) as? [String: Any] else { return nil }
+		let extra = unknown(oldObj, known: roundTrip)
+		guard !extra.isEmpty else { return nil }
+		merge(&newObj, extra)
+		return json(newObj)
+	}
+
+	private static func unknown(_ old: [String: Any], known: [String: Any]) -> [String: Any] {
+		var out: [String: Any] = [:]
+		for (k, v) in old {
+			guard let kv = known[k] else { out[k] = v; continue }
+			if let od = v as? [String: Any], let kd = kv as? [String: Any] {
+				let inner = unknown(od, known: kd)
+				if !inner.isEmpty { out[k] = inner }
+			}
+		}
+		return out
+	}
+
+	private static func merge(_ target: inout [String: Any], _ extra: [String: Any]) {
+		for (k, v) in extra {
+			if var t = target[k] as? [String: Any], let e = v as? [String: Any] {
+				merge(&t, e)
+				target[k] = t
+			} else if target[k] == nil {
+				target[k] = v
+			}
+		}
+	}
+
+	private static func json(_ obj: [String: Any]) -> Data? {
+		try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
 	}
 
 	func delete(_ server: Server) {
+		guard !hiddenIDs.contains(server.id) else { return }
 		servers.removeAll { $0.id == server.id }
 		StorageLocation.remove(dir.appendingPathComponent(server.id.uuidString + ".json"))
 		QueryStore.remove(server.id)
