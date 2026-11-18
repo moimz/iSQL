@@ -55,12 +55,10 @@ private struct MCPSettingsPage: View {
 		Form {
 			Section {
 				Toggle("MCP 서버 켜기", isOn: $mcp.enabled)
-				LabeledContent("포트") {
-					TextField("", text: $portText)
-						.frame(width: 90)
-						.multilineTextAlignment(.trailing)
-						.onSubmit(applyPort)
-				}
+				// LabeledContent 안의 TextField 는 아래가 남아 줄이 안 맞았다 → Form 기본 TextField 줄로 (사용자 2026-11-18)
+				TextField("포트", text: $portText)
+					.multilineTextAlignment(.trailing)
+					.onSubmit(applyPort)
 				statusLine
 			} header: {
 				Text("서버")
