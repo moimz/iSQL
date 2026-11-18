@@ -7,11 +7,14 @@ struct FilterRow: Identifiable, Equatable {
 	var column: String
 	var op: FilterOp = .eq
 	var value = ""
+	/// JSON 컬럼 안 경로 ($.user.name). 비면 컬럼 전체
+	var path = ""
 
 	/// 이 줄이 만드는 조건 (값이 필요한데 비었으면 nil)
 	func sql(_ dialect: any SQLDialect) -> String? {
 		guard enabled, !column.isEmpty else { return nil }
-		let c = dialect.quote(column)
+		let path = self.path.trimmingCharacters(in: .whitespaces)
+		let c = path.isEmpty ? dialect.quote(column) : dialect.jsonPath(dialect.quote(column), path)
 		let v = value
 		if op.needsValue && v.isEmpty { return nil }
 		func lit(_ s: String) -> String { dialect.literal(.text(s)) }

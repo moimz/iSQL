@@ -8,7 +8,7 @@ extension MySQLDialect {
 
 	func explain(_ body: String) -> String { "EXPLAIN \(body)" }
 	/// 나무 모양 계획 (MySQL 8 의 FORMAT=TREE. MariaDB·옛 MySQL 은 오류 → 부르는 쪽이 표만 쓴다)
-	func explainTree(_ body: String) -> String? { "EXPLAIN FORMAT=TREE \(body)" }
+	func explainTree(_ body: String) -> String? { mariadb ? nil : "EXPLAIN FORMAT=TREE \(body)" }
 
 	// MARK: 루틴 정의 글
 

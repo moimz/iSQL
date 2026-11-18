@@ -58,6 +58,10 @@ struct SQLCapabilities: Sendable {
 	/// SQL 파일 가져오기의 "외래 키 검사 끄기"
 	var foreignKeyChecksToggle = true
 
+	// MARK: 검색
+	/// 필터 줄의 JSON 경로 칸 (JSON 컬럼을 타입으로 알 수 있어야 한다 — MariaDB 의 JSON 은 LONGTEXT 라 안 됨)
+	var jsonPathFilter = true
+
 	/// MySQL: 모두 있다
 	static let mysql = SQLCapabilities()
 }
@@ -97,6 +101,7 @@ extension SQLCapabilities {
 			case "foreignKeys": c.foreignKeys = false
 			case "iModulesExport": c.iModulesExport = false
 			case "foreignKeyChecksToggle": c.foreignKeyChecksToggle = false
+			case "jsonPathFilter": c.jsonPathFilter = false
 			default: break
 			}
 		}

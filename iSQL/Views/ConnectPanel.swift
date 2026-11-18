@@ -96,7 +96,7 @@ struct ConnectForm: View {
 
 				divider
 
-				row("\(server.kindLabel) 호스트") { field($server.host, ssh ? "127.0.0.1" : "db.example.com") }
+				row("\(server.sqlKind?.familyLabel ?? server.kindLabel) 호스트") { field($server.host, ssh ? "127.0.0.1" : "db.example.com") }
 				row("사용자") { field($server.user, "root") }
 				row("비밀번호") { secret($mysqlPassword, show: $showPassword, "선택") }
 				row("DB") { field($server.database, "선택") }
@@ -295,8 +295,11 @@ struct ConnectForm: View {
 					testSteps.append(.init(ok: nil, text: step))
 				}
 				if s.ssh.enabled, let t = tunnel { testSteps[0].text = "SSH 터널 열림 (\(s.ssh.host) → 이 맥 \(t.localPort) 포트)" }
-				let info = try await (s.sqlKind ?? .mysql).meta.connectionInfo { try await conn.query($0) }
-				testSteps[testSteps.count - 1] = .init(ok: true, text: "\(s.kindLabel) 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개")
+				// MySQL·MariaDB 는 버전을 보고 종류를 맞춘다 (저장하면 그 종류로)
+				let detected = s.sqlKind?.detected(fromVersion: conn.serverVersion) ?? s.sqlKind
+				if let detected, detected != server.sqlKind { server.kind = detected.rawValue }
+				let info = try await (detected ?? .mysql).meta.connectionInfo { try await conn.query($0) }
+				testSteps[testSteps.count - 1] = .init(ok: true, text: "\(detected?.label ?? s.kindLabel) 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개")
 				conn.close()
 				tunnel?.close()
 			} catch {

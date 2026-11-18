@@ -195,6 +195,13 @@ final class Session {
 			sideEndpoint = t.map { ("127.0.0.1", Int($0.localPort)) } ?? (server.host, server.port)
 			sidePassword = mysqlPassword
 			serverVersion = c.serverVersion
+			// MySQL·MariaDB 는 접속해 봐야 안다: 서버가 알려 준 버전으로 종류를 맞추고, 저장한 서버면 파일에도 (사용자 2026-11-18)
+			if let k = server.sqlKind?.detected(fromVersion: c.serverVersion), k != server.sqlKind {
+				var s = server
+				s.kind = k.rawValue
+				self.server = s
+				if let store = AppState.shared.store, store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
+			}
 			state = .connecting("테이블 목록 읽는 중…")
 			try await loadSchema()
 			currentDB = server.database

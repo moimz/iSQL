@@ -8,7 +8,7 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 
 	/// 이 빌드가 접속할 수 있는 종류. 다른 종류의 서버 파일은 목록에서 숨기고 건드리지 않는다 (ServerStore).
 	/// 하나씩 만들 때마다 여기에 넣는다
-	static let supported: Set<SQLKind> = [.mysql]
+	static let supported: Set<SQLKind> = [.mysql, .mariadb]
 
 	var label: String {
 		switch self {
@@ -61,6 +61,10 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.accounts = false
 			c.iModulesExport = false
 		}
+		if self == .mariadb {
+			// JSON 이 LONGTEXT 별칭이라 결과 타입으로 JSON 컬럼을 알 수 없다
+			c.jsonPathFilter = false
+		}
 		#if DEBUG
 		c = c.applyingDebugOverrides()
 		#endif
@@ -70,16 +74,30 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 	/// 이 종류의 메타데이터 읽기. 아직 모두 MySQL
 	var meta: any SQLMeta {
 		switch self {
-		case .mysql, .mariadb, .postgres, .sqlserver, .sqlite, .oracle: MySQLMeta()
+		case .mariadb: MySQLMeta(mariadb: true)
+		case .mysql, .postgres, .sqlserver, .sqlite, .oracle: MySQLMeta()
 		}
 	}
 
 	/// 이 종류의 SQL 문법. 아직 모두 MySQL (2.0 1단계: 동작은 1.x 그대로, 틀만)
 	var dialect: any SQLDialect {
 		switch self {
-		case .mysql, .mariadb, .postgres, .sqlserver, .sqlite, .oracle: MySQLDialect()
+		case .mariadb: MySQLDialect(mariadb: true)
+		case .mysql, .postgres, .sqlserver, .sqlite, .oracle: MySQLDialect()
 		}
 	}
+}
+
+extension SQLKind {
+	/// 같은 프로토콜로 붙는 종류끼리 (MySQL·MariaDB) 접속해서 서버가 알려 준 버전으로 실제 종류를 고른다.
+	/// 다른 계열이면 nil (그대로 둔다)
+	func detected(fromVersion version: String) -> SQLKind? {
+		guard self == .mysql || self == .mariadb else { return nil }
+		return version.localizedCaseInsensitiveContains("mariadb") ? .mariadb : .mysql
+	}
+
+	/// 접속 화면에 쓰는 이름 (MySQL·MariaDB 는 접속해 봐야 알아서 하나로)
+	var familyLabel: String { self == .mysql || self == .mariadb ? "MySQL · MariaDB" : label }
 }
 
 extension Server {

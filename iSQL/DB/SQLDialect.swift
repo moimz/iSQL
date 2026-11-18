@@ -13,6 +13,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func quoteIfNeeded(_ name: String, reserved: Set<String>) -> String
 	/// 값 리터럴 (NULL, '글자', 바이너리)
 	func literal(_ v: Value) -> String
+	/// JSON 컬럼(감싼 이름) 안 경로("$.a.b")의 값을 글자로 꺼내는 식
+	func jsonPath(_ column: String, _ path: String) -> String
 	/// LIKE 값 안의 % _ (와 이스케이프 글자)를 글자 그대로 찾게
 	func likeEscaped(_ s: String) -> String
 

@@ -1,8 +1,10 @@
 import Foundation
 
-/// MySQL 문법 (1.x 에서 여러 곳에 흩어져 있던 것을 모았다)
+/// MySQL 문법 (1.x 에서 여러 곳에 흩어져 있던 것을 모았다). MariaDB 도 같은 계열이라 이걸 쓰고 다른 곳만 mariadb 로 가른다
 struct MySQLDialect: SQLDialect {
-	var kind: SQLKind { .mysql }
+	/// MariaDB 서버 (같은 프로토콜·거의 같은 문법)
+	var mariadb = false
+	var kind: SQLKind { mariadb ? .mariadb : .mysql }
 
 	func quote(_ name: String) -> String { "`" + name.replacingOccurrences(of: "`", with: "``") + "`" }
 
@@ -32,6 +34,11 @@ struct MySQLDialect: SQLDialect {
 			}
 			return out + "'"
 		}
+	}
+
+	/// JSON 컬럼 안 경로의 값 (글자로). MySQL 은 ->> 연산자, MariaDB 는 연산자가 없어 함수로
+	func jsonPath(_ column: String, _ path: String) -> String {
+		mariadb ? "JSON_UNQUOTE(JSON_EXTRACT(\(column), \(literal(.text(path)))))" : "\(column)->>\(literal(.text(path)))"
 	}
 
 	/// \ 로 이스케이프 (MySQL 기본 ESCAPE)

@@ -245,6 +245,9 @@ struct FilterBar: View {
 	@FocusState private var whereFocused: Bool
 	@FocusState private var focusedRow: UUID?
 
+	/// JSON 타입 컬럼인지 (테이블 목록을 읽을 때의 컬럼 타입)
+	private func isJSON(_ name: String) -> Bool { columns.first { $0.name == name }?.type.lowercased() == "json" }
+
 	var body: some View {
 		VStack(spacing: 0) {
 			ForEach($data.filters) { $f in
@@ -255,6 +258,15 @@ struct FilterBar: View {
 						(c.comment.isEmpty ? c.name : "\(c.name)    \(c.comment)", Optional(c.name))
 					})
 					.frame(width: 220)
+					// JSON 컬럼이면 그 안의 경로로 거르기 (JSON 타입을 알 수 있는 서버만: MySQL)
+					if data.session.capabilities.jsonPathFilter, isJSON(f.column) {
+						TextField("", text: $f.path, prompt: Text("$.경로"))
+							.textFieldStyle(.roundedBorder)
+							.font(.body.monospaced())
+							.frame(width: 140)
+							.help("JSON 안의 값으로 거르기: $.name, $.user.id, $.tags[0] (비우면 컬럼 전체)")
+							.onSubmit(apply)
+					}
 					PopUp(selection: $f.op, options: FilterOp.allCases.flatMap { op -> [(title: String, value: FilterOp?)] in
 						op.groupEnd ? [(op.rawValue, op), ("", nil)] : [(op.rawValue, op)]
 					})
@@ -276,6 +288,8 @@ struct FilterBar: View {
 						.help("조건 더하기")
 				}
 				.opacity(f.enabled ? 1 : 0.55)
+				// 다른 컬럼을 고르면 경로는 버린다
+				.onChange(of: f.column) { _, _ in if !f.path.isEmpty { $f.path.wrappedValue = "" } }
 				.padding(.horizontal, 12)
 				.padding(.vertical, 5)
 				Divider().opacity(0.5)

@@ -2,7 +2,9 @@ import Foundation
 
 /// MySQL 메타데이터 읽기: information_schema · SHOW (1.x 에서 여러 곳에 있던 쿼리와 결과 풀기를 그대로 모았다)
 struct MySQLMeta: SQLMeta {
-	let dialect = MySQLDialect()
+	/// MariaDB 서버 (information_schema 의 기본값 모양 등이 다르다)
+	var mariadb = false
+	var dialect: MySQLDialect { MySQLDialect(mariadb: mariadb) }
 
 	var systemSchemas: Set<String> { ["information_schema", "mysql", "performance_schema", "sys"] }
 
@@ -30,8 +32,10 @@ struct MySQLMeta: SQLMeta {
 		}
 		for r in results[2].rows {
 			let id = (r[0].string ?? "") + "." + (r[1].string ?? "")
+			var def = r[6].string, extra = r[7].string ?? ""
+			if mariadb { (def, extra) = Self.mysqlStyleDefault(def, extra: extra) }
 			s.columns[id, default: []].append(ColumnInfo(name: r[2].string ?? "", type: r[3].string ?? "", nullable: r[4].string == "YES",
-			                                             key: r[5].string ?? "", defaultValue: r[6].string, extra: r[7].string ?? "",
+			                                             key: r[5].string ?? "", defaultValue: def, extra: extra,
 			                                             comment: r[8].string ?? ""))
 		}
 		return s
@@ -195,8 +199,18 @@ struct MySQLMeta: SQLMeta {
 			SHOW CREATE TABLE \(dialect.quote(table: table))
 			""")
 		guard let cols = rs.first else { return nil }
-		let list = cols.rows.indices.map { StructColumn(row: cols, $0) }
+		var list = cols.rows.indices.map { StructColumn(row: cols, $0) }
 		guard !list.isEmpty else { return nil }
+		if mariadb {
+			// 기본값·EXTRA 를 MySQL 모양으로 다시 읽는다
+			for i in list.indices {
+				let (def, extra) = Self.mysqlStyleDefault(cols.string(i, "COLUMN_DEFAULT"), extra: cols.string(i, "EXTRA") ?? "")
+				list[i].defaultValue = def
+				let low = extra.lowercased()
+				list[i].defaultExpr = low.contains("default_generated")
+				list[i].onUpdate = low.range(of: "on update").map { String(extra[$0.lowerBound...]) } ?? ""
+			}
+		}
 		return (list, Self.parseCreate(rs.last?.rows.first?[safe: 1]?.string ?? ""))
 	}
 
@@ -303,6 +317,25 @@ struct MySQLMeta: SQLMeta {
 			 WHERE TABLE_SCHEMA = \(lit(schema)) ORDER BY TABLE_NAME
 			""")
 		return r.rows.map { row in (row[0].string ?? "", row[1].string == "VIEW", row[2].string.flatMap { Int($0) }, row[3].string ?? "") }
+	}
+
+	// MARK: MariaDB
+
+	/// MariaDB 의 information_schema 기본값을 MySQL 모양으로:
+	/// 글자는 따옴표째('abc') → abc, DEFAULT NULL 은 글자 'NULL' → nil, current_timestamp() → CURRENT_TIMESTAMP,
+	/// 식 기본값은 EXTRA 에 DEFAULT_GENERATED (MySQL 8 처럼), on update current_timestamp() → on update CURRENT_TIMESTAMP
+	static func mysqlStyleDefault(_ d: String?, extra: String) -> (String?, String) {
+		var extra = extra.replacingOccurrences(of: #"(?i)current_timestamp\(\)"#, with: "CURRENT_TIMESTAMP", options: .regularExpression)
+		guard let d else { return (nil, extra) }
+		if d == "NULL" { return (nil, extra) }
+		if d.count >= 2, d.hasPrefix("'"), d.hasSuffix("'") {
+			return (String(d.dropFirst().dropLast()).replacingOccurrences(of: "''", with: "'"), extra)
+		}
+		if Double(d) != nil { return (d, extra) }
+		// 그 밖은 식
+		let expr = d.replacingOccurrences(of: #"(?i)^current_timestamp\(\)$"#, with: "CURRENT_TIMESTAMP", options: .regularExpression)
+		if !extra.lowercased().contains("default_generated") { extra = extra.isEmpty ? "DEFAULT_GENERATED" : "DEFAULT_GENERATED " + extra }
+		return (expr, extra)
 	}
 
 	// MARK: SHOW CREATE 글 읽기
