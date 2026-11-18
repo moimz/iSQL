@@ -15,7 +15,7 @@ struct FilterRow: Identifiable, Equatable {
 		let v = value
 		if op.needsValue && v.isEmpty { return nil }
 		func lit(_ s: String) -> String { literal(.text(s)) }
-		func likeEscaped(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") }
+		let likeEscaped = FilterOp.likeEscaped
 		switch op {
 		case .eq: return "\(c) = \(lit(v))"
 		case .ne: return "\(c) != \(lit(v))"
@@ -60,6 +60,8 @@ enum FilterOp: String, CaseIterable, Identifiable {
 	case isEmpty = "비어 있음"
 
 	var id: String { rawValue }
+	/// LIKE 값 안의 \ % _ 를 글자 그대로 찾게
+	static func likeEscaped(_ s: String) -> String { s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_") }
 	var needsValue: Bool { ![.isNull, .notNull, .isEmpty].contains(self) }
 	var placeholder: String {
 		switch self {
