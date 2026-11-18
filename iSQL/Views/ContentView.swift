@@ -11,16 +11,18 @@ struct ContentView: View {
 	var body: some View {
 		NavigationSplitView {
 			VStack(spacing: 0) {
-				// 접속한 서버가 하나라도 있으면 위에 [서버 | 테이블]: 접속한 뒤에도 서버 목록을 다시 볼 수 있게
-				if !model.sessions.isEmpty {
-					SidebarModeSegment(selection: $model.sidebarMode)
-						.frame(height: 24)
-						.padding(.horizontal, 10)
-						.padding(.top, 6)
-				}
-				if model.sidebarMode == .tables && !model.sessions.isEmpty {
+				// 위에 늘 [서버 | 테이블] (사용자 2026-11-18: 접속 전에도 보이게, 테이블은 접속해야 나온다)
+				SidebarModeSegment(selection: $model.sidebarMode)
+					.frame(height: 24)
+					.padding(.horizontal, 10)
+					.padding(.top, 6)
+				if model.sidebarMode == .tables {
 					if let s = model.current, s.isConnected {
 						TableSidebar(session: s)
+					} else if model.sessions.isEmpty {
+						ContentUnavailableView("접속한 서버가 없습니다", systemImage: "cylinder.split.1x2",
+						                       description: Text("서버 목록에서 서버에 접속하세요."))
+							.frame(maxHeight: .infinity)
 					} else {
 						ContentUnavailableView("접속한 서버가 아닙니다", systemImage: "cylinder.split.1x2",
 						                       description: Text("제목바에서 접속한 서버를 고르세요."))
@@ -61,6 +63,9 @@ struct ContentView: View {
 		.onChange(of: model.sidebarMode) { _, mode in
 			if mode == .servers, let id = model.currentID {
 				model.showCurrentServerInfo(saved: store.servers.contains { $0.id == id })
+			} else if mode == .tables {
+				// 서버 목록에서 고른 서버가 접속 중이면 그 서버 화면으로 (아니면 "접속한 서버가 아닙니다")
+				model.returnToSelectedConnection()
 			}
 		}
 		.toolbar {
