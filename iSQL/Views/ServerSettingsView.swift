@@ -140,9 +140,9 @@ struct ServerSettingsPage: View {
 					if store.servers.contains(where: { $0.id == s.id }) { store.save(s) }
 				}
 			} header: {
-				Text("이 서버 설정")
+				Text("현재 서버 설정")
 			} footer: {
-				Text("서버마다 따로이고, iCloud 로 다른 맥과 같이 맞춰집니다.").foregroundStyle(.tertiary)
+				Text("서버별 설정으로, iCloud로 서버별 동기화됩니다.").foregroundStyle(.tertiary)
 			}
 		}
 		.formStyle(.grouped)
@@ -185,10 +185,10 @@ private struct ServerDefaultCharsetRows: View {
 			Text("서버 기본값").tag("")
 			ForEach(session.catalog.charsets.map(\.name), id: \.self) { Text($0).tag($0) }
 		} label: {
-			Text("새로 만들 때 문자셋")
-			Text("새 데이터베이스·새 테이블 시트에서 먼저 골라 둡니다")
+			Text("기본 문자셋")
+			Text("새 데이터베이스·새 테이블 시트에서 기본값으로 선택합니다")
 		}
-		Picker("새로 만들 때 콜레이션", selection: Binding(get: { co }, set: { v in
+		Picker("기본 콜레이션", selection: Binding(get: { co }, set: { v in
 			guard var s = session.server else { return }
 			s.defaultCollation = v.isEmpty ? nil : v
 			save(s)

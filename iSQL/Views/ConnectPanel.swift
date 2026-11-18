@@ -104,8 +104,8 @@ struct ConnectForm: View {
 
 				if ssh {
 					divider
-					row("SSH 호스트") { field($server.ssh.host, "ssh.example.com 또는 ~/.ssh/config 별칭") }
-					row("SSH 사용자") { field($server.ssh.user, "비우면 ~/.ssh/config") }
+					row("SSH 호스트") { field($server.ssh.host, "") }
+					row("SSH 사용자") { field($server.ssh.user, "") }
 					row("SSH 인증") {
 						Picker("", selection: $server.ssh.auth) {
 							ForEach(SSHAuth.allCases) { Text($0.label).tag($0) }
@@ -118,7 +118,7 @@ struct ConnectForm: View {
 					if server.ssh.auth == .key {
 						row("SSH 키") {
 							HStack(spacing: 6) {
-								field($server.ssh.keyPath, "비우면 ~/.ssh/config 와 ssh-agent")
+								field($server.ssh.keyPath, "선택 (비우면 SSH 기본 키 사용)")
 								Button(action: pickKey) { Image(systemName: "key.fill").frame(width: 30, height: 30) }
 									.buttonStyle(.plain)
 									.foregroundStyle(Color.accentColor)
@@ -126,7 +126,12 @@ struct ConnectForm: View {
 									.help("키 파일 고르기")
 							}
 						}
-						row("키 암호") { secret($sshSecret, show: $showSecret, "암호 없는 키면 비움") }
+						row("키 암호") { secret($sshSecret, show: $showSecret, "선택") }
+						GridRow {
+							Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+							Text("암호로 보호된 키인 경우 비워 두면 키체인에 등록된 암호를 사용하거나, 암호 입력 창이 뜰 수 있습니다.")
+								.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+						}
 					} else {
 						row("SSH 비밀번호") { secret($sshSecret, show: $showSecret, "") }
 					}
@@ -157,20 +162,28 @@ struct ConnectForm: View {
 		.padding(20)
 	}
 
+	/// SSH 를 쓰면 호스트·사용자는 필수 (~/.ssh/config 별칭은 쓰지 않는다, 사용자 2026-11-18)
+	private var missingSSH: Bool {
+		server.ssh.enabled && (server.ssh.host.trimmingCharacters(in: .whitespaces).isEmpty || server.ssh.user.trimmingCharacters(in: .whitespaces).isEmpty)
+	}
+
 	private var buttons: some View {
 		HStack(spacing: 10) {
 			Button(action: test) { Label("접속 시험", systemImage: "bolt.horizontal") }
-				.disabled(testing)
+				.disabled(testing || missingSSH)
 			Spacer()
 			if savedFlash {
 				Label("저장됨", systemImage: "checkmark").foregroundStyle(.green).transition(.opacity)
 			}
 			Button(saved ? "저장" : "목록에 저장", action: save)
 				.keyboardShortcut("s")
+				.disabled(missingSSH)
 			Button(action: connect) { Text("접속").frame(width: 110) }
 				.keyboardShortcut(.defaultAction)
 				.buttonStyle(.borderedProminent)
+				.disabled(missingSSH)
 		}
+		.help(missingSSH ? "SSH 호스트와 SSH 사용자를 입력하세요" : "")
 		.controlSize(.large)
 	}
 

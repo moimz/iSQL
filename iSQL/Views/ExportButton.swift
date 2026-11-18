@@ -167,20 +167,20 @@ struct ExportSheet: View {
 						TextField("", text: $sql.tableName).textFieldStyle(.roundedBorder)
 					}
 				}
-				Toggle("테이블 구조 넣기 (CREATE TABLE)", isOn: $sql.includeStructure)
+				Toggle("테이블 구조 포함 (CREATE TABLE)", isOn: $sql.includeStructure)
 					.disabled(!src.canExportStructure)
 					.help(src.canExportStructure ? "" : "여러 테이블에서 온 결과라 구조를 넣을 수 없습니다")
-				Toggle("DROP TABLE IF EXISTS 넣기", isOn: $sql.includeDrop)
+				Toggle("기존 테이블이 존재할 경우 삭제 (DROP TABLE IF EXISTS)", isOn: $sql.includeDrop)
 					.disabled(!src.canExportStructure || !sql.includeStructure)
 					.padding(.leading, 20)
 				Toggle("화면에 보이는 데이터만 (끄면 전체)", isOn: $sql.visibleOnly)
 					.help("끄면 지금 조건·정렬 그대로 전체를 1,000행씩 받아 씁니다")
 			case .database:
-				Toggle("테이블 구조 넣기 (CREATE TABLE)", isOn: $db.includeStructure)
-				Toggle("DROP TABLE IF EXISTS 넣기", isOn: $db.includeDrop)
+				Toggle("테이블 구조 포함 (CREATE TABLE)", isOn: $db.includeStructure)
+				Toggle("기존 테이블이 존재할 경우 삭제 (DROP TABLE IF EXISTS)", isOn: $db.includeDrop)
 					.disabled(!db.includeStructure)
 					.padding(.leading, 20)
-				Toggle("데이터 넣기 (INSERT)", isOn: $db.includeData)
+				Toggle("데이터 포함 (INSERT)", isOn: $db.includeData)
 					.help("테이블마다 전체를 1,000행씩 받아 씁니다")
 			}
 		}
@@ -192,9 +192,9 @@ struct ExportSheet: View {
 	/// 엑셀 탭: 첫 행(컬럼 이름 / 코멘트), 형식 유지, 화면에 보이는 것만 또는 여러 테이블을 한 파일에
 	@ViewBuilder private var excelTab: some View {
 		VStack(alignment: .leading, spacing: 10) {
-			Toggle("첫 행에 컬럼 이름", isOn: $excel.header)
+			Toggle("첫 행에 컬럼 이름 넣기", isOn: $excel.header)
 			HStack(spacing: 6) {
-				Text("코멘트가 있으면:").foregroundStyle(excel.header ? .primary : .secondary)
+				Text("코멘트 형식:").foregroundStyle(excel.header ? .primary : .secondary)
 				PopUp(selection: $excel.headerComment, options: HeaderComment.allCases.map { ($0.title, $0) })
 					.frame(width: 220)
 			}
@@ -202,7 +202,7 @@ struct ExportSheet: View {
 			.disabled(!excel.header)
 			VStack(alignment: .leading, spacing: 2) {
 				Toggle("형식 유지", isOn: $excel.keepTypes)
-				Text("날짜는 엑셀 날짜, 숫자는 숫자로. 글자 컬럼 안의 숫자는 글자 그대로(앞자리 0 유지). 끄면 모두 일반 글자.")
+				Text("컬럼의 데이터(날짜, 숫자, 숫자로만 이루어진 문자)에 따라 엑셀의 셀 형식을 최대한 유지합니다.")
 					.font(.callout).foregroundStyle(.secondary)
 					.fixedSize(horizontal: false, vertical: true)
 					.padding(.leading, 20)
@@ -393,14 +393,14 @@ extension ExportSheet {
 		VStack(alignment: .leading, spacing: 10) {
 			if isDatabase {
 				HStack(spacing: 6) {
-					Text("뺄 접두어:")
+					Text("iModules 접두어:")
 					TextField("없음", text: $imodules.prefix).textFieldStyle(.roundedBorder).frame(width: 140)
 				}
-				Toggle("데이터 넣기 (datas)", isOn: $imodules.includeData).toggleStyle(.checkbox)
-				Text("package.json 의 databases 자리에 붙여 넣는 { \"테이블\": { columns, indexes, auto_increment, comment } } 형식입니다. UNSIGNED·외래 키처럼 iModules 형식에 없는 것은 빠집니다 (끝나면 알려 줍니다).")
+				Toggle("데이터 포함 (datas)", isOn: $imodules.includeData).toggleStyle(.checkbox)
+				Text("iModules의 package.json 형식에 맞게 내보냅니다.")
 					.font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 			} else {
-				Text("iModules 형식은 테이블이나 데이터베이스를 내보낼 때 씁니다 (사이드바 오른쪽 클릭 → 내보내기).")
+				Text("iModules 형식은 테이블이나 데이터베이스를 내보낼 때 씁니다 (사이드바 우클릭 → 내보내기).")
 					.foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 			}
 		}

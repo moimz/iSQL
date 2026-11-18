@@ -32,14 +32,12 @@ private struct AppGeneralPage: View {
 	var body: some View {
 		Form {
 			Section {
-				Toggle("앱을 열면 마지막에 접속해 있던 서버에 다시 접속", isOn: $reconnectLast)
+				Toggle("앱 실행 시 마지막 세션 복원", isOn: $reconnectLast)
 			} footer: {
-				Text("접속을 닫지 않고 앱을 끈 서버들에 다시 접속합니다. 보고 있던 서버를 먼저 띄우고 나머지는 뒤에서 접속합니다. 서버마다 \"앱 열 때 자동 접속\" 은 서버 목록 오른쪽 클릭에서 켭니다.").foregroundStyle(.tertiary)
+				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)").foregroundStyle(.tertiary)
 			}
 			Section {
 				LabeledContent("버전", value: version)
-			} footer: {
-				Text("서버마다 다른 설정은 접속한 창 제목바의 톱니(서버 설정)에 있습니다.").foregroundStyle(.tertiary)
 			}
 		}
 		.formStyle(.grouped)
@@ -56,21 +54,16 @@ private struct MCPSettingsPage: View {
 	var body: some View {
 		Form {
 			Section {
-				Toggle(isOn: $mcp.enabled) {
-					Text("MCP 서버 켜기")
-					Text("이 맥에서만 (127.0.0.1) 받습니다")
-				}
-				statusLine
+				Toggle("MCP 서버 켜기", isOn: $mcp.enabled)
 				LabeledContent("포트") {
 					TextField("", text: $portText)
 						.frame(width: 90)
 						.multilineTextAlignment(.trailing)
 						.onSubmit(applyPort)
 				}
+				statusLine
 			} header: {
 				Text("서버")
-			} footer: {
-				Text("기본 8766 (Sequel Ace 는 8765). 1024~65535, 엔터로 적용").foregroundStyle(.tertiary)
 			}
 
 			Section("접근 범위") {
@@ -121,19 +114,18 @@ private struct MCPSettingsPage: View {
 
 	private var scopeHelp: String {
 		switch mcp.scope {
-		case .active: "앞에 있는 iSQL 창에서 보고 있는 서버 하나만 열립니다. 창이나 서버를 바꾸면 따라 바뀝니다."
-		case .connected: "iSQL 에서 지금 접속해 있는 서버들만 열립니다."
-		case .all: "서버 목록의 모든 서버가 열립니다. 접속하지 않은 서버는 키체인 비밀번호로 iSQL 이 따로 접속합니다."
+		case .active: "현재 iSQL에서 보고 있는 서버만 접근 가능합니다. 서버 변경 시 접근 가능한 서버가 자동으로 변경됩니다."
+		case .connected: "현재 iSQL에서 접속하고 있는 모든 서버에 접근 가능합니다."
+		case .all: "서버 목록의 모든 서버에 접근 가능합니다. 아직 접속하지 않은 서버는 필요에 따라 자동으로 접속합니다."
 		}
 	}
 
 	@ViewBuilder private var statusLine: some View {
 		switch mcp.status {
-		case .running(let p):
-			// 포트는 숫자 서식(8,799) 없이
+		case .running:
 			// 주소는 고를 수 있고, 연결 칸까지 내려가지 않아도 바로 복사
 			HStack(spacing: 8) {
-				Label("\(String(p)) 포트에서 받는 중 — \(mcp.endpoint)", systemImage: "circle.fill")
+				Label(mcp.endpoint, systemImage: "circle.fill")
 					.foregroundStyle(.green).font(.callout)
 					.textSelection(.enabled)
 				Spacer()

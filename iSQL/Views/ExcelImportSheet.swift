@@ -33,13 +33,13 @@ struct ExcelImportSheet: View {
 					}
 				}
 				GridRow {
-					Text("넣을 곳:").gridColumnAlignment(.trailing)
+					Text("테이블 선택:").gridColumnAlignment(.trailing)
 					targetPicker
 				}
 				GridRow(alignment: .top) {
 					Text("옵션:")
 					VStack(alignment: .leading, spacing: 6) {
-						Toggle("첫 행을 컬럼 이름으로 (끄면 A, B, C …)", isOn: $job.header)
+						Toggle("첫 행을 컬럼 이름으로 사용 (체크 해제 시 엑셀 컬럼명을 사용합니다.)", isOn: $job.header)
 						Toggle("컬럼별 데이터 형식 고려", isOn: $job.typed)
 							.help("숫자는 INT·DECIMAL, 날짜는 DATE·DATETIME 으로. 끄면 모두 글자(VARCHAR·TEXT). 글자로 저장된 숫자(앞자리 0)는 글자 그대로")
 						if job.target == .newTable {
@@ -96,7 +96,7 @@ struct ExcelImportSheet: View {
 			}
 			Spacer(minLength: 8)
 			if job.loading { ProgressView().controlSize(.small) }
-			Button("다른 파일…") { if let u = Session.pickExcelFile() { job.change(to: u) } }
+			Button("엑셀 파일 선택…") { if let u = Session.pickExcelFile() { job.change(to: u) } }
 				.disabled(locked)
 		}
 	}
@@ -120,14 +120,7 @@ struct ExcelImportSheet: View {
 				if job.target == .newTable && job.nameTaken && !job.finished {
 					Label("\(job.schema) 에 이미 있는 이름입니다", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
 				} else if job.target == .existing {
-					let m = job.mapping
-					let hit = m.compactMap { $0 }.count
-					if hit == 0 {
-						Label(job.header ? "첫 행 이름과 맞는 컬럼이 없습니다" : "컬럼이 없습니다", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-					} else {
-						Text("\(job.schema).\(job.existingName) 에 \(hit)개 열을 넣습니다" + (hit < m.count ? " (나머지 \(m.count - hit)개는 건너뜀)" : "") + (job.header ? " — 이름으로 맞춤" : " — 순서대로"))
-							.foregroundStyle(.secondary)
-					}
+					EmptyView()   // 넣을 열 안내는 미리보기 아래 (mappingNote)
 				} else {
 					Text("데이터베이스 \(job.schema) 안에").foregroundStyle(.secondary)
 				}
@@ -143,6 +136,21 @@ struct ExcelImportSheet: View {
 			TableGrid(source: preview)
 				.frame(height: 210)
 				.overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(nsColor: .separatorColor)))
+			mappingNote.font(.callout)
+		}
+	}
+
+	/// 기존 테이블에 넣을 때: 몇 개 열이 어디로 가는지 (미리보기 제목의 "→ 컬럼" 과 바로 맞춰 보게 표 아래, 사용자 2026-11-18)
+	@ViewBuilder private var mappingNote: some View {
+		if job.target == .existing {
+			let m = job.mapping
+			let hit = m.compactMap { $0 }.count
+			if hit == 0 {
+				Label(job.header ? "첫 행 이름과 맞는 컬럼이 없습니다" : "컬럼이 없습니다", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+			} else {
+				Text("\(job.schema).\(job.existingName) 에 \(hit)개 열을 넣습니다" + (hit < m.count ? " (나머지 \(m.count - hit)개는 건너뜀)" : "") + (job.header ? " — 이름으로 맞춤" : " — 순서대로"))
+					.foregroundStyle(.secondary)
+			}
 		}
 	}
 

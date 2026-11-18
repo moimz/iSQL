@@ -822,7 +822,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				let tc = info ?? {
 					let c = NSTableColumn(identifier: Self.hiddenInfoID)
 					c.headerCell = GridHeaderCell(textCell: title)
-					c.headerToolTip = "오른쪽 클릭으로 숨긴 컬럼을 다시 보이게"
+					c.headerToolTip = "우클릭으로 숨긴 컬럼을 다시 보이게"
 					c.minWidth = 60
 					table.addTableColumn(c)
 					return c
@@ -1321,7 +1321,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				let display = self.table.tableColumns.firstIndex { colIndex($0) == col } ?? 0
 				var freezeItems: [GridMenuItem] = [.separator]
 				if frozenCount != display + 1 { freezeItems.append(.action("‘\(columns[col].title)’ 까지 고정") { self.setFrozen(display + 1) }) }
-				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 풀기") { self.setFrozen(0) }) }
+				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 해제") { self.setFrozen(0) }) }
 				let name = columns[col].key
 				let copyItems: [GridMenuItem] = [.action("컬럼 이름 복사") {
 					NSPasteboard.general.clearContents()

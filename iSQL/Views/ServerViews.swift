@@ -76,7 +76,7 @@ struct ServerSidebar: View {
 			if let id = ids.first, let s = store.servers.first(where: { $0.id == id }) {
 				Button("접속") { model.open(s) }
 				Button("복제") { model.selectedServerID = store.duplicate(s).id }
-				Toggle("앱 열 때 자동 접속", isOn: Binding(get: { autoIDs.contains(s.id) },
+				Toggle("앱 실행 시 자동 접속", isOn: Binding(get: { autoIDs.contains(s.id) },
 				                                          set: { _ in AutoConnect.toggle(s.id); autoIDs = AutoConnect.servers }))
 				Button("접속 문자열 복사") {
 					NSPasteboard.general.clearContents()
@@ -273,7 +273,7 @@ struct ServerRow: View {
 					Text(server.displayName)
 					if auto {
 						Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(.yellow)
-							.help("앱 열 때 자동 접속")
+							.help("앱 실행 시 자동 접속")
 					}
 				}
 				Text(server.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)

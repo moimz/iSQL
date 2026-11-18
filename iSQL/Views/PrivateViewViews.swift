@@ -126,7 +126,7 @@ struct PrivateViewTabView: View {
 				Text(view.sql).font(.callout.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
 					.textSelection(.enabled)
 				Spacer()
-				Button { Task { await run(refresh: true) } } label: { Label("새로 읽기", systemImage: "arrow.clockwise") }
+				Button { Task { await run(refresh: true) } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
 					.disabled(loading)
 			}
 			.padding(.horizontal, 12).padding(.vertical, 8)

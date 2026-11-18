@@ -401,7 +401,7 @@ final class QueryOutput: Identifiable, Pager {
 	}
 
 	var totalIsApprox: Bool { paged && knownTotal == nil }
-	var approxHelp: String { "불러온 만큼만 셌습니다. 누르면 정확히 셉니다 (SELECT COUNT(*))" }
+	var approxHelp: String { "정확한 행 개수 보기" }
 	var isEmptyResult: Bool { result.rows.isEmpty && !loading }
 
 	var totalPages: (count: Int, approx: Bool)? {

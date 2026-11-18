@@ -15,13 +15,13 @@ struct ServerStatusTab: View {
 	var body: some View {
 		VStack(spacing: 0) {
 			HStack(spacing: 10) {
-				Toggle("\(Int(ServerStatusMonitor.interval))초마다 새로 읽기", isOn: Binding(get: { !monitor.paused }, set: { monitor.paused = !$0 }))
+				Toggle("자동 새로고침 (\(Int(ServerStatusMonitor.interval))초 간격)", isOn: Binding(get: { !monitor.paused }, set: { monitor.paused = !$0 }))
 					.toggleStyle(.checkbox)
 				if let u = monitor.updated {
 					Text("마지막 \(u.formatted(date: .omitted, time: .standard))").foregroundStyle(.secondary).monospacedDigit()
 				}
 				Spacer()
-				Button { Task { await monitor.refresh() } } label: { Label("새로 읽기", systemImage: "arrow.clockwise") }
+				Button { Task { await monitor.refresh() } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
 			}
 			.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
 			if let e = monitor.error {
@@ -37,9 +37,23 @@ struct ServerStatusTab: View {
 				.labelsHidden()
 				.fixedSize()
 				Spacer()
-				Text(page == 0 ? "노랑: 10초 넘게 도는 쿼리 · 빨강: 잠금 대기 · 오른쪽 클릭으로 멈추기·끊기"
-				               : "서버가 켜진 뒤(또는 통계를 비운 뒤) 오래 걸린 쿼리 순, 값은 ? 로 묶음")
-					.font(.callout).foregroundStyle(.secondary).lineLimit(1)
+				Group {
+					if page == 0 {
+						// 행 색과 같은 색의 원 (사용자 2026-11-18: 노랑·빨강 글자 대신)
+						HStack(spacing: 4) {
+							Circle().fill(Color(nsColor: .systemYellow)).frame(width: 9, height: 9)
+							Text("느린 쿼리")
+							Text("·").padding(.horizontal, 2)
+							Circle().fill(Color(nsColor: .systemRed)).frame(width: 9, height: 9)
+							Text("잠금 대기")
+							Text("·").padding(.horizontal, 2)
+							Text("우클릭으로 중단")
+						}
+					} else {
+						Text("서버가 켜진 뒤(또는 통계를 비운 뒤) 오래 걸린 쿼리 순, 값은 ? 로 묶음")
+					}
+				}
+				.font(.callout).foregroundStyle(.secondary).lineLimit(1)
 			}
 			.padding(.horizontal, 16).padding(.vertical, 8)
 			Group {
@@ -106,8 +120,8 @@ struct ServerVariablesTab: View {
 					.frame(maxWidth: 280)
 				Text("\(source.count.formatted())개").foregroundStyle(.secondary).monospacedDigit()
 				Spacer()
-				Text("보기만 합니다 (SET GLOBAL 은 다시 시작하면 사라지고 서버 전체에 영향이 커서)").font(.callout).foregroundStyle(.secondary)
-				Button { Task { await load() } } label: { Label("새로 읽기", systemImage: "arrow.clockwise") }
+				Label("읽기 전용", systemImage: "lock.fill").font(.callout).foregroundStyle(.secondary)
+				Button { Task { await load() } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
 			}
 			.padding(.horizontal, 16).padding(.vertical, 10)
 			if let error { Label(error, systemImage: "xmark.octagon.fill").foregroundStyle(.red).padding(.bottom, 8) }

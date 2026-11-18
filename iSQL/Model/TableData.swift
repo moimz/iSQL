@@ -673,7 +673,7 @@ extension TableData: GridSource {
 				guard let text else { return "" }
 				return op == .like || op == .notLike ? "%" + FilterOp.likeEscaped(text) + "%" : text
 			}
-			filterItems = [.submenu("고른 값으로 거르기", ops.map { title, op in .action(title) { self.filterBy(name, op, filterValue(op)) } })]
+			filterItems = [.submenu("현재 값으로 검색", ops.map { title, op in .action(title) { self.filterBy(name, op, filterValue(op)) } })]
 		}
 		guard canEdit else { return filterItems }
 		var items: [GridMenuItem] = []
@@ -715,8 +715,8 @@ extension TableData: GridSource {
 extension TableData: Pager {
 	var pageable: Bool { true }
 	var approxHelp: String {
-		statTotal != nil ? "InnoDB 통계로 어림한 행 수입니다. 누르면 정확히 셉니다 (SELECT COUNT(*))"
-		                 : "불러온 만큼만 셌습니다. 누르면 정확히 셉니다 (SELECT COUNT(*))"
+		statTotal != nil ? "정확한 행 개수 보기"
+		                 : "정확한 행 개수 보기"
 	}
 	var isEmptyResult: Bool { loaded && !loading && error == nil && rows.isEmpty }
 }
