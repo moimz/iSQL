@@ -63,12 +63,11 @@ struct ConnectForm: View {
 		.onChange(of: server) { _, s in if !saved { model.draft = s } }
 	}
 
-	/// 상자: 위 가장자리에 걸친 TCP/IP · SSH 전환 + 라벨 오른쪽 정렬 입력칸
-	/// 애플 기본 TabView (박스 위에 탭이 걸친 모양): TCP/IP · SSH. 고른 탭이 곧 SSH 터널 사용 여부
+	/// 상자: 위 가장자리에 걸친 DB 종류 탭 + 라벨 오른쪽 정렬 입력칸. 접속 방식(TCP/IP · SSH)은 그룹 아래 구분선 가운데 (사용자 2026-11-18)
+	/// 애플 기본 TabView (박스 위에 탭이 걸친 모양). 지금은 MySQL · MariaDB 하나 (접속해 보고 둘을 가린다), 다른 DB 를 붙이면 탭이 늘어난다
 	private var card: some View {
-		TabView(selection: $server.ssh.enabled) {
-			fields(ssh: false).tabItem { Text("TCP/IP") }.tag(false)
-			fields(ssh: true).tabItem { Text("SSH") }.tag(true)
+		TabView(selection: .constant("mysql")) {
+			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.mysql.familyLabel) }.tag("mysql")
 		}
 		// TabView 는 세로로 남는 공간을 다 차지한다 → 내용 높이에 맞춘다 (박스가 화면 끝까지 늘어나 입력칸이 가운데 떠 있었다)
 		.fixedSize(horizontal: false, vertical: true)
@@ -94,9 +93,24 @@ struct ConnectForm: View {
 					}
 				}
 
-				divider
+				// 구분선 가운데에 접속 방식: TCP/IP · SSH (고른 것이 곧 SSH 터널 사용 여부)
+				GridRow {
+					HStack(spacing: 12) {
+						Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
+						Picker("", selection: $server.ssh.enabled) {
+							Text("TCP/IP").tag(false)
+							Text("SSH").tag(true)
+						}
+						.pickerStyle(.segmented)
+						.labelsHidden()
+						.fixedSize()
+						Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1)
+					}
+					.gridCellColumns(2)
+					.padding(.vertical, 6)
+				}
 
-				row("\(server.sqlKind?.familyLabel ?? server.kindLabel) 호스트") { field($server.host, ssh ? "127.0.0.1" : "db.example.com") }
+				row("호스트") { field($server.host, ssh ? "127.0.0.1" : "db.example.com") }
 				row("사용자") { field($server.user, "root") }
 				row("비밀번호") { secret($mysqlPassword, show: $showPassword, "선택") }
 				row("DB") { field($server.database, "선택") }
