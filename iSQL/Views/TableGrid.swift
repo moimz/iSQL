@@ -1567,6 +1567,9 @@ final class GridTableView: NSTableView {
 	override func drawBackground(inClipRect clipRect: NSRect) {
 		let colors = NSColor.alternatingContentBackgroundColors
 		let r = clipRect.intersection(bounds)
+		// 그릴 곳이 표 밖이면(스크롤하며 표가 줄어든 순간 등) 겹친 사각형이 null = 시작점이 무한대라
+		// 아래 Int(floor(…)) 에서 앱이 죽었다 (1.2 (113) 사용자 크래시 리포트 2026-11-18)
+		guard !r.isNull, !r.isEmpty, r.minY.isFinite, r.maxY.isFinite else { drawColumnLines(in: clipRect); return }
 		colors[0].setFill()
 		r.fill()
 		let h = rowHeight + intercellSpacing.height
