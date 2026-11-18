@@ -56,8 +56,8 @@ struct UserAccountsView: View {
 				var sql = [AccountManager.createSQL(user: user, host: host, password: password, dialect)]
 				let a = DBAccount(user: user, host: host)
 				if makeDB {
-					sql.append("CREATE DATABASE IF NOT EXISTS \(dialect.quote(user))")
-					sql.append("GRANT ALL PRIVILEGES ON \(AccountManager.target(user, dialect)) TO \(a.sql(dialect))")
+					sql.append(dialect.createDatabaseIfNotExists(user))
+					sql.append(dialect.grantAll(on: AccountManager.target(user, dialect), to: a.sql(dialect)))
 				}
 				let ok = await manager.run(sql, then: a)
 				if ok { selectedID = a.id; if makeDB { try? await session.loadSchema() } }
@@ -67,7 +67,7 @@ struct UserAccountsView: View {
 		.sheet(isPresented: $changingPassword) {
 			if let a = selected {
 				PasswordSheet(account: a, dialect: dialect) { pw in
-					await manager.run(["ALTER USER \(a.sql(dialect)) IDENTIFIED BY \(dialect.literal(.text(pw)))"], then: a)
+					await manager.run([dialect.setPassword(a.sql(dialect), pw)], then: a)
 				}
 			}
 		}
@@ -82,7 +82,7 @@ struct UserAccountsView: View {
 		.confirmationDialog("계정 \(selected?.sql(dialect) ?? "") 을(를) 삭제할까요?", isPresented: $confirmDrop) {
 			Button("계정 삭제", role: .destructive) {
 				guard let a = selected else { return }
-				Task { if await manager.run(["DROP USER \(a.sql(dialect))"]) { selectedID = nil } }
+				Task { if await manager.run([dialect.dropUser(a.sql(dialect))]) { selectedID = nil } }
 			}
 		} message: {
 			Text(selected?.id == currentID ? "지금 이 계정으로 접속해 있습니다. 지우면 다음 접속부터 들어올 수 없습니다." : "되돌릴 수 없습니다.")
@@ -92,8 +92,8 @@ struct UserAccountsView: View {
 				guard let a = selected, let g = confirmRevoke else { return }
 				confirmRevoke = nil
 				let target = AccountManager.target(g.db, dialect)
-				var sql = ["REVOKE ALL PRIVILEGES ON \(target) FROM \(a.sql(dialect))"]
-				if g.privileges.contains("GRANT OPTION") { sql.append("REVOKE GRANT OPTION ON \(target) FROM \(a.sql(dialect))") }
+				var sql = [dialect.revokeAll(on: target, from: a.sql(dialect))]
+				if g.privileges.contains("GRANT OPTION") { sql.append(dialect.revokeGrantOption(on: target, from: a.sql(dialect))) }
 				Task { await manager.run(sql, then: a) }
 			}
 		}
@@ -201,7 +201,7 @@ struct UserAccountsView: View {
 						Circle().fill(locked ? Color.orange : Color.green).frame(width: 8, height: 8)
 						Text(locked ? "잠김 (접속할 수 없음)" : "사용 중")
 						Button(locked ? "잠금 풀기" : "잠그기") {
-							Task { await manager.run(["ALTER USER \(a.sql(dialect)) ACCOUNT \(locked ? "UNLOCK" : "LOCK")"], then: a) }
+							Task { await manager.run([dialect.setAccountLocked(a.sql(dialect), !locked)], then: a) }
 						}
 						.padding(.leading, 6)
 					}

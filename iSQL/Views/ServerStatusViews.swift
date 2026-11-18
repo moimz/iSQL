@@ -119,8 +119,7 @@ struct ServerVariablesTab: View {
 
 	private func load() async {
 		do {
-			let r = try await session.query("SHOW GLOBAL VARIABLES").last ?? QueryResult()
-			source.set(r.rows.compactMap { row in row[safe: 0]?.string.map { ($0, row[safe: 1]?.string ?? "") } })
+			source.set(try await session.meta.variables(session.query))
 			error = nil
 		} catch {
 			self.error = error.localizedDescription

@@ -13,7 +13,7 @@ struct DBAccount: Identifiable, Hashable {
 
 	var id: String { user + "@" + host }
 	/// SQL 에 쓰는 이름 'user'@'host'
-	func sql(_ dialect: any SQLDialect) -> String { dialect.literal(.text(user)) + "@" + dialect.literal(.text(host)) }
+	func sql(_ dialect: any SQLDialect) -> String { dialect.accountName(user: user, host: host) }
 }
 
 /// 데이터베이스 하나에 준 권한 (mysql.db 한 줄)
@@ -75,13 +75,12 @@ struct Privilege: Hashable {
 		let normal = all.map(\.sql).filter { privs.contains($0) && $0 != "GRANT OPTION" }
 		let withGrant = privs.contains("GRANT OPTION")
 		if normal.isEmpty && !withGrant { return nil }
-		if normal.isEmpty { return "GRANT USAGE ON \(target) TO \(account.sql(dialect)) WITH GRANT OPTION" }
-		return "GRANT \(normal.joined(separator: ", ")) ON \(target) TO \(account.sql(dialect))" + (withGrant ? " WITH GRANT OPTION" : "")
+		return dialect.grant(normal, on: target, to: account.sql(dialect), grantOption: withGrant)
 	}
 
 	static func revokeSQL(_ privs: Set<String>, on target: String, from account: DBAccount, _ dialect: any SQLDialect) -> String? {
 		let list = all.map(\.sql).filter { privs.contains($0) }
-		return list.isEmpty ? nil : "REVOKE \(list.joined(separator: ", ")) ON \(target) FROM \(account.sql(dialect))"
+		return list.isEmpty ? nil : dialect.revoke(list, on: target, from: account.sql(dialect))
 	}
 }
 
@@ -114,17 +113,7 @@ final class AccountManager {
 		loading = true
 		defer { loading = false }
 		do {
-			let u = try await session.query("SELECT * FROM mysql.user ORDER BY User, Host").last ?? QueryResult()
-			func col(_ n: String) -> Int? { u.columns.firstIndex { $0.name.caseInsensitiveCompare(n) == .orderedSame } }
-			let iUser = col("User"), iHost = col("Host"), iPlugin = col("plugin"), iLocked = col("account_locked")
-			let privCols = Privilege.all.compactMap { p in col(p.column).map { (p.sql, $0) } }
-			accounts = u.rows.map { r in
-				var a = DBAccount(user: iUser.flatMap { r[$0].string } ?? "", host: iHost.flatMap { r[$0].string } ?? "")
-				a.plugin = iPlugin.flatMap { r[$0].string } ?? ""
-				a.locked = iLocked.map { r[$0].string == "Y" }
-				a.global = Set(privCols.filter { r[$0.1].string == "Y" }.map(\.0))
-				return a
-			}
+			accounts = try await session.meta.accounts(session.query)
 			loadError = nil
 		} catch {
 			accounts = []
@@ -133,26 +122,15 @@ final class AccountManager {
 			return
 		}
 		// DB 별 권한 (못 읽어도 목록은 보인다)
-		if let d = try? await session.query("SELECT * FROM mysql.db ORDER BY Db").last {
-			func col(_ n: String) -> Int? { d.columns.firstIndex { $0.name.caseInsensitiveCompare(n) == .orderedSame } }
-			let iUser = col("User"), iHost = col("Host"), iDb = col("Db")
-			let privCols = Privilege.all.filter(\.perDatabase).compactMap { p in col(p.column).map { (p.sql, $0) } }
-			var map: [String: [DBGrant]] = [:]
-			for r in d.rows {
-				let id = (iUser.flatMap { r[$0].string } ?? "") + "@" + (iHost.flatMap { r[$0].string } ?? "")
-				map[id, default: []].append(DBGrant(db: iDb.flatMap { r[$0].string } ?? "",
-				                                    privileges: Set(privCols.filter { r[$0.1].string == "Y" }.map(\.0))))
-			}
-			dbGrants = map
-		}
-		current = (try? await session.query("SELECT CURRENT_USER()").last?.rows.first?.first?.string) ?? ""
+		if let map = try? await session.meta.databaseGrants(session.query) { dbGrants = map }
+		current = ((try? await session.meta.currentUser(session.query)) ?? nil) ?? ""
 		loaded = true
 	}
 
 	@MainActor
 	func loadGrants(_ a: DBAccount) async {
 		guard let session else { return }
-		showGrants[a.id] = (try? await session.query("SHOW GRANTS FOR \(a.sql(dialect))").last?.rows.compactMap { $0.first?.string }) ?? []
+		showGrants[a.id] = (try? await session.meta.grantStatements(session.query, account: a.sql(dialect))) ?? []
 	}
 
 	/// 문장들을 차례로 실행하고 다시 읽는다. 실패하면 runError
@@ -174,16 +152,15 @@ final class AccountManager {
 	// MARK: 문장 만들기
 
 	static func createSQL(user: String, host: String, password: String, _ dialect: any SQLDialect) -> String {
-		let a = DBAccount(user: user, host: host)
-		return "CREATE USER \(a.sql(dialect))" + (password.isEmpty ? "" : " IDENTIFIED BY " + dialect.literal(.text(password)))
+		dialect.createUser(DBAccount(user: user, host: host).sql(dialect), password: password)
 	}
 
 	/// 전역 권한을 지금 → 바꾼 것으로
 	static func globalChangeSQL(_ a: DBAccount, to wanted: Set<String>, _ dialect: any SQLDialect) -> [String] {
-		[Privilege.revokeSQL(a.global.subtracting(wanted), on: "*.*", from: a, dialect),
-		 Privilege.grantSQL(wanted.subtracting(a.global), on: "*.*", to: a, dialect)].compactMap { $0 }
+		[Privilege.revokeSQL(a.global.subtracting(wanted), on: dialect.grantTarget(database: nil), from: a, dialect),
+		 Privilege.grantSQL(wanted.subtracting(a.global), on: dialect.grantTarget(database: nil), to: a, dialect)].compactMap { $0 }
 	}
 
 	/// DB 이름(mysql.db 의 Db, 와일드카드 \_ 그대로)을 `db`.* 로
-	static func target(_ db: String, _ dialect: any SQLDialect) -> String { dialect.quote(db) + ".*" }
+	static func target(_ db: String, _ dialect: any SQLDialect) -> String { dialect.grantTarget(database: db) }
 }

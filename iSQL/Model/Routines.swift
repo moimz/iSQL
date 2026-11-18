@@ -21,17 +21,6 @@ enum RoutineKind: String, CaseIterable {
 		switch self { case .procedure: "Create Procedure"; case .function: "Create Function"; case .trigger: "SQL Original Statement"; case .event: "Create Event"; case .view: "Create View" }
 	}
 
-	/// 새로 만들 때 기본 틀
-	func template(table: String?) -> String {
-		let t = table.map { "`" + $0 + "`" } ?? "`테이블`"
-		switch self {
-		case .procedure: return "CREATE PROCEDURE `new_procedure`(IN p_id INT)\nBEGIN\n\tSELECT p_id;\nEND"
-		case .function: return "CREATE FUNCTION `new_function`(p INT) RETURNS INT\nDETERMINISTIC\nBEGIN\n\tRETURN p;\nEND"
-		case .trigger: return "CREATE TRIGGER `new_trigger` BEFORE INSERT ON \(t) FOR EACH ROW\nBEGIN\n\t-- SET NEW.컬럼 = 값;\nEND"
-		case .event: return "CREATE EVENT `new_event`\nON SCHEDULE EVERY 1 DAY\nDO\n\tSELECT 1"
-		case .view: return "CREATE VIEW `new_view` AS\nSELECT 1"
-		}
-	}
 }
 
 struct RoutineInfo: Identifiable, Hashable {
@@ -102,7 +91,7 @@ final class RoutineEditor {
 		self.name = name
 		self.session = session
 		if name == nil {
-			text = kind.template(table: session.tables.first { $0.schema == schema && !$0.isView }?.name)
+			text = session.dialect.routineTemplate(kind, table: session.tables.first { $0.schema == schema && !$0.isView }?.name)
 			loaded = true
 		}
 	}
@@ -113,8 +102,7 @@ final class RoutineEditor {
 	func load() async {
 		guard let session, let name else { return }
 		do {
-			let r = try await session.query("SHOW CREATE \(kind.sqlWord) \(q(schema)).\(q(name))").last ?? QueryResult()
-			guard let ddl = r.rows.isEmpty ? nil : r.string(0, kind.createColumn) else {
+			guard let ddl = try await session.meta.createStatement(session.query, .routine(kind), schema: schema, name: name) else {
 				throw RoutineError.message("정의를 읽지 못했습니다 (권한이 없거나 지워졌습니다)")
 			}
 			original = ddl
@@ -128,8 +116,7 @@ final class RoutineEditor {
 			message = error.localizedDescription
 		}
 		if kind == .event {
-			let v = (try? await session.query("SELECT @@event_scheduler").last)?.rows.first?.first?.string ?? ""
-			schedulerOff = v.uppercased() != "ON"
+			schedulerOff = await session.meta.eventSchedulerOff(session.query)
 		}
 	}
 
@@ -158,7 +145,7 @@ final class RoutineEditor {
 				// 뷰는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
 				_ = try await c.query(Self.orReplace(sql))
 			} else if let old = name {
-				_ = try await c.query("DROP \(kind.sqlWord) \(q(schema)).\(q(old))")
+				_ = try await c.query(dialect.dropRoutine(kind, "\(q(schema)).\(q(old))"))
 				do {
 					_ = try await c.query(sql)
 				} catch {
@@ -189,7 +176,7 @@ final class RoutineEditor {
 	func setEnabled(_ on: Bool) async {
 		guard let session, let name, kind == .event else { return }
 		do {
-			_ = try await session.query("ALTER EVENT \(q(schema)).\(q(name)) \(on ? "ENABLE" : "DISABLE")")
+			_ = try await session.query(dialect.setEventEnabled("\(q(schema)).\(q(name))", on))
 			await session.loadRoutines()
 			await load()
 		} catch {

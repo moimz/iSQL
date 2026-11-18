@@ -326,19 +326,15 @@ struct RoutineRunSheet: View {
 	}
 
 	private func load() async {
-		let r = try? await session.query("""
-			SELECT PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER FROM information_schema.PARAMETERS
-			 WHERE SPECIFIC_SCHEMA = \(dialect.literal(.text(schema))) AND SPECIFIC_NAME = \(dialect.literal(.text(name))) AND ORDINAL_POSITION > 0
-			 ORDER BY ORDINAL_POSITION
-			""").last
-		params = (r?.rows ?? []).map { Param(mode: $0[safe: 0]?.string ?? "IN", name: $0[safe: 1]?.string ?? "", type: $0[safe: 2]?.string ?? "") }
+		let list = (try? await session.meta.routineParameters(session.query, schema: schema, name: name)) ?? []
+		params = list.map { Param(mode: $0.mode, name: $0.name, type: $0.type) }
 		values = Array(repeating: "", count: params.count)
 		loaded = true
 	}
 
 	private func value(_ i: Int) -> String {
 		let p = params[i]
-		if p.mode == "OUT" { return "@" + p.name }
+		if p.mode == "OUT" { return dialect.outVariable(p.name) }
 		let v = values.indices.contains(i) ? values[i].trimmingCharacters(in: .whitespaces) : ""
 		if v.isEmpty || v.uppercased() == "NULL" { return "NULL" }
 		if v.hasPrefix("@") { return v }
@@ -348,13 +344,8 @@ struct RoutineRunSheet: View {
 	}
 
 	private var sql: String {
-		let q = dialect.quote(_:)
-		let args = params.indices.map(value).joined(separator: ", ")
-		if kind == .function { return "SELECT \(q(schema)).\(q(name))(\(args));" }
-		var s = "CALL \(q(schema)).\(q(name))(\(args));"
-		let outs = params.filter { $0.mode != "IN" }.map { "@" + $0.name }
-		if !outs.isEmpty { s += "\nSELECT " + outs.joined(separator: ", ") + ";" }
-		return s
+		dialect.callRoutine(kind, dialect.quote(schema: schema, table: name), args: params.indices.map(value),
+		                    outs: params.filter { $0.mode != "IN" }.map(\.name)).map { $0 + ";" }.joined(separator: "\n")
 	}
 
 	private func insert() {

@@ -404,10 +404,10 @@ final class MCPServer {
 			return json(out.count == 1 ? out[0] : out)
 		case "server_status":
 			let t = try target(a)
-			let run: ServerDiagnostics.Run = { sql in try await self.run(t, sql) }
-			let s = try await ServerDiagnostics.summary(run)
+			let run: DBRun = { sql in [try await self.run(t, sql)] }
+			let s = try await t.meta.serverSummary(run)
 			let sleeping = (a["include_sleeping"] as? Bool) ?? false
-			let procs = try await ServerDiagnostics.processes(run).filter { sleeping || $0.command != "Sleep" }
+			let procs = try await t.meta.processes(run).filter { sleeping || $0.command != "Sleep" }
 			note("server_status · \(t.server.displayName)")
 			var d: [String: Any] = [
 				"version": s.version,
@@ -428,7 +428,7 @@ final class MCPServer {
 		case "top_queries":
 			let t = try target(a)
 			let limit = min(max((a["limit"] as? Int) ?? 20, 1), 200)
-			let list = try await ServerDiagnostics.topQueries({ sql in try await self.run(t, sql) }, limit: limit)
+			let list = try await t.meta.topQueries({ sql in [try await self.run(t, sql)] }, limit: limit)
 			note("top_queries · \(t.server.displayName)")
 			return json(list.map { q -> [String: Any] in
 				["query": String(q.sql.prefix(1000)), "database": q.schema, "count": q.count,

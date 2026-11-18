@@ -89,6 +89,30 @@ protocol SQLMeta: Sendable {
 	func connectionInfo(_ run: DBRun) async throws -> (version: String?, user: String?, databases: String?)
 	/// MCP: DB 이름들 (시스템 DB 포함)
 	func databaseNames(_ run: DBRun) async throws -> [String]
+	// MARK: 루틴·계정·서버 상태
+
+	/// 루틴 인자 (모드 IN/OUT/INOUT, 이름, 타입)
+	func routineParameters(_ run: DBRun, schema: String, name: String) async throws -> [(mode: String, name: String, type: String)]
+	/// 이벤트 스케줄러가 꺼져 있는지 (못 읽어도 꺼진 것으로)
+	func eventSchedulerOff(_ run: DBRun) async -> Bool
+	/// 계정 목록과 전역 권한 (권한 이름은 Privilege.sql)
+	func accounts(_ run: DBRun) async throws -> [DBAccount]
+	/// 계정 id(user@host) → DB 별 권한
+	func databaseGrants(_ run: DBRun) async throws -> [String: [DBGrant]]
+	/// 지금 접속한 계정
+	func currentUser(_ run: DBRun) async throws -> String?
+	/// 계정의 권한 문장들 (SHOW GRANTS)
+	func grantStatements(_ run: DBRun, account: String) async throws -> [String]
+	/// 서버 상태 요약
+	func serverSummary(_ run: DBRun) async throws -> ServerDiagnostics.Summary
+	func processes(_ run: DBRun) async throws -> [ServerDiagnostics.Process]
+	/// 쿼리별 요약 (오래 걸린 순). 못 읽으면 오류
+	func topQueries(_ run: DBRun, limit: Int) async throws -> [ServerDiagnostics.Digest]
+	/// 서버 변수 전부 (이름, 값)
+	func variables(_ run: DBRun) async throws -> [(String, String)]
+	/// 이 연결의 번호 (프로세스 목록에서 표시)
+	func connectionID(_ run: DBRun) async throws -> Int64?
+
 	/// MCP: DB 의 테이블 목록
 	func tableList(_ run: DBRun, schema: String) async throws -> [(name: String, isView: Bool, approxRows: Int?, comment: String)]
 }

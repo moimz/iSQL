@@ -2,7 +2,7 @@ import Foundation
 
 /// DB 종류마다 다른 SQL 문법. 앱이 SQL 을 만들 때는 직접 쓰지 않고 이걸 거친다 (`session.dialect`).
 /// 1단계: 이름·값 감싸기만. SHOW·information_schema·LIMIT·ALTER 등은 2단계에서 하나씩 옮긴다
-protocol SQLDialect: SQLDDL, Sendable {
+protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	var kind: SQLKind { get }
 
 	/// 이름 하나 감싸기 (MySQL: `이름`)
