@@ -21,6 +21,15 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		}
 	}
 
+	/// 서버 목록 아이콘에 쓰는 로고 에셋 (없으면 드럼). 로고는 각 회사의 상표 — 접속 종류 표시에만 쓴다
+	var logoAsset: String? {
+		switch self {
+		case .mysql: "DBLogoMySQL"
+		case .mariadb: "DBLogoMariaDB"
+		case .postgres, .sqlserver, .sqlite, .oracle: nil
+		}
+	}
+
 	/// 접속 주소 글자의 앞 (mysql://…)
 	var urlScheme: String {
 		switch self {

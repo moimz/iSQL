@@ -267,7 +267,7 @@ struct ServerRow: View {
 	var auto = false
 	var body: some View {
 		HStack(spacing: 9) {
-			ServerIcon(color: server.color, size: 30)
+			ServerIcon(color: server.color, kind: server.sqlKind, size: 30)
 			VStack(alignment: .leading, spacing: 1) {
 				HStack(spacing: 4) {
 					Text(server.displayName)
@@ -310,6 +310,8 @@ struct NewConnectionRow: View {
 /// 서버 아이콘: 줄 높이에 맞춘 둥근 정사각형을 서버 색으로 칠하고 DB 아이콘 (색이 없으면 회색)
 struct ServerIcon: View {
 	let color: ServerColor
+	/// DB 종류: 로고가 있으면 드럼 대신 흰 로고 (MySQL 돌고래·MariaDB 물개 — 각 회사의 상표, 접속 종류 표시에만)
+	var kind: SQLKind? = nil
 	var size: CGFloat = 30
 
 	var body: some View {
@@ -317,9 +319,15 @@ struct ServerIcon: View {
 			.fill(color.swiftUI ?? Color.gray)
 			.frame(width: size, height: size)
 			.overlay {
-				Image(systemName: "cylinder.split.1x2.fill")
-					.font(.system(size: size * 0.48, weight: .semibold))
-					.foregroundStyle(.white)
+				if let logo = kind?.logoAsset {
+					Image(logo).resizable().renderingMode(.template).scaledToFit()
+						.frame(width: size * 0.66, height: size * 0.66)
+						.foregroundStyle(.white)
+				} else {
+					Image(systemName: "cylinder.split.1x2.fill")
+						.font(.system(size: size * 0.48, weight: .semibold))
+						.foregroundStyle(.white)
+				}
 			}
 	}
 }
