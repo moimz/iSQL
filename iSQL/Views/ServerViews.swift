@@ -33,6 +33,8 @@ struct ServerSidebar: View {
 			if searchText.isEmpty {
 				Section {
 					NewConnectionRow().tag(WindowModel.newConnectionID)
+						// 앱을 켜면 이미 골라져 있어서, 다른 서버를 보던 중에 눌러도 선택이 안 바뀌어 반응이 없었다 → 서버 줄처럼 다시 눌러도 새 접속 화면으로
+						.simultaneousGesture(TapGesture().onEnded { if model.currentID != nil { model.newConnection() } })
 				}
 			}
 			ForEach(shown, id: \.group) { g in
