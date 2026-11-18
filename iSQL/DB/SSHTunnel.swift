@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import AppKit
 
 /// 시스템 ssh(/usr/bin/ssh)로 로컬 포트 포워딩을 띄운다.
 /// ~/.ssh/config, ssh-agent, 키체인에 저장한 키 암호(UseKeychain)를 그대로 쓰려고 직접 SSH 를 구현하지 않는다.
@@ -54,18 +55,19 @@ final class SSHTunnel: @unchecked Sendable {
 			if !ssh.keyPath.isEmpty {
 				args += ["-i", (ssh.keyPath as NSString).expandingTildeInPath, "-o", "IdentitiesOnly=yes"]
 			}
-			if secret == nil {
-				// 키 암호를 저장하지 않았으면 물어볼 곳이 없으니 묻지 않게 한다 (UseKeychain 으로 저장된 암호는 그대로 쓰인다)
-				args += ["-o", "BatchMode=yes"]
-			}
+			// 키로만 (키가 안 맞을 때 ssh 가 비밀번호를 물어 와 암호 창에 엉뚱한 질문이 뜨지 않게)
+			args += ["-o", "PreferredAuthentications=publickey"]
 		case .password:
 			args += ["-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no"]
 		}
-		if secret != nil {
+		// 키 암호를 저장하지 않았으면: 키에 암호가 걸려 있고 ssh-agent·키체인(UseKeychain)에도 없을 때만 ssh 가 askpass 를 부르고, 그때 암호 창을 띄운다 (사용자 2026-11-18)
+		let prompting = secret == nil && ssh.auth == .key
+		if secret != nil || prompting {
 			env["SSH_ASKPASS"] = Bundle.main.executablePath
 			env["SSH_ASKPASS_REQUIRE"] = "force"
-			env[Askpass.accountKey] = askAccount
-			Keychain.set(secret, for: askAccount)
+			env[Askpass.accountKey] = prompting ? Askpass.promptAccount : askAccount
+			env[Askpass.serverKey] = server.displayName
+			if let secret { Keychain.set(secret, for: askAccount) }
 		}
 		defer { if secret != nil { Keychain.delete(askAccount) } }
 		args.append(ssh.host)
@@ -86,7 +88,8 @@ final class SSHTunnel: @unchecked Sendable {
 		try p.run()
 		TunnelRegistry.add(p.processIdentifier)
 
-		let deadline = Date().addingTimeInterval(20)
+		// 암호 창을 띄울 수 있으면 사람이 칠 시간을 준다 (닿지 않는 서버는 ConnectTimeout 15초로 먼저 끝난다)
+		let deadline = Date().addingTimeInterval(prompting ? 120 : 20)
 		while Date() < deadline {
 			if !p.isRunning {
 				TunnelRegistry.remove(p.processIdentifier)
@@ -146,19 +149,50 @@ final class SSHTunnel: @unchecked Sendable {
 	}
 }
 
-/// ssh 가 SSH_ASKPASS 로 이 앱을 띄웠을 때: 창을 띄우지 않고 키체인의 비밀번호를 표준출력으로 주고 끝낸다
+/// ssh 가 SSH_ASKPASS 로 이 앱을 띄웠을 때: 키체인의 비밀번호를 표준출력으로 주고 끝낸다.
+/// 저장한 키 암호가 없으면(promptAccount) 작은 암호 창을 띄워 받는다
 enum Askpass {
 	static let accountKey = "ISQL_ASKPASS_ACCOUNT"
+	static let serverKey = "ISQL_ASKPASS_SERVER"
+	/// 키체인 대신 사람에게 묻는다는 표시
+	static let promptAccount = "-prompt-"
 
 	/// askpass 로 불린 경우면 처리하고 true
 	static func runIfNeeded() -> Bool {
-		guard let account = ProcessInfo.processInfo.environment[accountKey] else { return false }
+		let env = ProcessInfo.processInfo.environment
+		guard let account = env[accountKey] else { return false }
 		// 호스트 키 확인 같은 예/아니오 질문에는 답하지 않는다 (accept-new 로 처리)
-		let prompt = CommandLine.arguments.dropFirst().joined(separator: " ").lowercased()
-		if prompt.contains("yes/no") { exit(1) }
-		guard let secret = Keychain.get(account) else { exit(1) }
+		let question = CommandLine.arguments.dropFirst().joined(separator: " ")
+		if question.lowercased().contains("yes/no") { exit(1) }
+		let secret = account == promptAccount ? ask(question, server: env[serverKey] ?? "") : Keychain.get(account)
+		guard let secret else { exit(1) }
 		FileHandle.standardOutput.write(Data((secret + "\n").utf8))
 		exit(0)
+	}
+
+	/// 키 암호 창. 취소하면 nil (ssh 가 접속 실패로 끝난다)
+	private static func ask(_ question: String, server: String) -> String? {
+		let app = NSApplication.shared
+		app.setActivationPolicy(.accessory)
+		app.activate()
+		// ssh 질문: "Enter passphrase for key '/Users/x/.ssh/id_ed25519': " → 키 파일 이름만
+		var key = ""
+		if let a = question.firstIndex(of: "'"), let b = question.lastIndex(of: "'"), a < b {
+			key = String(question[question.index(after: a)..<b])
+			let home = FileManager.default.homeDirectoryForCurrentUser.path
+			if key.hasPrefix(home) { key = "~" + key.dropFirst(home.count) }
+		}
+		let alert = NSAlert()
+		alert.messageText = "SSH 키 암호"
+		alert.informativeText = (server.isEmpty ? "" : "\(server)에 접속하려면 ") + (key.isEmpty ? "키 암호를 넣으세요." : "\(key) 키의 암호를 넣으세요.")
+		alert.addButton(withTitle: "확인")
+		alert.addButton(withTitle: "취소")
+		let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+		alert.accessoryView = field
+		alert.window.initialFirstResponder = field
+		alert.window.level = .floating
+		guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+		return field.stringValue
 	}
 }
 
