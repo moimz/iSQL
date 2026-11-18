@@ -61,10 +61,6 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.accounts = false
 			c.iModulesExport = false
 		}
-		if self == .mariadb {
-			// JSON 이 LONGTEXT 별칭이라 결과 타입으로 JSON 컬럼을 알 수 없다
-			c.jsonPathFilter = false
-		}
 		#if DEBUG
 		c = c.applyingDebugOverrides()
 		#endif

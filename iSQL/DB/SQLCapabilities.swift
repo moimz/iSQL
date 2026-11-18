@@ -59,7 +59,7 @@ struct SQLCapabilities: Sendable {
 	var foreignKeyChecksToggle = true
 
 	// MARK: 검색
-	/// 필터 줄의 JSON 경로 칸 (JSON 컬럼을 타입으로 알 수 있어야 한다 — MariaDB 의 JSON 은 LONGTEXT 라 안 됨)
+	/// 필터 줄의 JSON 경로 칸 (JSON 컬럼을 알아볼 수 있어야 한다. MariaDB 는 LONGTEXT 라 json_valid 검사로 알아본다)
 	var jsonPathFilter = true
 
 	/// MySQL: 모두 있다

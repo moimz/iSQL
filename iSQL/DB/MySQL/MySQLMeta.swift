@@ -38,7 +38,30 @@ struct MySQLMeta: SQLMeta {
 			                                             key: r[5].string ?? "", defaultValue: def, extra: extra,
 			                                             comment: r[8].string ?? ""))
 		}
+		if mariadb {
+			// MariaDB 의 JSON 은 LONGTEXT + json_valid 검사 → 검사를 읽어 컬럼 타입을 json 으로 (JSON 편집기·JSON 경로 거르기)
+			for (id, names) in await jsonColumns(run, where: "CONSTRAINT_SCHEMA NOT IN (\(excluded))") {
+				guard var cols = s.columns[id] else { continue }
+				for i in cols.indices where names.contains(cols[i].name) { cols[i].type = "json" }
+				s.columns[id] = cols
+			}
+		}
 		return s
+	}
+
+	/// MariaDB: json_valid(`컬럼`) 검사가 붙은 컬럼 (테이블 id → 컬럼 이름들). 못 읽는 서버면 빈 것
+	private func jsonColumns(_ run: DBRun, where cond: String) async -> [String: Set<String>] {
+		guard let r = try? await one(run, """
+			SELECT CONSTRAINT_SCHEMA, TABLE_NAME, CHECK_CLAUSE FROM information_schema.CHECK_CONSTRAINTS
+			 WHERE CHECK_CLAUSE LIKE 'json\\_valid(%' AND \(cond)
+			""") else { return [:] }
+		var out: [String: Set<String>] = [:]
+		for row in r.rows {
+			let clause = row[safe: 2]?.string ?? ""
+			guard let m = clause.firstMatch(of: /^json_valid\((`.*`)\)$/), let name = Self.firstQuoted(Substring(m.1)) else { continue }
+			out[(row[0].string ?? "") + "." + (row[safe: 1]?.string ?? ""), default: []].insert(name)
+		}
+		return out
 	}
 
 	func routines(_ run: DBRun) async throws -> [RoutineInfo] {
@@ -210,6 +233,9 @@ struct MySQLMeta: SQLMeta {
 				list[i].defaultExpr = low.contains("default_generated")
 				list[i].onUpdate = low.range(of: "on update").map { String(extra[$0.lowerBound...]) } ?? ""
 			}
+			// JSON 컬럼은 JSON 으로 (LONGTEXT 로 고쳐 쓰면 json_valid 검사가 사라진다)
+			let json = await jsonColumns(run, where: "CONSTRAINT_SCHEMA = \(lit(table.schema)) AND TABLE_NAME = \(lit(table.name))")[table.id] ?? []
+			for i in list.indices where json.contains(list[i].name) { list[i].type = "JSON"; list[i].length = ""; list[i].charset = nil; list[i].collation = nil }
 		}
 		return (list, Self.parseCreate(rs.last?.rows.first?[safe: 1]?.string ?? ""))
 	}

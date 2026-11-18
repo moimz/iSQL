@@ -11,6 +11,13 @@ final class TableData: ColumnOrderTracking {
 	let tab: String
 	let session: Session
 	var dialect: any SQLDialect { session.dialect }
+	/// JSON 컬럼인지: 결과 타입(MySQL JSON) 또는 테이블 목록의 컬럼 타입 json (MariaDB 는 json_valid 검사로 알아낸 것)
+	func isJSONColumn(_ col: Int) -> Bool {
+		guard columns.indices.contains(col) else { return false }
+		if columns[col].isJSON { return true }
+		let name = columnName(col)
+		return (session.columns[table.id] ?? []).contains { $0.name == name && $0.type.lowercased() == "json" }
+	}
 
 	private(set) var columns: [Column] = []
 	/// 서버에서 읽은 그대로의 행 (고친 값은 edits 에 따로 있다)
@@ -618,8 +625,8 @@ extension TableData: GridSource {
 	func openEditor(_ row: Int, _ col: Int, asJSON: Bool) {
 		guard canEdit, !isDeleted(row) else { NSSound.beep(); return }
 		let v = value(row, col)
-		longEdit = LongEditRequest(row: row, col: col, column: columnName(col), isJSON: columns[col].isJSON || asJSON,
-		                           text: v.string ?? "", wasNull: v == .null, jsonColumn: columns[col].isJSON)
+		longEdit = LongEditRequest(row: row, col: col, column: columnName(col), isJSON: isJSONColumn(col) || asJSON,
+		                           text: v.string ?? "", wasNull: v == .null, jsonColumn: isJSONColumn(col))
 	}
 
 	var currentSort: (key: String, ascending: Bool)? { sort.map { ($0.column, $0.ascending) } }
@@ -657,7 +664,7 @@ extension TableData: GridSource {
 		var items: [GridMenuItem] = []
 		if let col {
 			// JSON 컬럼이 아닌데 값이 JSON 처럼 보이면 (일반 편집은 그대로 글자 편집)
-			if !columns[col].isJSON, !columns[col].isBinary, let t = value(row, col).string, JSONFormat.looksLikeJSON(t) {
+			if !isJSONColumn(col), !columns[col].isBinary, let t = value(row, col).string, JSONFormat.looksLikeJSON(t) {
 				items.append(.action("JSON 으로 편집…") { self.openEditor(row, col, asJSON: true) })
 			}
 			items.append(.action("NULL 로 바꾸기") { self.set(row, col, .null) })
