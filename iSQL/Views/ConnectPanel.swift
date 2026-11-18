@@ -10,7 +10,7 @@ struct ConnectPanel: View {
 	var body: some View {
 		let saved = model.selectedServerID.flatMap { id in store.servers.first { $0.id == id } }
 		ConnectForm(model: model, initial: saved ?? model.draft, saved: saved != nil)
-			.id(saved?.id.uuidString ?? "draft")
+			.id(saved?.id.uuidString ?? "draft-" + model.draft.id.uuidString)
 	}
 }
 
