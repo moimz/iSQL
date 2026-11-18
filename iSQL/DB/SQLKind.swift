@@ -21,6 +21,18 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		}
 	}
 
+	/// 접속 주소 글자의 앞 (mysql://…)
+	var urlScheme: String {
+		switch self {
+		case .mysql: "mysql"
+		case .mariadb: "mariadb"
+		case .postgres: "postgresql"
+		case .sqlserver: "sqlserver"
+		case .sqlite: "sqlite"
+		case .oracle: "oracle"
+		}
+	}
+
 	/// 기본 포트 (SQLite 는 파일이라 없음)
 	var defaultPort: Int? {
 		switch self {
@@ -50,4 +62,6 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 extension Server {
 	/// kind 글자를 SQLKind 로 (옛 파일 = mysql, 이 빌드가 모르는 이름이면 nil)
 	var sqlKind: SQLKind? { SQLKind(rawValue: kind ?? Self.mysqlKind) }
+	/// 화면에 쓰는 DB 종류 이름 (모르는 종류면 kind 글자 그대로)
+	var kindLabel: String { sqlKind?.label ?? (kind ?? "") }
 }

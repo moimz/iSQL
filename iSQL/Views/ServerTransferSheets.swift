@@ -301,7 +301,7 @@ struct ImportServersSheet: View {
 						Label("SSH 키 \(s.ssh.keyPath) 가 이 맥에 없습니다", systemImage: "key").foregroundStyle(.orange)
 					}
 				}
-				if item.mysqlPassword == nil && (source == nil || sourceHasPasswords) { Text("MySQL 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
+				if item.mysqlPassword == nil && (source == nil || sourceHasPasswords) { Text("\(s.kindLabel) 비밀번호 없음 — 접속할 때 묻습니다").foregroundStyle(.orange) }
 			}
 			.font(.callout)
 			.padding(.leading, 22)

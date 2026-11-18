@@ -676,7 +676,7 @@ final class Session {
 			host = "127.0.0.1"
 			port = Int(t.localPort)
 		}
-		progress("MySQL 로그인 중…")
+		progress("\(server.kindLabel) 로그인 중…")
 		do {
 			let c = try await DB.connect(server.sqlKind ?? .mysql, .init(host: host, port: port, user: server.user,
 			                                                             password: mysqlPassword ?? "", database: server.database))

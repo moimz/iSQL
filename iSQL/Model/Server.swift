@@ -30,7 +30,7 @@ struct Server: Codable, Identifiable, Hashable {
 		let u = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
 		let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
 		let db = database.isEmpty ? "" : "/" + (database.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? database)
-		return "mysql://\(u)@\(h):\(port)\(db)"
+		return "\(sqlKind?.urlScheme ?? (kind ?? Self.mysqlKind))://\(u)@\(h):\(port)\(db)"
 	}
 
 	var ssh = SSHSettings()

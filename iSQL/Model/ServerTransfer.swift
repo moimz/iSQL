@@ -79,7 +79,7 @@ enum ServerTransfer {
 					}
 				}
 			}
-			if item.mysqlPassword == nil { warnings.append("\(s.displayName): 저장된 MySQL 비밀번호가 없습니다") }
+			if item.mysqlPassword == nil { warnings.append("\(s.displayName): 저장된 \(s.kindLabel) 비밀번호가 없습니다") }
 			p.servers.append(item)
 		}
 		return (p, warnings)
