@@ -124,20 +124,11 @@ struct ConnectForm: View {
 			guard panel.runModal() == .OK, let u = panel.url else { return }
 			url = u
 		} else {
-			let panel = NSOpenPanel()
-			panel.canChooseDirectories = false
-			panel.message = "SQLite 파일을 고르세요 (.sqlite · .db · .sqlite3 …)"
-			guard panel.runModal() == .OK, let u = panel.url else { return }
+			let panel = SQLiteFile.openPanel()
+			guard panel.runModal() == .OK, let u = panel.url, SQLiteFile.checkOrAlert(u) else { return }
 			url = u
 		}
-		if Server.isInSyncedFolder(url.path) {
-			let a = NSAlert()
-			a.messageText = "동기화되는 폴더의 파일입니다"
-			a.informativeText = "iCloud Drive·Dropbox 처럼 실시간으로 동기화되는 폴더의 SQLite 파일은, 열어 둔 채 고치면 동기화가 중간 상태(-wal·-journal 파일)를 옮겨 파일이 깨질 수 있습니다. 동기화되지 않는 폴더를 권합니다."
-			a.addButton(withTitle: create ? "그래도 만들기" : "그래도 쓰기")
-			a.addButton(withTitle: "취소")
-			guard a.runModal() == .alertFirstButtonReturn else { return }
-		}
+		guard SQLiteFile.confirmSyncedFolder(url, create: create) else { return }
 		if create {
 			Task {
 				do { (try await SQLiteConnection.open(path: url.path, create: true)).close() } catch {

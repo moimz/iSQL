@@ -14,7 +14,7 @@ enum ServerTransferRequest: Identifiable {
 	}
 }
 
-/// 창에 서버 내보내기·가져오기 시트와 파일 열기(.isql 더블클릭)를 붙인다 (ContentView 본문 식이 길어 따로)
+/// 창에 서버 내보내기·가져오기 시트와 파일 열기(.isql·SQLite 더블클릭·끌어 놓기)를 붙인다 (ContentView 본문 식이 길어 따로)
 struct ServerTransferHost: ViewModifier {
 	@Bindable var model: WindowModel
 	@Environment(ServerStore.self) private var store
@@ -27,9 +27,13 @@ struct ServerTransferHost: ViewModifier {
 				case .importFile(let url): ImportServersSheet(store: store, initialURL: url)
 				}
 			}
-			// Finder 에서 .isql 을 두 번 누르면 이 창에 가져오기 시트 (파일이 미리 들어간 채)
-			.onOpenURL { url in
-				if url.isFileURL { model.transfer = .importFile(url) }
+			// Finder 에서 .isql 을 두 번 누르면 이 창에 가져오기 시트 (파일이 미리 들어간 채), SQLite 파일이면 그 서버로
+			.onOpenURL { url in model.openFile(url, store: store) }
+			// 창에 끌어 놓아도 같게 (서버 목록의 줄 옮기기는 글자라 겹치지 않는다)
+			.dropDestination(for: URL.self) { urls, _ in
+				guard let url = urls.first(where: \.isFileURL) else { return false }
+				model.openFile(url, store: store)
+				return true
 			}
 			// 파일을 열 때 새 창을 만들지 않고 열려 있는 창이 받는다
 			.handlesExternalEvents(preferring: ["*"], allowing: ["*"])

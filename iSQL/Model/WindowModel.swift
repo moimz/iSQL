@@ -74,6 +74,35 @@ final class WindowModel {
 
 	func state(_ id: UUID) -> Session.State? { sessions[id]?.state }
 
+	/// 앱이 막 열릴 때 파일로 열렸으면 자동 접속이 그 화면을 가로채지 않게
+	@ObservationIgnored private var openedFile = false
+
+	/// 파일 열기 (Finder 두 번 누르기·다음으로 열기, Dock 아이콘·창에 끌어 놓기): .isql 은 가져오기, SQLite 는 그 서버로
+	@MainActor
+	func openFile(_ url: URL, store: ServerStore) {
+		guard url.isFileURL else { return }
+		if url.pathExtension.lowercased() == "isql" { transfer = .importFile(url); return }
+		guard SQLiteFile.checkOrAlert(url) else { return }
+		openedFile = true
+		// 저장한 서버의 파일이면 그 서버로 접속
+		if let s = SQLiteFile.server(for: url, in: store.servers) {
+			selectedServerID = s.id
+			open(s)
+			return
+		}
+		// 처음 보는 파일: 새 접속 칸에 경로·이름을 채워 둔다 (저장·접속은 사용자가)
+		guard SQLiteFile.confirmSyncedFolder(url, create: false) else { return }
+		var s = Server()
+		s.kind = SQLKind.sqlite.rawValue
+		s.path = Server.abbreviatedPath(url.path)
+		s.name = url.deletingPathExtension().lastPathComponent
+		draft = s
+		selectedServerID = Self.newConnectionID
+		goHome()
+		sidebarMode = .servers
+	}
+
+
 	/// 그 서버로 옮긴다. 접속돼 있지 않으면 접속한다.
 	/// 비밀번호를 주면 그것을, 안 주면 앞서 받은 것이나 키체인 것을 쓴다
 	@MainActor
@@ -132,7 +161,7 @@ final class WindowModel {
 		AutoConnect.didRun = true
 		let plan = AutoConnect.plan(saved: saved)
 		guard let first = plan.first else { return }
-		open(first)
+		open(first, focus: !openedFile && currentID == nil)
 		await waitSettled(first.id)
 		for s in plan.dropFirst() where sessions[s.id] == nil {
 			open(s, focus: false)

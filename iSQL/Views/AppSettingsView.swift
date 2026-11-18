@@ -10,7 +10,7 @@ struct AppSettingsView: View {
 	var body: some View {
 		TabView(selection: $tab) {
 			Tab("일반", systemImage: "gearshape", value: "general") {
-				AppGeneralPage().frame(width: Self.width, height: 340)
+				AppGeneralPage().frame(width: Self.width, height: 390)
 			}
 			Tab("MCP", systemImage: "point.3.connected.trianglepath.dotted", value: "mcp") {
 				MCPSettingsPage().frame(width: Self.width, height: 700)
@@ -36,11 +36,49 @@ private struct AppGeneralPage: View {
 			} footer: {
 				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)").foregroundStyle(.tertiary)
 			}
+			FileAssociationSection()
 			Section {
 				LabeledContent("버전", value: version)
 			}
 		}
 		.formStyle(.grouped)
+	}
+}
+
+/// 앱 설정 > 일반 > 파일 연결: SQLite 파일을 두 번 눌렀을 때 iSQL 로 열지 (.isql 은 늘 iSQL 이라 없다)
+private struct FileAssociationSection: View {
+	@State private var appName = ""
+	@State private var isDefault = false
+	@State private var error: String?
+
+	var body: some View {
+		Section {
+			LabeledContent("SQLite 파일 (.sqlite · .db …)") {
+				HStack(spacing: 8) {
+					Text(appName).foregroundStyle(.secondary)
+					Button("iSQL 을 기본 앱으로") { makeDefault() }.disabled(isDefault)
+				}
+			}
+		} header: {
+			Text("파일 연결")
+		} footer: {
+			Text(error ?? "Finder 의 \"다음으로 열기\" 에는 늘 iSQL 이 있습니다. 기본 앱으로 정하면 두 번 눌러 iSQL 로 엽니다.")
+				.foregroundStyle(error == nil ? .tertiary : .secondary)
+		}
+		.onAppear(perform: refresh)
+		.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+	}
+
+	private func refresh() {
+		isDefault = SQLiteFile.isDefaultApp
+		appName = isDefault ? "iSQL" : SQLiteFile.defaultApp.map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? "없음"
+	}
+
+	private func makeDefault() {
+		Task {
+			do { try await SQLiteFile.makeDefault(); error = nil } catch { self.error = "바꾸지 못했습니다: \(error.localizedDescription)" }
+			refresh()
+		}
 	}
 }
 
