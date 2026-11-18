@@ -74,6 +74,8 @@ final class Session {
 	private(set) var server: Server?
 	private(set) var state: State = .idle
 	private(set) var serverVersion = ""
+	/// 서버 버전 숫자 (버전마다 다른 함수·기능을 가를 때)
+	var version: ServerVersion? { ServerVersion(serverVersion) }
 	/// 시스템 DB 를 뺀 DB 이름 (테이블이 없는 DB 도 있다)
 	private(set) var databases: [String] = []
 	private(set) var tables: [TableInfo] = []

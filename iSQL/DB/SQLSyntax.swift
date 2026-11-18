@@ -14,11 +14,17 @@ struct SQLSyntax: Sendable {
 	var delimiterCommand: Bool
 	/// 색칠할 키워드 (대문자)
 	var highlightKeywords: Set<String>
-	/// 자동 완성 키워드·함수
+	/// 자동 완성 키워드
 	var completionKeywords: [String]
-	var completionFunctions: [String]
+	/// 자동 완성 함수 (종류·버전마다 있는 것만 보인다)
+	var functions: [SQLFunction]
 	/// 자동 완성에서 그대로 쓰면 안 되는 이름 (키워드 + 이것들, 대문자)
 	var reservedWords: Set<String>
+
+	/// 이 종류·버전 서버에서 자동 완성에 보일 함수 이름
+	func completionFunctions(kind: SQLKind, version: ServerVersion?) -> [String] {
+		functions.filter { $0.available(kind, version) }.map(\.name)
+	}
 
 	/// 이름을 감싸는 글자
 	var identifierQuoteString: String { String(utf16CodeUnits: [identifierQuote], count: 1) }

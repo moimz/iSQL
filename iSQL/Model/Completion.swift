@@ -153,7 +153,7 @@ enum SQLCompleter {
 			items += session.databases.map { CompletionItem(kind: .database, insert: ident($0), label: $0, detail: "DB", comment: "") }
 			if !wantsTable {
 				items += syntax.completionKeywords.map(keywordItem)
-				items += syntax.completionFunctions.map { CompletionItem(kind: .function, insert: $0 + "(", label: $0 + "()", detail: "함수", comment: "") }
+				items += syntax.completionFunctions(kind: session.kind, version: session.version).map { CompletionItem(kind: .function, insert: $0 + "(", label: $0 + "()", detail: "함수", comment: "") }
 			}
 			if context == "USE" { items = items.filter { $0.kind == .database } }
 		}

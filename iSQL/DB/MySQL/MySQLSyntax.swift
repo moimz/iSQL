@@ -32,7 +32,47 @@ extension SQLSyntax {
 		WINDOW PARTITION RECURSIVE LATERAL XOR DIV MOD REGEXP RLIKE SOUNDS ESCAPE COUNT SUM AVG MIN MAX NOW
 		""".split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init))
 		return SQLSyntax(identifierQuote: 0x60, stringQuotes: [0x27, 0x22], backslashEscapes: true, hashComments: true, delimiterCommand: true,
-		                 highlightKeywords: highlight, completionKeywords: keywords, completionFunctions: functions,
+		                 highlightKeywords: highlight, completionKeywords: keywords, functions: Self.mysqlFamilyFunctions(common: functions),
 		                 reservedWords: Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC", "RANGE", "READ", "WRITE", "RANK"]))
 	}()
+
+	/// MySQL·MariaDB 함수 목록: 공통 함수(오래전부터 둘 다 있음) + 버전·종류마다 다른 함수.
+	/// 있는지는 도커 MySQL 8.4·MariaDB 11.4 에서 직접 불러 보고 정했고(2026-11-18), 처음 생긴 버전은 각 문서 기준
+	private static func mysqlFamilyFunctions(common: [String]) -> [SQLFunction] {
+		func v(_ s: String) -> ServerVersion { ServerVersion(s)! }
+		let any: [SQLKind: ServerVersion] = [.mysql: ServerVersion(0), .mariadb: ServerVersion(0)]
+		// (이름, MySQL 부터, MariaDB 부터) — nil 이면 그 종류에는 없다
+		let table: [(String, String?, String?)] = [
+			// JSON (둘 다)
+			("JSON_OBJECT", "5.7.8", "10.2.3"), ("JSON_ARRAY", "5.7.8", "10.2.3"), ("JSON_CONTAINS", "5.7.8", "10.2.3"),
+			("JSON_CONTAINS_PATH", "5.7.8", "10.2.3"), ("JSON_SEARCH", "5.7.8", "10.2.3"), ("JSON_SET", "5.7.8", "10.2.3"),
+			("JSON_INSERT", "5.7.8", "10.2.3"), ("JSON_REPLACE", "5.7.8", "10.2.3"), ("JSON_REMOVE", "5.7.8", "10.2.3"),
+			("JSON_KEYS", "5.7.8", "10.2.3"), ("JSON_LENGTH", "5.7.8", "10.2.3"), ("JSON_VALID", "5.7.8", "10.2.3"),
+			("JSON_TYPE", "5.7.8", "10.2.3"), ("JSON_DEPTH", "5.7.8", "10.2.3"), ("JSON_QUOTE", "5.7.8", "10.2.3"),
+			("JSON_MERGE_PATCH", "5.7.22", "10.2.25"), ("JSON_ARRAYAGG", "5.7.22", "10.5.0"), ("JSON_OBJECTAGG", "5.7.22", "10.5.0"),
+			("JSON_VALUE", "8.0.21", "10.2.3"), ("JSON_TABLE", "8.0.4", "10.6.0"), ("JSON_OVERLAPS", "8.0.17", "10.9.0"),
+			("JSON_SCHEMA_VALID", "8.0.17", "11.1.0"), ("JSON_PRETTY", "5.7.22", "11.0.0"),
+			// JSON (MySQL 만)
+			("JSON_STORAGE_SIZE", "5.7.22", nil),
+			// JSON (MariaDB 만)
+			("JSON_DETAILED", nil, "10.2.4"), ("JSON_COMPACT", nil, "10.2.4"), ("JSON_LOOSE", nil, "10.2.4"),
+			("JSON_EXISTS", nil, "10.2.3"), ("JSON_QUERY", nil, "10.2.3"), ("JSON_EQUALS", nil, "10.7.0"), ("JSON_NORMALIZE", nil, "10.7.0"),
+			// 정규식·창 함수 (둘 다, 버전 다름)
+			("REGEXP_REPLACE", "8.0.4", "10.0.5"), ("REGEXP_SUBSTR", "8.0.4", "10.0.5"), ("REGEXP_INSTR", "8.0.4", "10.0.5"),
+			("ROW_NUMBER", "8.0.2", "10.2.0"), ("RANK", "8.0.2", "10.2.0"), ("DENSE_RANK", "8.0.2", "10.2.0"),
+			("LAG", "8.0.2", "10.2.0"), ("LEAD", "8.0.2", "10.2.0"),
+			// MySQL 만
+			("ANY_VALUE", "5.7.5", nil), ("REGEXP_LIKE", "8.0.4", nil), ("BIN_TO_UUID", "8.0.0", nil), ("UUID_TO_BIN", "8.0.0", nil),
+			("GROUPING", "8.0.1", nil), ("STATEMENT_DIGEST_TEXT", "8.0.4", nil),
+			// MariaDB 만
+			("NVL", nil, "10.3.0"), ("NVL2", nil, "10.3.0"), ("DECODE_ORACLE", nil, "10.3.2"), ("SYS_GUID", nil, "10.6.1"),
+			("SFORMAT", nil, "10.7.0"), ("NATURAL_SORT_KEY", nil, "10.7.0"),
+		]
+		return common.map { SQLFunction(name: $0, since: any) } + table.map { name, my, maria in
+			var since: [SQLKind: ServerVersion] = [:]
+			if let my { since[.mysql] = v(my) }
+			if let maria { since[.mariadb] = v(maria) }
+			return SQLFunction(name: name, since: since)
+		}
+	}
 }
