@@ -15,7 +15,6 @@ struct FilterRow: Identifiable, Equatable {
 		let v = value
 		if op.needsValue && v.isEmpty { return nil }
 		func lit(_ s: String) -> String { literal(.text(s)) }
-		let likeEscaped = FilterOp.likeEscaped
 		switch op {
 		case .eq: return "\(c) = \(lit(v))"
 		case .ne: return "\(c) != \(lit(v))"
@@ -23,10 +22,6 @@ struct FilterRow: Identifiable, Equatable {
 		case .ge: return "\(c) >= \(lit(v))"
 		case .lt: return "\(c) < \(lit(v))"
 		case .le: return "\(c) <= \(lit(v))"
-		case .contains: return "\(c) LIKE \(lit("%" + likeEscaped(v) + "%"))"
-		case .notContains: return "\(c) NOT LIKE \(lit("%" + likeEscaped(v) + "%"))"
-		case .begins: return "\(c) LIKE \(lit(likeEscaped(v) + "%"))"
-		case .ends: return "\(c) LIKE \(lit("%" + likeEscaped(v)))"
 		case .like: return "\(c) LIKE \(lit(v))"
 		case .notLike: return "\(c) NOT LIKE \(lit(v))"
 		case .in, .notIn:
@@ -47,10 +42,7 @@ enum FilterOp: String, CaseIterable, Identifiable {
 	case ge = "≥"
 	case lt = "<"
 	case le = "≤"
-	case contains = "포함"
-	case notContains = "포함 안 함"
-	case begins = "시작"
-	case ends = "끝"
+	// 포함 · 포함 안 함 · 시작 · 끝은 뺐다: LIKE 에 % 를 직접 (사용자 2026-11-18)
 	case like = "LIKE"
 	case notLike = "NOT LIKE"
 	case `in` = "IN"
