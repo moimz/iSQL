@@ -38,6 +38,8 @@ struct ConnectForm: View {
 	}
 
 	@State private var showPassword = false
+	/// 이 맥에서만 쓰는 SQLite 경로를 바꿨을 때 다시 그리게
+	@State private var localPathBump = 0
 	@State private var showSecret = false
 
 	var body: some View {
@@ -66,14 +68,101 @@ struct ConnectForm: View {
 	/// 상자: 위 가장자리에 걸친 DB 종류 탭 + 라벨 오른쪽 정렬 입력칸. 접속 방식(TCP/IP · SSH)은 그룹 아래 구분선 가운데 (사용자 2026-11-18)
 	/// 애플 기본 TabView (박스 위에 탭이 걸친 모양). 지금은 MySQL · MariaDB 하나 (접속해 보고 둘을 가린다), 다른 DB 를 붙이면 탭이 늘어난다
 	private var card: some View {
-		TabView(selection: .constant("mysql")) {
+		TabView(selection: kindTab) {
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.mysql.familyLabel) }.tag("mysql")
+			fields(ssh: false).tabItem { Text(SQLKind.sqlite.label) }.tag("sqlite")
 		}
 		// TabView 는 세로로 남는 공간을 다 차지한다 → 내용 높이에 맞춘다 (박스가 화면 끝까지 늘어나 입력칸이 가운데 떠 있었다)
 		.fixedSize(horizontal: false, vertical: true)
 	}
 
 	private var groupNames: [String] { store.grouped.map(\.group).filter { !$0.isEmpty } }
+
+	/// 위 탭: MySQL · MariaDB / SQLite (고른 탭이 곧 서버 종류. MySQL·MariaDB 는 접속해 보고 가린다)
+	private var kindTab: Binding<String> {
+		Binding(get: { server.isFileDB ? "sqlite" : "mysql" }, set: { tab in
+			if tab == "sqlite" { server.kind = SQLKind.sqlite.rawValue }
+			else if server.isFileDB { server.kind = SQLKind.mysql.rawValue }
+		})
+	}
+
+	/// SQLite: 파일 고르기·새로 만들기, 동기화 폴더 경고, 이 맥에 파일이 없을 때 안내
+	@ViewBuilder private var sqliteRows: some View {
+		let _ = localPathBump
+		divider
+		row("파일") {
+			HStack(spacing: 6) {
+				field(Binding(get: { server.path ?? "" }, set: { server.path = $0.isEmpty ? nil : $0 }), "~/경로/파일.sqlite")
+				Button("고르기…") { pickSQLite(create: false) }
+				Button("새로 만들기…") { pickSQLite(create: true) }
+			}
+		}
+		if let p = server.sqliteFilePath {
+			if !FileManager.default.fileExists(atPath: p) {
+				GridRow {
+					Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+					Label("이 맥에 파일이 없습니다. 고르기로 이 맥의 파일을 정하면 이 맥에서만 그 경로를 씁니다", systemImage: "questionmark.folder")
+						.font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+				}
+			} else if Server.isInSyncedFolder(p) {
+				GridRow {
+					Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+					Label("동기화되는 폴더의 파일입니다. 열어 둔 채 고치면 동기화가 중간 상태를 옮겨 파일이 깨질 수 있습니다", systemImage: "exclamationmark.icloud")
+						.font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+				}
+			}
+		}
+	}
+
+	/// 파일 고르기 / 새 파일 만들기. 동기화 폴더면 한 번 묻는다 (사용자 2026-11-18)
+	private func pickSQLite(create: Bool) {
+		let url: URL
+		if create {
+			let panel = NSSavePanel()
+			panel.nameFieldStringValue = "새 데이터베이스.sqlite"
+			panel.message = "새 SQLite 파일을 만들 곳"
+			guard panel.runModal() == .OK, let u = panel.url else { return }
+			url = u
+		} else {
+			let panel = NSOpenPanel()
+			panel.canChooseDirectories = false
+			panel.message = "SQLite 파일을 고르세요 (.sqlite · .db · .sqlite3 …)"
+			guard panel.runModal() == .OK, let u = panel.url else { return }
+			url = u
+		}
+		if Server.isInSyncedFolder(url.path) {
+			let a = NSAlert()
+			a.messageText = "동기화되는 폴더의 파일입니다"
+			a.informativeText = "iCloud Drive·Dropbox 처럼 실시간으로 동기화되는 폴더의 SQLite 파일은, 열어 둔 채 고치면 동기화가 중간 상태(-wal·-journal 파일)를 옮겨 파일이 깨질 수 있습니다. 동기화되지 않는 폴더를 권합니다."
+			a.addButton(withTitle: create ? "그래도 만들기" : "그래도 쓰기")
+			a.addButton(withTitle: "취소")
+			guard a.runModal() == .alertFirstButtonReturn else { return }
+		}
+		if create {
+			Task {
+				do { (try await SQLiteConnection.open(path: url.path, create: true)).close() } catch {
+					let a = NSAlert(); a.messageText = "파일을 만들지 못했습니다"; a.informativeText = error.localizedDescription; a.runModal()
+					return
+				}
+				setPath(url.path)
+			}
+		} else {
+			setPath(url.path)
+		}
+	}
+
+	/// 저장한 서버인데 서버 파일의 경로가 이 맥에 없으면(다른 맥 경로) 그 경로는 두고 이 맥 설정에만
+	private func setPath(_ p: String) {
+		if saved, let shared = server.path, !shared.isEmpty, !FileManager.default.fileExists(atPath: (shared as NSString).expandingTildeInPath) {
+			UserDefaults.standard.set(p, forKey: Server.localPathKey(server.id))
+			server.path = shared
+			localPathBump += 1
+		} else {
+			UserDefaults.standard.removeObject(forKey: Server.localPathKey(server.id))
+			server.path = Server.abbreviatedPath(p)
+		}
+		if server.name.isEmpty { server.name = ((p as NSString).lastPathComponent as NSString).deletingPathExtension }
+	}
 
 	private func fields(ssh: Bool) -> some View {
 		VStack(alignment: .leading, spacing: 0) {
@@ -93,6 +182,9 @@ struct ConnectForm: View {
 					}
 				}
 
+				if server.isFileDB {
+					sqliteRows
+				} else {
 				// 구분선 가운데에 접속 방식: TCP/IP · SSH (고른 것이 곧 SSH 터널 사용 여부)
 				GridRow {
 					HStack(spacing: 12) {
@@ -150,6 +242,7 @@ struct ConnectForm: View {
 						row("SSH 비밀번호") { secret($sshSecret, show: $showSecret, "") }
 					}
 					row("SSH 포트") { number($server.ssh.port) }
+				}
 				}
 			}
 

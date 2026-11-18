@@ -8,7 +8,7 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 
 	/// 이 빌드가 접속할 수 있는 종류. 다른 종류의 서버 파일은 목록에서 숨기고 건드리지 않는다 (ServerStore).
 	/// 하나씩 만들 때마다 여기에 넣는다
-	static let supported: Set<SQLKind> = [.mysql, .mariadb]
+	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite]
 
 	var label: String {
 		switch self {
@@ -26,7 +26,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		switch self {
 		case .mysql: "DBLogoMySQL"
 		case .mariadb: "DBLogoMariaDB"
-		case .postgres, .sqlserver, .sqlite, .oracle: nil
+		case .sqlite: "DBLogoSQLite"
+		case .postgres, .sqlserver, .oracle: nil
 		}
 	}
 
@@ -61,25 +62,38 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.accounts = false
 			c.iModulesExport = false
 		}
+		if self == .sqlite {
+			// 파일 하나짜리 DB: 서버 관리·엔진·문자셋·코멘트·루틴(트리거 빼고)이 없다. 외래 키는 보기만 (나중에 더할 수 없다)
+			c.routineKinds = [.trigger]
+			c.routineDefiner = false
+			c.serverStatus = false; c.processKill = false; c.queryDigests = false; c.serverVariables = false
+			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false
+			c.createTableLike = false; c.truncate = false; c.multipleDatabases = false
+			c.engines = false; c.charsets = false; c.tableComment = false; c.columnComment = false
+			c.autoIncrementEdit = false; c.rowFormat = false; c.unsignedColumns = false; c.onUpdateTimestamp = false
+			c.fulltextIndex = false; c.spatialIndex = false; c.foreignKeys = false
+		}
 		#if DEBUG
 		c = c.applyingDebugOverrides()
 		#endif
 		return c
 	}
 
-	/// 이 종류의 메타데이터 읽기. 아직 모두 MySQL
+	/// 이 종류의 메타데이터 읽기 (아직 없는 종류는 MySQL)
 	var meta: any SQLMeta {
 		switch self {
 		case .mariadb: MySQLMeta(mariadb: true)
-		case .mysql, .postgres, .sqlserver, .sqlite, .oracle: MySQLMeta()
+		case .sqlite: SQLiteMeta()
+		case .mysql, .postgres, .sqlserver, .oracle: MySQLMeta()
 		}
 	}
 
-	/// 이 종류의 SQL 문법. 아직 모두 MySQL (2.0 1단계: 동작은 1.x 그대로, 틀만)
+	/// 이 종류의 SQL 문법 (아직 없는 종류는 MySQL)
 	var dialect: any SQLDialect {
 		switch self {
 		case .mariadb: MySQLDialect(mariadb: true)
-		case .mysql, .postgres, .sqlserver, .sqlite, .oracle: MySQLDialect()
+		case .sqlite: SQLiteDialect()
+		case .mysql, .postgres, .sqlserver, .oracle: MySQLDialect()
 		}
 	}
 }
@@ -101,4 +115,28 @@ extension Server {
 	var sqlKind: SQLKind? { SQLKind(rawValue: kind ?? Self.mysqlKind) }
 	/// 화면에 쓰는 DB 종류 이름 (모르는 종류면 kind 글자 그대로)
 	var kindLabel: String { sqlKind?.label ?? (kind ?? "") }
+
+	/// 파일 하나가 DB 인 종류 (호스트·SSH 대신 파일)
+	var isFileDB: Bool { sqlKind == .sqlite }
+
+	/// SQLite 파일의 이 맥 경로: 이 맥에서 다시 고른 경로(파일이 있으면) → 서버 파일의 경로. ~ 를 펼친다
+	var sqliteFilePath: String? {
+		if let local = UserDefaults.standard.string(forKey: Self.localPathKey(id)), FileManager.default.fileExists(atPath: local) { return local }
+		guard let p = path, !p.isEmpty else { return nil }
+		return (p as NSString).expandingTildeInPath
+	}
+	static func localPathKey(_ id: UUID) -> String { "sqlitePath.\(id.uuidString)" }
+
+	/// 홈 아래 경로는 ~ 로 (두 맥이 같은 사용자 이름이면 그대로 맞는다)
+	static func abbreviatedPath(_ p: String) -> String { (p as NSString).abbreviatingWithTildeInPath }
+
+	/// 동기화 폴더(iCloud Drive·Dropbox·Google Drive·OneDrive 등) 안의 파일인지 — 열어 둔 채 고치면 깨질 수 있어 경고
+	static func isInSyncedFolder(_ path: String) -> Bool {
+		let p = (path as NSString).expandingTildeInPath
+		let home = NSHomeDirectory()
+		let synced = [home + "/Library/Mobile Documents/", home + "/Library/CloudStorage/", home + "/Dropbox/", home + "/Google Drive/", home + "/OneDrive"]
+		if synced.contains(where: { p.hasPrefix($0) }) { return true }
+		// 데스크탑·문서를 iCloud 로 동기화하는 경우
+		return (try? URL(fileURLWithPath: p).resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) == true
+	}
 }

@@ -1,0 +1,29 @@
+import Foundation
+
+extension SQLSyntax {
+	/// SQLite: "이름" (`이름`·[이름] 도 받지만 쓸 때는 "), '글자' 는 '' 로 (\ 는 그냥 글자), -- 와 /* */ 주석
+	static let sqlite: SQLSyntax = {
+		let keywords = """
+		SELECT FROM WHERE AND OR NOT IN IS NULL LIKE GLOB BETWEEN EXISTS AS ON JOIN LEFT RIGHT INNER OUTER CROSS NATURAL USING \
+		GROUP BY ORDER ASC DESC HAVING LIMIT OFFSET DISTINCT UNION ALL EXCEPT INTERSECT INSERT INTO VALUES UPDATE SET DELETE \
+		REPLACE CREATE ALTER DROP TABLE VIEW INDEX TRIGGER IF EXISTS PRIMARY KEY FOREIGN REFERENCES DEFAULT UNIQUE CHECK \
+		AUTOINCREMENT CASE WHEN THEN ELSE END WITH RECURSIVE BEGIN COMMIT ROLLBACK TRANSACTION PRAGMA EXPLAIN QUERY PLAN \
+		VACUUM ANALYZE ATTACH DETACH DATABASE RETURNING CONFLICT IGNORE ABORT FAIL WITHOUT ROWID STRICT COLLATE
+		""".split(separator: " ").map(String.init)
+		let functions = """
+		COUNT SUM TOTAL AVG MIN MAX GROUP_CONCAT ABS COALESCE IFNULL NULLIF IIF INSTR LENGTH LOWER UPPER LTRIM RTRIM TRIM \
+		REPLACE SUBSTR SUBSTRING ROUND RANDOM HEX QUOTE TYPEOF PRINTF FORMAT CHAR UNICODE ZEROBLOB DATE TIME DATETIME \
+		JULIANDAY STRFTIME UNIXEPOCH JSON JSON_EXTRACT JSON_ARRAY JSON_OBJECT JSON_TYPE JSON_VALID JSON_EACH JSON_TREE \
+		JSON_SET JSON_INSERT JSON_REPLACE JSON_REMOVE JSON_ARRAY_LENGTH JSON_GROUP_ARRAY JSON_GROUP_OBJECT ROW_NUMBER RANK \
+		DENSE_RANK LAG LEAD LAST_INSERT_ROWID CHANGES
+		""".split(separator: " ").map(String.init)
+		let highlight = Set(keywords + ["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC", "VARCHAR", "INT", "DATETIME", "TRUE", "FALSE",
+		                                "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "TEMP", "TEMPORARY", "VIRTUAL", "STORED",
+		                                "GENERATED", "ALWAYS", "BEFORE", "AFTER", "INSTEAD", "OF", "FOR", "EACH", "ROW", "COUNT", "SUM", "AVG", "MIN", "MAX"])
+		let any: [SQLKind: ServerVersion] = [.sqlite: ServerVersion(0)]
+		return SQLSyntax(identifierQuote: 0x22, stringQuotes: [0x27], backslashEscapes: false, hashComments: false, delimiterCommand: false,
+		                 highlightKeywords: highlight, completionKeywords: keywords,
+		                 functions: functions.map { SQLFunction(name: $0, since: any) },
+		                 reservedWords: Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC"]))
+	}()
+}

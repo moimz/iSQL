@@ -229,6 +229,22 @@ final class StructureEditor: GridSource {
 		if let r = final.first(where: { NewColumn.needsLength.contains($0.col.type) && $0.col.length.trimmingCharacters(in: .whitespaces).isEmpty }) {
 			return "\(r.col.name) (\(r.col.type)) 은(는) 길이·값이 필요합니다"
 		}
+		if dialect.kind == .sqlite, let p = sqliteProblem(final) { return p }
+		return nil
+	}
+
+	/// SQLite 의 ALTER 는 컬럼 더하기(맨 뒤)·이름 바꾸기·지우기만 된다. 정의·순서를 바꾸려면 테이블을 새로 만들어야 한다
+	private func sqliteProblem(_ final: [Row]) -> String? {
+		let rebuild = "SQLite 는 테이블을 새로 만들어야 합니다"
+		if let r = final.first(where: { r in r.original.map { !r.col.sameDefinition($0) } ?? false }) {
+			return "\(r.col.name): 컬럼 정의를 바꾸려면 \(rebuild)"
+		}
+		let index = Dictionary(uniqueKeysWithValues: originalOrder.enumerated().map { ($1, $0) })
+		let kept = final.compactMap { $0.original.flatMap { index[$0.name] } }
+		if kept != kept.sorted() { return "컬럼 순서를 바꾸려면 \(rebuild)" }
+		if let last = final.lastIndex(where: { $0.original != nil }), final[..<last].contains(where: { $0.original == nil }) {
+			return "새 컬럼은 맨 뒤에만 더할 수 있습니다 (\(rebuild))"
+		}
 		return nil
 	}
 

@@ -24,13 +24,17 @@ struct DBConnectOptions {
 	var user: String
 	var password: String
 	var database: String
+	/// SQLite 파일 (펼친 경로)
+	var path = ""
 }
 
 enum DB {
 	/// 종류에 맞는 연결을 연다
 	static func connect(_ kind: SQLKind, _ o: DBConnectOptions) async throws -> any DBConnection {
 		switch kind {
-		case .mysql, .mariadb, .postgres, .sqlserver, .sqlite, .oracle:
+		case .sqlite:
+			try await SQLiteConnection.open(path: o.path)
+		case .mysql, .mariadb, .postgres, .sqlserver, .oracle:
 			try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database))
 		}
 	}

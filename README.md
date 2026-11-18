@@ -1,6 +1,6 @@
 # iSQL
 
-맥에서 쓰는 **MySQL / MariaDB 클라이언트**입니다.
+맥에서 쓰는 **MySQL / MariaDB / SQLite 클라이언트**입니다.
 서버의 모든 데이터베이스와 테이블을 사이드바 하나에 코멘트와 함께 보여 주고, 탭·쿼리 패널·구조 편집을 한 창에서 다룹니다.
 원격 DB 는 SSH 터널로 접속하고, 비밀번호는 키체인에만 둡니다.
 
@@ -115,7 +115,7 @@ iCloud 를 쓸 수 없으면 서버 목록은 이 맥에만, 비밀번호는 이
 
 ## 상표
 
-MySQL 은 Oracle 및 그 계열사의 상표이고, MariaDB 는 MariaDB Corporation Ab 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
+MySQL 은 Oracle 및 그 계열사의 상표이고, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
 
 ## 라이선스
 

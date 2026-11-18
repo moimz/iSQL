@@ -13,6 +13,8 @@ struct Server: Codable, Identifiable, Hashable {
 	var user = "root"
 	/// 접속하자마자 고를 DB (비어 있으면 고르지 않음)
 	var database = ""
+	/// SQLite: 파일 경로 (홈 아래면 ~ 로 줄여 둔다 — 두 맥이 같은 경로를 쓰게). 다른 맥에서 다시 고른 경로는 그 맥 설정에만 (sqlitePath.<id>)
+	var path: String?
 
 	/// DB 종류. 2.0 의 SQLKind 이름과 같다 (mysql · mariadb · postgres · sqlserver · sqlite · oracle).
 	/// 1.0 은 mysql 만 다룬다: 옛 파일(없음)은 읽을 때 "mysql" 로 적어 두고, 다른 종류는 목록에 넣지 않고 파일도 건드리지 않는다.

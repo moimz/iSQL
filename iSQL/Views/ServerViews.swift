@@ -334,6 +334,7 @@ struct ServerIcon: View {
 
 extension Server {
 	var subtitle: String {
+		if isFileDB { return path ?? "" }
 		let db = "\(user)@\(host):\(port)"
 		return ssh.enabled ? "SSH \(ssh.host) → \(db)" : db
 	}

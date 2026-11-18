@@ -156,7 +156,7 @@ final class Session {
 	func sideConnection(purpose: String = "", log: Bool = true) async throws -> any DBConnection {
 		guard let server, let e = sideEndpoint else { throw DBError.closed }
 		let c = try await DB.connect(kind, .init(host: e.host, port: e.port, user: server.user,
-		                                         password: sidePassword ?? "", database: server.database))
+		                                         password: sidePassword ?? "", database: server.database, path: server.sqliteFilePath ?? ""))
 		if log { attachLog(c, purpose: purpose) }
 		return c
 	}
@@ -680,6 +680,12 @@ final class Session {
 		var tunnel: SSHTunnel?
 		var host = server.host
 		var port = server.port
+		if server.isFileDB {
+			guard let path = server.sqliteFilePath else { throw DBError.message("SQLite 파일을 고르세요") }
+			guard FileManager.default.fileExists(atPath: path) else { throw DBError.message("이 맥에 파일이 없습니다: \(path)\n파일을 다시 고르면 이 맥에서만 그 경로를 씁니다.") }
+			progress("\((path as NSString).lastPathComponent) 여는 중…")
+			return (nil, try await DB.connect(.sqlite, .init(host: "", port: 0, user: "", password: "", database: "", path: path)))
+		}
 		if server.ssh.enabled {
 			progress("SSH 터널 여는 중… (\(server.ssh.host))")
 			let t = try await SSHTunnel.open(server, secret: sshSecret?.isEmpty == false ? sshSecret : nil)
