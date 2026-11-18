@@ -345,9 +345,7 @@ final class ExportJob {
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
 				if o.includeStructure {
 					if o.includeDrop { write(t.isView ? "DROP VIEW IF EXISTS \(dialect.quote(t.name));\n" : "DROP TABLE IF EXISTS \(dialect.quote(t.name));\n") }
-					// 뷰도 SHOW CREATE TABLE 이 CREATE VIEW 를 준다
-					let r = try await session.query("SHOW CREATE TABLE \(q)").last
-					if let create = r?.rows.first.flatMap({ $0.count > 1 ? $0[1].string : nil }) { write(create + ";\n\n") }
+					if let create = try await session.meta.createStatement(session.query, .table, schema: schema, name: t.name) { write(create + ";\n\n") }
 				}
 				guard o.includeData, !t.isView else { continue }
 				let cols = (session.columns[schema + "." + t.name] ?? [])
@@ -509,8 +507,7 @@ extension TableData: ExportSource {
 	var visibleRows: [[Value]] { rows }
 
 	func createTableSQL() async throws -> String? {
-		let r = try await session.query("SHOW CREATE TABLE \(dialect.quote(table: table))").last
-		return r?.rows.first.flatMap { $0.count > 1 ? $0[1].string : nil }
+		try await session.meta.createStatement(session.query, .table, schema: table.schema, name: table.name)
 	}
 
 	/// 화면과 같은 조건(appliedWhere)·정렬로 전체를 나눠 받는다
@@ -552,9 +549,7 @@ extension QueryOutput: ExportSource {
 
 	func createTableSQL() async throws -> String? {
 		guard let t = singleTable, let session else { return nil }
-		let name = t.schema.isEmpty ? dialect.quote(t.table) : "\(dialect.quote(t.schema)).\(dialect.quote(t.table))"
-		let r = try await session.query("SHOW CREATE TABLE \(name)").last
-		return r?.rows.first.flatMap { $0.count > 1 ? $0[1].string : nil }
+		return try await session.meta.createStatement(session.query, .table, schema: t.schema, name: t.table)
 	}
 
 	/// 전체: LIMIT 을 자동으로 붙였던 쿼리면 나눠 받고, 직접 LIMIT 을 쓴 쿼리면 지금 결과가 전체
@@ -592,6 +587,7 @@ extension ExportJob {
 	/// iModules 스키마 JSON. 형식은 iModules app/databases/mysql/Builder.php 가 읽는 그대로:
 	/// columns{type,length,is_null,default,comment}, indexes{"a,b": primary_key|unique|index|fulltext}, auto_increment, comment, datas[행 객체]
 	@MainActor
+	/// MySQL 전용 (iModules 는 MySQL 스키마 형식): SHOW FULL COLUMNS·SHOW INDEX 결과를 그대로 푼다. 3단계에서 MySQL 계열에서만 보이게
 	func exportIModules(session: Session, schema: String, tables: [TableStat], options o: IModulesExportOptions, to url: URL) async {
 		let dialect = session.dialect
 		guard begin(url: url, total: o.includeData ? tables.map { $0.rows.map { Int($0) } }.reduce(0) { a, b in a.flatMap { x in b.map { x + $0 } } } : nil) else { return }

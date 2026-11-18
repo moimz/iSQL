@@ -33,11 +33,9 @@ final class DatabaseCopyJob {
 	@MainActor
 	func loadSettings() async {
 		guard let session else { return }
-		let r = try? await session.query("""
-			SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(dialect.literal(.text(source)))
-			""").last
-		charset = r?.rows.first?[safe: 0]?.string ?? ""
-		collation = r?.rows.first?[safe: 1]?.string ?? ""
+		let r = (try? await session.meta.schemaDefaults(session.query, schema: source)) ?? nil
+		charset = r?.charset ?? ""
+		collation = r?.collation ?? ""
 	}
 
 	func cancel() { cancelled = true }
@@ -63,15 +61,6 @@ final class DatabaseCopyJob {
 		guard total > 0 else { return 0 }
 		let part = rowsTotal > 0 ? min(1, Double(rowsDone) / Double(rowsTotal)) : 0
 		return (Double(done) + part) / Double(total)
-	}
-
-	private struct TableMeta {
-		var name: String
-		var isView: Bool
-		var approxRows: Int64
-		/// 생성 컬럼(GENERATED)은 빼고 넣는다 (값을 넣으면 오류)
-		var columns: [String] = []
-		var primaryKey: [String] = []
 	}
 
 	@MainActor
@@ -156,8 +145,7 @@ final class DatabaseCopyJob {
 		let db = q(source)
 		do {
 			if isView {
-				let r = try await session.query("SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = \(dialect.literal(.text(source))) AND TABLE_NAME = \(dialect.literal(.text(name)))").last
-				guard let def = r?.rows.first?.first?.string else { throw CopyError.noDDL(name) }
+				guard let def = try await session.meta.viewDefinition(session.query, schema: source, name: name) else { throw CopyError.noDDL(name) }
 				_ = try await session.query("CREATE VIEW \(db).\(q(newName)) AS \(def)")
 			} else {
 				_ = try await session.query("CREATE TABLE \(db).\(q(newName)) LIKE \(db).\(q(name))")
@@ -183,48 +171,23 @@ final class DatabaseCopyJob {
 
 	/// 테이블 먼저, 뷰는 나중 (뷰가 테이블을 본다). 컬럼·기본 키·어림 행도 한 번에
 	@MainActor
-	private func tableList() async throws -> [TableMeta] {
+	private func tableList() async throws -> [CopyTableInfo] {
 		guard let session else { return [] }
-		let s = dialect.literal(.text(source))
-		let t = try await session.query("""
-			SELECT TABLE_NAME, TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(s) ORDER BY TABLE_NAME
-			""").last ?? QueryResult()
-		var metas = t.rows.map { r in
-			TableMeta(name: r[0].string ?? "", isView: r[safe: 1]?.string == "VIEW", approxRows: r[safe: 3]?.string.flatMap { Int64($0) } ?? 0)
-		}
-		let c = try await session.query("""
-			SELECT TABLE_NAME, COLUMN_NAME, EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(s) ORDER BY TABLE_NAME, ORDINAL_POSITION
-			""").last ?? QueryResult()
-		let k = try await session.query("""
-			SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = \(s) AND INDEX_NAME = 'PRIMARY' ORDER BY TABLE_NAME, SEQ_IN_INDEX
-			""").last ?? QueryResult()
-		var cols: [String: [String]] = [:], keys: [String: [String]] = [:]
-		for r in c.rows where !(r[safe: 2]?.string?.uppercased().contains("GENERATED") ?? false) {
-			cols[r[0].string ?? "", default: []].append(r[1].string ?? "")
-		}
-		for r in k.rows { keys[r[0].string ?? "", default: []].append(r[1].string ?? "") }
-		for i in metas.indices {
-			metas[i].columns = cols[metas[i].name] ?? []
-			metas[i].primaryKey = keys[metas[i].name] ?? []
-		}
-		return metas.filter { !$0.isView } + metas.filter(\.isView)
+		return try await session.meta.copyTables(session.query, schema: source)
 	}
 
 	/// 바이너리 로그가 켜져 있고 STATEMENT 형식이면 앱을 거쳐 옮긴다
 	@MainActor
 	private func pickMode() async throws -> Mode {
 		guard let session else { return .server }
-		let r = try? await session.query("SELECT @@log_bin, @@binlog_format").last
-		let logBin = r?.rows.first?[safe: 0]?.string ?? "0"
-		let format = (r?.rows.first?[safe: 1]?.string ?? "").uppercased()
-		return (logBin == "1" || logBin.uppercased() == "ON") && format == "STATEMENT" ? .client : .server
+		return await session.meta.needsClientCopy(session.query) ? .client : .server
 	}
 
 	/// 테이블 하나의 데이터: 트랜잭션 하나(오토커밋 끔) 안에서 기본 키 순서로 5,000행씩 넣고 다 넣으면 커밋.
 	/// 원본은 잠그지 않는다 (server: READ COMMITTED 의 INSERT … SELECT 는 원본을 잠금 없이 읽는다, client: 일반 SELECT).
 	/// 그만두면 그 테이블은 되돌린다(비어 있는 채로 남는다)
 	@MainActor
-	private func copyData(_ t: TableMeta, src: String, dst: String, dstName: String? = nil) async throws {
+	private func copyData(_ t: CopyTableInfo, src: String, dst: String, dstName: String? = nil) async throws {
 		guard let session, !t.columns.isEmpty else { return }
 		let q = dialect.quote(_:)
 		let cols = t.columns.map(q).joined(separator: ", ")
@@ -307,8 +270,7 @@ final class DatabaseCopyJob {
 	private func copyTable(_ name: String, src: String, dst: String) async throws {
 		guard let session else { return }
 		let q = dialect.quote(_:)
-		let r = try await session.query("SHOW CREATE TABLE \(src).\(q(name))").last ?? QueryResult()
-		guard var ddl = r.rows.first?[safe: 1]?.string else { throw CopyError.noDDL(name) }
+		guard var ddl = try await session.meta.createStatement(session.query, .table, schema: source, name: name) else { throw CopyError.noDDL(name) }
 		let head = "CREATE TABLE \(q(name))"
 		guard ddl.hasPrefix(head) else { throw CopyError.noDDL(name) }
 		ddl = "CREATE TABLE \(dst).\(q(name))" + ddl.dropFirst(head.count)
@@ -319,9 +281,7 @@ final class DatabaseCopyJob {
 	@MainActor
 	private func copyView(_ name: String, src: String, target: String) async throws {
 		guard let session else { return }
-		let q = dialect.quote(_:)
-		let r = try await session.query("SHOW CREATE VIEW \(src).\(q(name))").last ?? QueryResult()
-		guard let ddl = r.rows.first?[safe: 1]?.string, ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
+		guard let ddl = try await session.meta.createStatement(session.query, .view, schema: source, name: name), ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
 		// "VIEW `원본`.`v` AS …" 처럼 DB 가 붙어 와서 " VIEW `v`" 로 찾으면 못 찾았다 → 이름 바꾸기와 같은 고치기
 		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target, dialect: dialect))
 	}
@@ -332,17 +292,7 @@ final class DatabaseCopyJob {
 	private func copyRoutines(target: String) async throws -> String {
 		guard let session else { return "" }
 		let q = dialect.quote(_:)
-		let s = dialect.literal(.text(source))
-		var items: [(RoutineKind, String)] = []
-		for r in (try await session.query("SELECT ROUTINE_TYPE, ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = \(s)").last?.rows ?? []) {
-			items.append((r[safe: 0]?.string == "FUNCTION" ? .function : .procedure, r[safe: 1]?.string ?? ""))
-		}
-		for r in (try await session.query("SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = \(s)").last?.rows ?? []) {
-			items.append((.trigger, r[safe: 0]?.string ?? ""))
-		}
-		for r in (try await session.query("SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = \(s)").last?.rows ?? []) {
-			items.append((.event, r[safe: 0]?.string ?? ""))
-		}
+		let items = try await session.meta.routineNames(session.query, schema: source)
 		guard !items.isEmpty else { return "" }
 		let c = try await session.sideConnection(purpose: "복제")
 		defer { c.close() }
@@ -350,8 +300,7 @@ final class DatabaseCopyJob {
 		var made = 0, events = 0
 		for (k, n) in items {
 			current = "\(k.label) \(n)"
-			let r = try await session.query("SHOW CREATE \(k.sqlWord) \(q(source)).\(q(n))").last ?? QueryResult()
-			guard !r.rows.isEmpty, let ddl0 = r.string(0, k.createColumn) else { throw CopyError.noDDL(n) }
+			guard let ddl0 = try await session.meta.createStatement(session.query, .routine(k), schema: source, name: n) else { throw CopyError.noDDL(n) }
 			let ddl = Self.retarget(ddl0, from: source, to: target, dialect: dialect)
 			do { _ = try await c.query(ddl) } catch { _ = try await c.query(RoutineEditor.stripDefiner(ddl)) }
 			if k == .event { _ = try? await c.query("ALTER EVENT \(q(target)).\(q(n)) DISABLE"); events += 1 }

@@ -174,14 +174,8 @@ final class StructureEditor: GridSource {
 		loading = true
 		defer { loading = false }
 		do {
-			let rs = try await session.query("""
-				SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = \(dialect.literal(.text(table.schema))) AND TABLE_NAME = \(dialect.literal(.text(table.name))) ORDER BY ORDINAL_POSITION;
-				SHOW CREATE TABLE \(dialect.quote(table: table))
-				""")
-			guard let cols = rs.first else { return }
-			let list = cols.rows.indices.map { StructColumn(row: cols, $0) }
-			guard !list.isEmpty else { return }
-			rawDefinitions = Self.parseCreate(rs.last?.rows.first?[safe: 1]?.string ?? "")
+			guard let (list, definitions) = try await session.meta.structure(session.query, table) else { return }
+			rawDefinitions = definitions
 			originals = list
 			rows = list.map { Row(col: $0, original: $0) }
 			loaded = true

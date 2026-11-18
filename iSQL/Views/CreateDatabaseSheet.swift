@@ -103,9 +103,9 @@ struct CreateDatabaseSheet: View {
 			collation = session.server?.defaultCollation.flatMap { $0.isEmpty ? nil : $0 } ?? session.catalog.defaultCollation(for: cs) ?? ""
 			return
 		}
-		let r = try? await session.query("SELECT @@character_set_server, @@collation_server").last
-		charset = r?.rows.first?[safe: 0]?.string ?? ""
-		collation = r?.rows.first?[safe: 1]?.string ?? ""
+		let r = (try? await session.meta.serverDefaults(session.query)) ?? nil
+		charset = r?.charset ?? ""
+		collation = r?.collation ?? ""
 	}
 
 	@MainActor

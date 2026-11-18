@@ -360,27 +360,24 @@ final class MCPServer {
 			])
 		case "list_databases":
 			let t = try target(a)
-			let r = try await run(t, "SHOW DATABASES")
+			let names = try await t.meta.databaseNames { [try await self.run(t, $0)] }
 			note("list_databases · \(t.server.displayName)")
-			return json(r.rows.compactMap { $0.first?.string })
+			return json(names)
 		case "list_tables":
 			let t = try target(a)
 			let db = try string(a, "database")
-			let r = try await run(t, """
-				SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS, TABLE_COMMENT FROM information_schema.TABLES
-				 WHERE TABLE_SCHEMA = \(t.dialect.literal(.text(db))) ORDER BY TABLE_NAME
-				""")
+			let list = try await t.meta.tableList({ [try await self.run(t, $0)] }, schema: db)
 			note("list_tables · \(t.server.displayName) · \(db)")
-			return json(r.rows.map { row in
-				["name": row[0].string ?? "", "type": row[1].string == "VIEW" ? "view" : "table",
-				 "rows_approx": row[2].string.flatMap { Int($0) } ?? NSNull(), "comment": row[3].string ?? ""] as [String: Any]
+			return json(list.map { row in
+				["name": row.name, "type": row.isView ? "view" : "table",
+				 "rows_approx": row.approxRows ?? NSNull(), "comment": row.comment] as [String: Any]
 			})
 		case "describe_table":
 			let t = try target(a)
 			let db = try string(a, "database"), table = try string(a, "table")
-			let r = try await run(t, "SHOW CREATE TABLE \(t.dialect.quote(db)).\(t.dialect.quote(table))")
+			let ddl = try await t.meta.createStatement({ [try await self.run(t, $0)] }, .table, schema: db, name: table)
 			note("describe_table · \(t.server.displayName) · \(db).\(table)")
-			return r.rows.first?[safe: 1]?.string ?? ""
+			return ddl ?? ""
 		case "run_query":
 			let t = try target(a)
 			let sql = try string(a, "sql")
@@ -484,6 +481,7 @@ final class MCPServer {
 		/// 앱에서 접속해 있으면 그 세션
 		let session: Session?
 		var dialect: any SQLDialect { (server.sqlKind ?? .mysql).dialect }
+		var meta: any SQLMeta { (server.sqlKind ?? .mysql).meta }
 	}
 
 	/// 지금 범위에서 MCP 에 열린 서버들

@@ -34,24 +34,19 @@ final class DatabaseRenameJob {
 		self.session = session
 	}
 
-	private func lit(_ s: String) -> String { dialect.literal(.text(s)) }
 
 	@MainActor
 	func load() async {
 		guard let session else { return }
-		let s = lit(source)
-		let set = try? await session.query("SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(s)").last
-		charset = set?.rows.first?[safe: 0]?.string ?? ""
-		collation = set?.rows.first?[safe: 1]?.string ?? ""
-		let t = (try? await session.query("SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(s) ORDER BY TABLE_NAME").last)?.rows ?? []
-		tables = t.filter { $0[safe: 1]?.string != "VIEW" }.compactMap { $0[safe: 0]?.string }
-		views = t.filter { $0[safe: 1]?.string == "VIEW" }.compactMap { $0[safe: 0]?.string }
-		func count(_ sql: String) async -> Int {
-			Int((try? await session.query(sql).last)?.rows.first?.first?.string ?? "") ?? 0
-		}
-		triggers = await count("SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = \(s) OR TRIGGER_SCHEMA = \(s)")
-		routines = await count("SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = \(s)")
-		events = await count("SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = \(s)")
+		let set = (try? await session.meta.schemaDefaults(session.query, schema: source)) ?? nil
+		charset = set?.charset ?? ""
+		collation = set?.collation ?? ""
+		let c = await session.meta.contents(session.query, schema: source)
+		tables = c.tables
+		views = c.views
+		triggers = c.triggers
+		routines = c.routines
+		events = c.events
 		loaded = true
 	}
 
@@ -69,8 +64,7 @@ final class DatabaseRenameJob {
 			var ddls: [String: String] = [:]
 			for v in views {
 				step = "뷰 \(v) 읽는 중…"
-				let r = try await session.query("SHOW CREATE VIEW \(src).\(q(v))").last
-				if let d = r?.rows.first?[safe: 1]?.string { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target, dialect: dialect) }
+				if let d = try await session.meta.createStatement(session.query, .view, schema: source, name: v) { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target, dialect: dialect) }
 			}
 			step = "데이터베이스 만드는 중…"
 			var create = "CREATE DATABASE \(dst)"
@@ -103,7 +97,7 @@ final class DatabaseRenameJob {
 			}
 			for v in views where !left.contains(v) { _ = try? await session.query("DROP VIEW \(src).\(q(v))") }
 			// 옛 DB 가 비었으면 지운다 (프로시저·이벤트가 있으면 남긴다)
-			let remain = Int((try? await session.query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(lit(source))").last)?.rows.first?.first?.string ?? "") ?? 1
+			let remain = ((try? await session.meta.tableCount(session.query, schema: source)) ?? nil) ?? 1
 			var dropped = false
 			if remain == 0 && routines == 0 && events == 0 {
 				step = "옛 데이터베이스 지우는 중…"

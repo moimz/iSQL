@@ -57,19 +57,7 @@ final class DatabaseOverview: GridSource {
 		error = nil
 		defer { loading = false }
 		do {
-			let r = try await session.query("""
-				SELECT TABLE_NAME, TABLE_TYPE, ENGINE, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, DATA_FREE, AUTO_INCREMENT,
-				       TABLE_COLLATION, TABLE_COMMENT, COALESCE(UPDATE_TIME, CREATE_TIME)
-				  FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(dialect.literal(.text(schema))) ORDER BY TABLE_NAME
-				""").last ?? QueryResult()
-			stats = r.rows.map { v in
-				func i(_ k: Int) -> Int64? { v[safe: k]?.string.flatMap { Int64($0) } }
-				let isView = v[safe: 1]?.string == "VIEW"
-				return TableStat(name: v[0].string ?? "", isView: isView, engine: v[safe: 2]?.string ?? "",
-				                 rows: i(3), dataLength: i(4) ?? 0, indexLength: i(5) ?? 0, dataFree: i(6) ?? 0,
-				                 autoIncrement: i(7), collation: v[safe: 8]?.string ?? "",
-				                 comment: isView ? "" : (v[safe: 9]?.string ?? ""), updated: v[safe: 10]?.string ?? "")
-			}
+			stats = try await session.meta.tableStats(session.query, schema: schema)
 			resort()
 		} catch {
 			self.error = error.localizedDescription

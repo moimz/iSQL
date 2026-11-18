@@ -118,21 +118,13 @@ final class TableInspector {
 		defer { loading = false }
 		do {
 			try await session.loadCatalogIfNeeded()
-			let lit = { [dialect] (s: String) in dialect.literal(.text(s)) }
-			let r = try await session.query("""
-				SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH, DATA_FREE,
-				       AUTO_INCREMENT, ROW_FORMAT, CREATE_TIME, UPDATE_TIME
-				  FROM information_schema.TABLES WHERE TABLE_NAME = \(lit(table.name)) AND TABLE_SCHEMA = \(lit(table.schema))
-				""").last ?? QueryResult()
-			if let v = r.rows.first {
-				func s(_ i: Int) -> String { v[safe: i]?.string ?? "" }
-				func n(_ i: Int) -> Int64? { v[safe: i]?.string.flatMap { Int64($0) } }
-				engine = s(0); collation = s(1); comment = s(2)
-				approxRows = n(3); avgRowLength = n(4) ?? 0; dataLength = n(5) ?? 0; indexLength = n(6) ?? 0; dataFree = n(7) ?? 0
-				autoIncrement = n(8); rowFormat = s(9); created = s(10); updated = s(11)
+			if let v = try await session.meta.tableStatus(session.query, table) {
+				engine = v.engine; collation = v.collation; comment = v.comment
+				approxRows = v.approxRows; avgRowLength = v.avgRowLength; dataLength = v.dataLength; indexLength = v.indexLength; dataFree = v.dataFree
+				autoIncrement = v.autoIncrement; rowFormat = v.rowFormat; created = v.created; updated = v.updated
 			}
 			resetEdits()
-			createSQL = (try? await session.query("SHOW CREATE TABLE \(dialect.quote(table: table))").last?.rows.first?[safe: 1]?.string) ?? ""
+			createSQL = ((try? await session.meta.createStatement(session.query, .table, schema: table.schema, name: table.name)) ?? nil) ?? ""
 			// information_schema 의 AUTO_INCREMENT 는 MySQL 8 에서 하루까지 묵을 수 있다 → CREATE 문의 값을 쓴다
 			if let m = createSQL.firstMatch(of: /\)[^)]*\bAUTO_INCREMENT=(\d+)/) { autoIncrement = Int64(m.1) }
 			try await loadIndexes()
@@ -146,70 +138,15 @@ final class TableInspector {
 	@MainActor
 	private func loadIndexes() async throws {
 		guard let session else { return }
-		let r = try await session.query("SHOW INDEX FROM \(dialect.quote(table: table))").last ?? QueryResult()
-		func col(_ name: String) -> Int? { r.columns.firstIndex { $0.name.caseInsensitiveCompare(name) == .orderedSame } }
-		guard let iName = col("Key_name"), let iCol = col("Column_name") else { indexes = []; return }
-		let iNonUnique = col("Non_unique"), iSub = col("Sub_part"), iType = col("Index_type"), iCard = col("Cardinality")
-		var list: [IndexInfo] = []
-		for row in r.rows {
-			let name = row[iName].string ?? ""
-			var column = row[iCol].string ?? "(식)"
-			if let iSub, let sub = row[iSub].string { column += "(\(sub))" }
-			if let k = list.firstIndex(where: { $0.name == name }) {
-				list[k].columns.append(column)
-				continue
-			}
-			let method = iType.flatMap { row[$0].string } ?? ""
-			let kind: IndexInfo.Kind = name == "PRIMARY" ? .primary
-				: method == "FULLTEXT" ? .fulltext
-				: method == "SPATIAL" ? .spatial
-				: (iNonUnique.flatMap { row[$0].string } == "0" ? .unique : .index)
-			list.append(IndexInfo(name: name, kind: kind, columns: [column], method: method,
-			                      cardinality: iCard.flatMap { row[$0].string }.flatMap { Int64($0) }))
-		}
-		// FULLTEXT 파서: SHOW CREATE TABLE 의 "FULLTEXT KEY `이름` (…) /*!50100 WITH PARSER `ngram` */"
-		if list.contains(where: { $0.kind == .fulltext }), !createSQL.isEmpty {
-			let ddl = createSQL
-			for line in ddl.split(separator: "\n") where line.contains("WITH PARSER") {
-				guard let name = Self.firstQuoted(line.drop { $0 != "`" }),
-				      let r = line.range(of: "WITH PARSER "),
-				      let parser = Self.firstQuoted(line[r.upperBound...].drop { $0 != "`" }) else { continue }
-				if let k = list.firstIndex(where: { $0.name == name }) { list[k].parser = parser }
-			}
-		}
-		// 기본 키가 맨 위
-		indexes = list.filter { $0.kind == .primary } + list.filter { $0.kind != .primary }
+		indexes = try await session.meta.indexes(session.query, table, createSQL: createSQL)
 	}
 
 	/// 외래 키: information_schema 에서 나가는 키와 들어오는 키
 	@MainActor
 	private func loadForeignKeys() async throws {
 		guard let session, !table.isView else { foreignKeys = []; referencedBy = []; return }
-		let lit = { [dialect] (s: String) in dialect.literal(.text(s)) }
-		func read(_ whereSQL: String) async throws -> [ForeignKeyInfo] {
-			let r = try await session.query("""
-				SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.COLUMN_NAME,
-				       k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME, r.DELETE_RULE, r.UPDATE_RULE
-				  FROM information_schema.KEY_COLUMN_USAGE k
-				  JOIN information_schema.REFERENTIAL_CONSTRAINTS r
-				    ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME
-				 WHERE k.REFERENCED_TABLE_NAME IS NOT NULL AND \(whereSQL)
-				 ORDER BY k.TABLE_SCHEMA, k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION
-				""").last ?? QueryResult()
-			var list: [ForeignKeyInfo] = []
-			for row in r.rows {
-				func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
-				if let k = list.indices.last, list[k].name == s(0), list[k].schema == s(1), list[k].table == s(2) {
-					list[k].columns.append(s(3)); list[k].refColumns.append(s(6))
-				} else {
-					list.append(ForeignKeyInfo(name: s(0), schema: s(1), table: s(2), columns: [s(3)], refSchema: s(4), refTable: s(5),
-					                           refColumns: [s(6)], onDelete: s(7), onUpdate: s(8)))
-				}
-			}
-			return list
-		}
-		foreignKeys = try await read("k.TABLE_SCHEMA = \(lit(table.schema)) AND k.TABLE_NAME = \(lit(table.name))")
-		referencedBy = try await read("k.REFERENCED_TABLE_SCHEMA = \(lit(table.schema)) AND k.REFERENCED_TABLE_NAME = \(lit(table.name))")
+		foreignKeys = try await session.meta.foreignKeys(session.query, schema: table.schema, table: table.name, incoming: false)
+		referencedBy = try await session.meta.foreignKeys(session.query, schema: table.schema, table: table.name, incoming: true)
 	}
 
 	/// ADD CONSTRAINT … FOREIGN KEY 절 (ALTER TABLE 뒤에 붙인다)

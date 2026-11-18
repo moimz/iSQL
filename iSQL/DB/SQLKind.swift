@@ -32,6 +32,13 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		}
 	}
 
+	/// 이 종류의 메타데이터 읽기. 아직 모두 MySQL
+	var meta: any SQLMeta {
+		switch self {
+		case .mysql, .mariadb, .postgres, .sqlserver, .sqlite, .oracle: MySQLMeta()
+		}
+	}
+
 	/// 이 종류의 SQL 문법. 아직 모두 MySQL (2.0 1단계: 동작은 1.x 그대로, 틀만)
 	var dialect: any SQLDialect {
 		switch self {

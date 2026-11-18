@@ -20,7 +20,7 @@ struct ImportSheet: View {
 	private var locked: Bool { job.running || job.finished || job.failure != nil }
 
 	private var schemaOptions: [(title: String, value: String?)] {
-		let user = session.databases.filter { !Session.systemSchemas.contains($0.lowercased()) }
+		let user = session.databases.filter { !session.systemSchemas.contains($0.lowercased()) }
 		return [("파일에 적힌 대로 (USE 안 함)", ""), ("", nil)] + user.map { ($0, $0) }
 	}
 

@@ -19,7 +19,7 @@ struct CreateViewSheet: View {
 		self.sql = sql
 		self.session = session
 		self.title = title
-		let dbs = session.databases.filter { !Session.systemSchemas.contains($0) }
+		let dbs = session.databases.filter { !session.systemSchemas.contains($0) }
 		let want = schema ?? session.currentDB
 		_schema = State(initialValue: dbs.contains(want) ? want : (dbs.first ?? want))
 	}
@@ -53,7 +53,7 @@ struct CreateViewSheet: View {
 				GridRow {
 					Text("데이터베이스:")
 					HStack(spacing: 12) {
-						PopUp(selection: $schema, options: session.databases.filter { !Session.systemSchemas.contains($0) }.map { ($0, $0) })
+						PopUp(selection: $schema, options: session.databases.filter { !session.systemSchemas.contains($0) }.map { ($0, $0) })
 							.frame(width: 240)
 							.disabled(privateOnly)
 						Toggle("나만 보기", isOn: $privateOnly)

@@ -387,7 +387,7 @@ struct CreateTableSheet: View {
 	private func loadDefaults() async {
 		try? await session.loadCatalogIfNeeded()
 		if engine.isEmpty {
-			let e = try? await session.query("SELECT @@default_storage_engine").last?.rows.first?.first?.string
+			let e = (try? await session.meta.defaultEngine(session.query)) ?? nil
 			engine = e ?? (session.catalog.engines.contains("InnoDB") ? "InnoDB" : session.catalog.engines.first ?? "")
 		}
 		if charset.isEmpty, let cs = session.server?.defaultCharset, !cs.isEmpty {
@@ -396,11 +396,9 @@ struct CreateTableSheet: View {
 			collation = session.server?.defaultCollation.flatMap { $0.isEmpty ? nil : $0 } ?? session.catalog.defaultCollation(for: cs) ?? ""
 		}
 		if charset.isEmpty {
-			let r = try? await session.query("""
-				SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = \(dialect.literal(.text(schema)))
-				""").last
-			charset = r?.rows.first?[safe: 0]?.string ?? ""
-			collation = r?.rows.first?[safe: 1]?.string ?? ""
+			let r = (try? await session.meta.schemaDefaults(session.query, schema: schema)) ?? nil
+			charset = r?.charset ?? ""
+			collation = r?.collation ?? ""
 		}
 	}
 

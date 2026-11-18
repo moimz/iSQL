@@ -138,6 +138,8 @@ final class Session {
 	/// 접속한 서버의 DB 종류와 SQL 문법 (서버가 없으면 MySQL)
 	var kind: SQLKind { server?.sqlKind ?? .mysql }
 	var dialect: any SQLDialect { kind.dialect }
+	/// 메타데이터 읽기 (테이블 목록·인덱스·CREATE 문 …)
+	var meta: any SQLMeta { kind.meta }
 
 	private var tunnel: SSHTunnel?
 	private var conn: (any DBConnection)?
@@ -167,7 +169,8 @@ final class Session {
 		}
 	}
 
-	static let systemSchemas: Set<String> = ["information_schema", "mysql", "performance_schema", "sys"]
+	/// 목록에서 빼는 시스템 DB (서버 종류마다)
+	var systemSchemas: Set<String> { meta.systemSchemas }
 
 	var isConnected: Bool { state == .connected }
 
@@ -690,34 +693,10 @@ final class Session {
 		guard let conn else { return }
 		loadingSchema = true
 		defer { loadingSchema = false }
-		let excluded = Self.systemSchemas.map { "'\($0)'" }.joined(separator: ",")
-		let results = try await conn.query("""
-			SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN (\(excluded)) ORDER BY SCHEMA_NAME;
-			SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TABLE_COMMENT, TABLE_ROWS, ENGINE FROM information_schema.TABLES
-			 WHERE TABLE_SCHEMA NOT IN (\(excluded)) ORDER BY TABLE_SCHEMA, TABLE_NAME;
-			SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT
-			  FROM information_schema.COLUMNS WHERE TABLE_SCHEMA NOT IN (\(excluded)) ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION
-			""")
-		guard results.count >= 3 else { return }
-
-		databases = results[0].rows.compactMap { $0.first?.string }
-
-		tables = results[1].rows.map { r in
-			let isView = r[2].string == "VIEW"
-			return TableInfo(schema: r[0].string ?? "", name: r[1].string ?? "", isView: isView,
-			                 // MySQL 은 뷰의 코멘트에 "VIEW" 라고 넣는다
-			                 comment: isView ? "" : (r[3].string ?? ""),
-			                 rows: r[4].string.flatMap { Int64($0) }, engine: r[safe: 5]?.string ?? "")
-		}
-
-		var cols: [String: [ColumnInfo]] = [:]
-		for r in results[2].rows {
-			let id = (r[0].string ?? "") + "." + (r[1].string ?? "")
-			cols[id, default: []].append(ColumnInfo(name: r[2].string ?? "", type: r[3].string ?? "", nullable: r[4].string == "YES",
-			                                        key: r[5].string ?? "", defaultValue: r[6].string, extra: r[7].string ?? "",
-			                                        comment: r[8].string ?? ""))
-		}
-		columns = cols
+		guard let snap = try await meta.schema({ try await conn.query($0) }) else { return }
+		databases = snap.databases
+		tables = snap.tables
+		columns = snap.columns
 		await loadRoutines()
 		loadPrivateViews()
 	}
@@ -794,31 +773,7 @@ final class Session {
 	/// 루틴 목록 (따로: 권한이 없어도 테이블 목록은 나오게)
 	func loadRoutines() async {
 		guard let conn else { return }
-		let excluded = Self.systemSchemas.map { "'\($0)'" }.joined(separator: ",")
-		guard let r = try? await conn.query("""
-			SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_COMMENT FROM information_schema.ROUTINES
-			 WHERE ROUTINE_SCHEMA NOT IN (\(excluded)) ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;
-			SELECT TRIGGER_SCHEMA, TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE FROM information_schema.TRIGGERS
-			 WHERE TRIGGER_SCHEMA NOT IN (\(excluded)) ORDER BY TRIGGER_SCHEMA, TRIGGER_NAME;
-			SELECT EVENT_SCHEMA, EVENT_NAME, STATUS, EVENT_TYPE, INTERVAL_VALUE, INTERVAL_FIELD, EXECUTE_AT, EVENT_COMMENT FROM information_schema.EVENTS
-			 WHERE EVENT_SCHEMA NOT IN (\(excluded)) ORDER BY EVENT_SCHEMA, EVENT_NAME
-			"""), r.count >= 3 else { routines = []; return }
-		var list: [RoutineInfo] = []
-		for row in r[0].rows {
-			let kind: RoutineKind = row[safe: 2]?.string == "FUNCTION" ? .function : .procedure
-			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: kind, comment: row[safe: 3]?.string ?? ""))
-		}
-		for row in r[1].rows {
-			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: .trigger,
-			                        detail: "\(row[safe: 2]?.string ?? "") \(row[safe: 3]?.string ?? "") · \(row[safe: 4]?.string ?? "")"))
-		}
-		for row in r[2].rows {
-			let recurring = row[safe: 3]?.string == "RECURRING"
-			let when = recurring ? "매 \(row[safe: 4]?.string ?? "") \(row[safe: 5]?.string ?? "")" : "한 번 · \(row[safe: 6]?.string ?? "")"
-			list.append(RoutineInfo(schema: row[0].string ?? "", name: row[1].string ?? "", kind: .event, detail: when,
-			                        enabled: row[safe: 2]?.string == "ENABLED", comment: row[safe: 7]?.string ?? ""))
-		}
-		routines = list
+		routines = (try? await meta.routines({ try await conn.query($0) })) ?? []
 	}
 
 	func routines(_ schema: String, _ kind: RoutineKind) -> [RoutineInfo] {
@@ -925,21 +880,7 @@ final class Session {
 	@MainActor
 	func loadCatalogIfNeeded() async throws {
 		guard !catalogLoaded else { return }
-		var c = ServerCatalog()
-		let e = try await query("SHOW ENGINES").last ?? QueryResult()
-		let iSupport = e.columns.firstIndex { $0.name.caseInsensitiveCompare("Support") == .orderedSame } ?? 1
-		c.engines = e.rows.filter { ["YES", "DEFAULT"].contains($0[safe: iSupport]?.string?.uppercased() ?? "") }
-			.compactMap { $0.first?.string }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-		let cs = try await query("SELECT CHARACTER_SET_NAME, DEFAULT_COLLATE_NAME FROM information_schema.CHARACTER_SETS ORDER BY CHARACTER_SET_NAME").last ?? QueryResult()
-		c.charsets = cs.rows.map { ($0[0].string ?? "", $0[safe: 1]?.string ?? "") }
-		let co = try await query("SELECT COLLATION_NAME, CHARACTER_SET_NAME FROM information_schema.COLLATIONS ORDER BY COLLATION_NAME").last ?? QueryResult()
-		c.collations = co.rows.map { ($0[0].string ?? "", $0[safe: 1]?.string ?? "") }
-		// 전문 검색 파서·n-gram 조각 크기 (없는 서버면 비워 둔다)
-		c.fulltextParsers = (try? await query("SELECT PLUGIN_NAME FROM information_schema.PLUGINS WHERE PLUGIN_TYPE = 'FTPARSER' AND PLUGIN_STATUS = 'ACTIVE'").last)?
-			.rows.compactMap { $0.first?.string } ?? []
-		if c.fulltextParsers.contains("ngram") {
-			c.ngramTokenSize = (try? await query("SELECT @@ngram_token_size").last)?.rows.first?.first?.string.flatMap { Int($0) }
-		}
+		let c = try await meta.serverCatalog(query)
 		catalog = c
 		catalogLoaded = true
 	}

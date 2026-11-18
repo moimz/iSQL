@@ -282,9 +282,8 @@ struct ConnectForm: View {
 					testSteps.append(.init(ok: nil, text: step))
 				}
 				if s.ssh.enabled, let t = tunnel { testSteps[0].text = "SSH 터널 열림 (\(s.ssh.host) → 이 맥 \(t.localPort) 포트)" }
-				let info = try await conn.rows("SELECT VERSION(), CURRENT_USER(), (SELECT COUNT(*) FROM information_schema.SCHEMATA)")
-				let row = info.rows.first ?? []
-				testSteps[testSteps.count - 1] = .init(ok: true, text: "MySQL 로그인 성공: \(row[safe: 1]?.string ?? s.user), 서버 \(row[safe: 0]?.string ?? conn.serverVersion), DB \(row[safe: 2]?.string ?? "?")개")
+				let info = try await (s.sqlKind ?? .mysql).meta.connectionInfo { try await conn.query($0) }
+				testSteps[testSteps.count - 1] = .init(ok: true, text: "MySQL 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개")
 				conn.close()
 				tunnel?.close()
 			} catch {
