@@ -64,7 +64,7 @@ final class DatabaseRenameJob {
 			var ddls: [String: String] = [:]
 			for v in views {
 				step = "뷰 \(v) 읽는 중…"
-				if let d = try await session.meta.createStatement(session.query, .view, schema: source, name: v) { ddls[v] = Self.rewriteView(d, name: v, from: source, to: target, dialect: dialect) }
+				if let d = try await session.meta.createStatement(session.query, .view, schema: source, name: v) { ddls[v] = dialect.rewriteViewDefinition(d, name: v, from: source, to: target) }
 			}
 			step = "데이터베이스 만드는 중…"
 			_ = try await session.query(dialect.createDatabase(target, charset: charset, collation: collation))
@@ -116,14 +116,5 @@ final class DatabaseRenameJob {
 		}
 		step = ""
 		finished = !isError || message?.hasPrefix("테이블은 옮겼지만") == true
-	}
-
-	/// SHOW CREATE VIEW 를 새 DB 용으로: DEFINER·ALGORITHM 을 빼고(권한 오류 방지), `옛`. 참조를 `새`. 로
-	/// DB 를 붙여 읽으면 "VIEW `db`.`v` AS …", 안 붙이면 "VIEW `v` AS …" 로 온다 → 둘 다 " AS " 뒤 본문만 쓴다
-	static func rewriteView(_ ddl: String, name: String, from: String, to: String, dialect: any SQLDialect) -> String {
-		let q = dialect.quote(_:)
-		guard let v = ddl.range(of: " VIEW "), let asAt = ddl.range(of: " AS ", range: v.upperBound..<ddl.endIndex) else { return ddl }
-		let body = ddl[asAt.lowerBound...].replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
-		return dialect.createViewHead("\(q(to)).\(q(name))") + body
 	}
 }

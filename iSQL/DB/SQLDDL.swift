@@ -32,6 +32,10 @@ protocol SQLDDL {
 	func truncate(_ target: String) -> String
 	/// 여러 테이블 이름 바꾸기 (한 문장: 하나라도 실패하면 모두 제자리)
 	func renameTables(_ pairs: [(from: String, to: String)]) -> String
+	/// 정의 글 안의 DB 참조를 다른 DB 로 (감싼 것·안 감싼 것 모두)
+	func retargetSchema(_ ddl: String, from: String, to: String) -> String
+	/// 뷰 CREATE 문을 다른 DB 의 같은 이름 뷰로 (만든 계정·알고리즘은 뺀다)
+	func rewriteViewDefinition(_ ddl: String, name: String, from: String, to: String) -> String
 	/// SHOW CREATE TABLE 의 "CREATE TABLE `이름`" 을 다른 대상으로 (머리가 다르면 nil)
 	func retargetCreateTable(_ ddl: String, name: String, to target: String) -> String?
 

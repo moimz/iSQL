@@ -24,7 +24,11 @@ final class SQLDumpReader: @unchecked Sendable {
 	private var delimiter: [UInt8] = [UInt8(ascii: ";")]
 	private static let chunk = 1 << 20
 
-	init(url: URL) throws {
+	/// 따옴표·주석·DELIMITER 규칙 (서버 종류)
+	private let syntax: SQLSyntax
+
+	init(url: URL, syntax: SQLSyntax) throws {
+		self.syntax = syntax
 		handle = try FileHandle(forReadingFrom: url)
 		size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
 		// UTF-8 BOM 은 건너뛴다
@@ -92,16 +96,18 @@ final class SQLDumpReader: @unchecked Sendable {
 		while let b = peek(0) {
 			switch state {
 			case .normal:
-				if !content && (b == 0x44 || b == 0x64), takeDelimiterCommand() { continue }
+				if !content && syntax.delimiterCommand && (b == 0x44 || b == 0x64), takeDelimiterCommand() { continue }
 				if matchesDelimiter() {
 					for _ in delimiter { take() }
 					if content { return Statement(bytes: out, line: startLine) }
 					continue
 				}
-				switch b {
-				case 0x27, 0x22, 0x60:   // ' " `
+				if syntax.opensQuote(UInt16(b)) {   // ' " `
 					begin(); out.append(take()); state = .quote(b)
-				case 0x23:   // #
+					continue
+				}
+				switch b {
+				case 0x23 where syntax.hashComments:   // #
 					take(); state = .lineComment
 				case 0x2D where peek(1) == 0x2D && (peek(2).map(Self.isSpace) ?? true):   // "-- "
 					take(); take(); state = .lineComment
@@ -120,7 +126,7 @@ final class SQLDumpReader: @unchecked Sendable {
 			case .quote(let q):
 				let c = take()
 				out.append(c)
-				if c == 0x5C && q != 0x60 {   // \ 다음 글자는 그대로
+				if c == 0x5C && syntax.backslashEscapes && UInt16(q) != syntax.identifierQuote {   // \ 다음 글자는 그대로
 					if peek(0) != nil { out.append(take()) }
 				} else if c == q {
 					if peek(0) == q { out.append(take()) } else { state = .normal }   // '' 는 따옴표 하나
@@ -213,7 +219,7 @@ final class SQLImportJob {
 		started = Date()
 		touched = schema
 		do {
-			reader = try SQLDumpReader(url: url)
+			reader = try SQLDumpReader(url: url, syntax: dialect.syntax)
 			let c = try await session.sideConnection(purpose: "SQL 가져오기")
 			conn = c
 			if disableForeignKeys, let off = dialect.foreignKeyChecks(false) { _ = try await c.query(off) }

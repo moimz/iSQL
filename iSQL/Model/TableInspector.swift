@@ -238,23 +238,6 @@ final class TableInspector {
 		dialect.alterTable(dialect.quote(table: table), [dialect.addIndexClause(kind: kind, name: name, columns: columns, parser: parser)])
 	}
 
-	/// "`a``b` …" → a`b (맨 앞 백틱 이름)
-	static func firstQuoted(_ s: Substring) -> String? {
-		guard s.first == "`" else { return nil }
-		var out = ""
-		var i = s.index(after: s.startIndex)
-		while i < s.endIndex {
-			if s[i] == "`" {
-				let n = s.index(after: i)
-				if n < s.endIndex, s[n] == "`" { out.append("`"); i = s.index(after: n); continue }
-				return out
-			}
-			out.append(s[i])
-			i = s.index(after: i)
-		}
-		return nil
-	}
-
 	/// ALTER 하나를 실행하고 다시 읽는다 (사이드바 코멘트·구조의 키도 바뀌므로 스키마도). 실패하면 오류 글자
 	@MainActor
 	func run(_ sql: String) async -> String? {

@@ -118,12 +118,12 @@ final class QueryPanel {
 
 	/// 선택한 부분이 있으면 그 부분의 문장들, 없으면 커서가 있는 문장 하나
 	func statementsToRun(all: Bool) -> [String] {
-		if all { return SQLSplitter.split(text).map(\.text) }
+		if all { return SQLSplitter.split(text, dialect.syntax).map(\.text) }
 		let ns = text as NSString
 		if selection.length > 0, NSMaxRange(selection) <= ns.length {
-			return SQLSplitter.split(ns.substring(with: selection)).map(\.text)
+			return SQLSplitter.split(ns.substring(with: selection), dialect.syntax).map(\.text)
 		}
-		let parts = SQLSplitter.split(text)
+		let parts = SQLSplitter.split(text, dialect.syntax)
 		let cursor = min(selection.location, ns.length)
 		// 커서가 들어 있는 문장, 없으면 커서 바로 앞 문장 (줄 끝에서 ⌘↩ 하는 경우)
 		if let p = parts.first(where: { $0.range.location <= cursor && cursor <= NSMaxRange($0.range) }) { return [p.text] }
@@ -152,7 +152,7 @@ final class QueryPanel {
 			}
 			for st in statements {
 				// LIMIT 없는 SELECT 는 한 쪽 행 수만큼만 (쪽을 넘기면 다시 실행)
-				let paged = SQLSplitter.canAutoLimit(st)
+				let paged = SQLSplitter.canAutoLimit(st, dialect.syntax)
 				let size = QueryOutput.currentPageSize
 				let sql = paged ? dialect.paged(st, limit: size + 1) : st
 				for r in try await session.query(sql) {
@@ -161,7 +161,7 @@ final class QueryPanel {
 					} else {
 						affected += r.affectedRows
 						changes += 1
-						touched += SQLSplitter.writtenTables(st)
+						touched += SQLSplitter.writtenTables(st, dialect.syntax)
 					}
 				}
 			}
@@ -206,9 +206,10 @@ final class QueryPanel {
 			for st in statements {
 				let body = ExplainPlan.stripExplain(st)
 				// 나무는 MariaDB·옛 MySQL 에 없다 → 없으면 표만
-				let tree = (try? await session.query("EXPLAIN FORMAT=TREE \(body)"))?.last?.rows.first?.first?.display
-				guard let table = try await session.query("EXPLAIN \(body)").last(where: \.isResultSet) else { continue }
-				let out = QueryOutput(sql: "EXPLAIN \(body)", paged: false, result: table, pageSize: max(1, table.rows.count), session: session)
+				var tree: String?
+				if let t = dialect.explainTree(body) { tree = (try? await session.query(t))?.last?.rows.first?.first?.display }
+				guard let table = try await session.query(dialect.explain(body)).last(where: \.isResultSet) else { continue }
+				let out = QueryOutput(sql: dialect.explain(body), paged: false, result: table, pageSize: max(1, table.rows.count), session: session)
 				let plan = ExplainPlan(tree: tree, result: table)
 				warnCount += plan.warnings.count
 				out.plan = plan
@@ -726,7 +727,7 @@ final class QueryResultSource: GridSource {
 	}
 }
 
-/// SQL 을 문장으로 나눈다: 따옴표·백틱·주석 안의 ; 는 나누지 않는다
+/// SQL 을 문장으로 나눈다: 따옴표·이름·주석 안의 ; 는 나누지 않는다 (글자 규칙은 서버 종류의 SQLSyntax)
 enum SQLSplitter {
 	struct Part {
 		let text: String
@@ -734,7 +735,7 @@ enum SQLSplitter {
 		let range: NSRange
 	}
 
-	static func split(_ sql: String) -> [Part] {
+	static func split(_ sql: String, _ syntax: SQLSyntax) -> [Part] {
 		let u = Array(sql.utf16)
 		var parts: [Part] = []
 		var start = 0
@@ -743,18 +744,18 @@ enum SQLSplitter {
 		func cut(_ end: Int) {
 			let r = NSRange(location: start, length: end - start)
 			let t = (sql as NSString).substring(with: r).trimmingCharacters(in: .whitespacesAndNewlines)
-			if !t.isEmpty && !onlyComments(t) { parts.append(Part(text: t, range: r)) }
+			if !t.isEmpty && !onlyComments(t, syntax) { parts.append(Part(text: t, range: r)) }
 		}
 		while i < u.count {
 			let c = u[i]
 			if quote != 0 {
-				if c == 92 /* \ */ && quote != 96 { i += 2; continue }
+				if c == 92 /* \ */ && syntax.backslashEscapes && quote != syntax.identifierQuote { i += 2; continue }
 				if c == quote { quote = 0 }
 				i += 1; continue
 			}
+			if syntax.opensQuote(c) { quote = c; i += 1; continue }   // ' " `
 			switch c {
-			case 39, 34, 96: quote = c                      // ' " `
-			case 35:                                           // # 줄 주석
+			case 35 where syntax.hashComments:                 // # 줄 주석
 				while i < u.count && u[i] != 10 { i += 1 }
 				continue
 			case 45 where i + 1 < u.count && u[i + 1] == 45:   // -- 줄 주석
@@ -776,13 +777,13 @@ enum SQLSplitter {
 		return parts
 	}
 
-	private static func onlyComments(_ t: String) -> Bool {
-		stripComments(t).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+	private static func onlyComments(_ t: String, _ syntax: SQLSyntax) -> Bool {
+		stripComments(t, syntax).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 	}
 
-	static func stripComments(_ s: String) -> String {
+	static func stripComments(_ s: String, _ syntax: SQLSyntax) -> String {
 		var out = s
-		for pattern in ["/\\*[\\s\\S]*?\\*/", "(?m)--[^\\n]*$", "(?m)#[^\\n]*$"] {
+		for pattern in ["/\\*[\\s\\S]*?\\*/", "(?m)--[^\\n]*$"] + (syntax.hashComments ? ["(?m)#[^\\n]*$"] : []) {
 			out = out.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
 		}
 		return out
@@ -790,8 +791,8 @@ enum SQLSplitter {
 
 	/// 위험한 문장이면 그 이유. 서버와 상관없이 늘 확인한다 (사용자 결정 2026-11-15):
 	/// WHERE 없는 UPDATE, DELETE(WHERE 가 있어도), DROP, TRUNCATE, ALTER
-	static func danger(_ st: String) -> String? {
-		let s = stripComments(st).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+	static func danger(_ st: String, _ syntax: SQLSyntax) -> String? {
+		let s = stripComments(st, syntax).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
 		func starts(_ w: String) -> Bool { s.hasPrefix(w + " ") || s.hasPrefix(w + "\n") || s.hasPrefix(w + "\t") }
 		let hasWhere = s.range(of: "\\bWHERE\\b", options: .regularExpression) != nil
 		if starts("UPDATE") && !hasWhere { return "WHERE 없는 UPDATE: 모든 행이 바뀝니다" }
@@ -803,8 +804,8 @@ enum SQLSplitter {
 	}
 
 	/// LIMIT 을 자동으로 붙여도 되는 SELECT 인지: SELECT 로 시작하고, LIMIT·INTO·FOR UPDATE·LOCK IN SHARE MODE 가 없을 때
-	static func canAutoLimit(_ st: String) -> Bool {
-		let s = stripComments(st).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+	static func canAutoLimit(_ st: String, _ syntax: SQLSyntax) -> Bool {
+		let s = stripComments(st, syntax).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
 		guard s.hasPrefix("SELECT ") || s.hasPrefix("SELECT\n") || s.hasPrefix("SELECT\t") || s.hasPrefix("(SELECT") else { return false }
 		// 따옴표 안 글자는 빼고 본다
 		let bare = s.replacingOccurrences(of: "'(?:[^'\\\\]|\\\\.)*'", with: "''", options: .regularExpression)
@@ -815,12 +816,13 @@ enum SQLSplitter {
 	}
 
 	/// 이 문장이 바꾸는 테이블 이름들 (db.table 또는 table)
-	static func writtenTables(_ st: String) -> [String] {
-		let s = stripComments(st)
-		let pattern = "(?i)^\\s*(?:UPDATE(?:\\s+LOW_PRIORITY)?(?:\\s+IGNORE)?|INSERT(?:\\s+IGNORE)?\\s+INTO|INSERT\\s+(?!INTO)|REPLACE\\s+INTO|DELETE\\s+FROM|TRUNCATE(?:\\s+TABLE)?|ALTER\\s+TABLE)\\s+([`\\w.]+)"
+	static func writtenTables(_ st: String, _ syntax: SQLSyntax) -> [String] {
+		let s = stripComments(st, syntax)
+		let q = NSRegularExpression.escapedPattern(for: syntax.identifierQuoteString)
+		let pattern = "(?i)^\\s*(?:UPDATE(?:\\s+LOW_PRIORITY)?(?:\\s+IGNORE)?|INSERT(?:\\s+IGNORE)?\\s+INTO|INSERT\\s+(?!INTO)|REPLACE\\s+INTO|DELETE\\s+FROM|TRUNCATE(?:\\s+TABLE)?|ALTER\\s+TABLE)\\s+([" + q + "\\w.]+)"
 		guard let re = try? NSRegularExpression(pattern: pattern),
 		      let m = re.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)),
 		      m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: s) else { return [] }
-		return [String(s[r]).replacingOccurrences(of: "`", with: "")]
+		return [String(s[r]).replacingOccurrences(of: syntax.identifierQuoteString, with: "")]
 	}
 }

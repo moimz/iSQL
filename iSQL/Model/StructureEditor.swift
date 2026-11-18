@@ -156,33 +156,6 @@ final class StructureEditor: GridSource {
 		}
 	}
 
-	/// "  `name` int unsigned NOT NULL," 줄들에서 이름 → 정의
-	static func parseCreate(_ ddl: String) -> [String: String] {
-		var out: [String: String] = [:]
-		for line in ddl.split(separator: "\n") {
-			let t = line.drop { $0 == " " }
-			guard t.first == "`" else { continue }
-			var name = ""
-			var i = t.index(after: t.startIndex)
-			var closed = false
-			while i < t.endIndex {
-				let ch = t[i]
-				if ch == "`" {
-					let next = t.index(after: i)
-					if next < t.endIndex, t[next] == "`" { name.append("`"); i = t.index(after: next); continue }
-					i = next; closed = true; break
-				}
-				name.append(ch)
-				i = t.index(after: i)
-			}
-			guard closed else { continue }
-			var rest = t[i...].trimmingCharacters(in: .whitespaces)
-			if rest.hasSuffix(",") { rest.removeLast() }
-			out[name] = rest
-		}
-		return out
-	}
-
 	// MARK: 바뀐 것
 
 	private func changed() {

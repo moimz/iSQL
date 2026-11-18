@@ -198,7 +198,7 @@ struct RoutineTabView: View {
 						.help("인자를 넣어 CALL / SELECT 문을 쿼리 패널에 넣습니다")
 				}
 				if editor.kind == .view {
-					Button("줄바꿈") { editor.text = SQLHighlight.format(editor.text) }
+					Button("줄바꿈") { editor.text = SQLHighlight.format(editor.text, dialect.syntax) }
 						.help("FROM · WHERE · JOIN 앞과 SELECT 목록의 쉼표 뒤에서 줄을 나눕니다 (뜻은 그대로)")
 				}
 				if !editor.isNew {

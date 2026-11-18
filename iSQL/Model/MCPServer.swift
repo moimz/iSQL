@@ -45,9 +45,9 @@ enum MCPPermission: String, CaseIterable, Identifiable {
 
 /// 문장이 권한에 맞는지. 막히면 이유 글자
 enum MCPPolicy {
-	static func check(_ statement: String, _ p: MCPPermission) -> String? {
+	static func check(_ statement: String, _ p: MCPPermission, _ syntax: SQLSyntax) -> String? {
 		if p == .full { return nil }
-		let s = SQLSplitter.stripComments(statement).trimmingCharacters(in: .whitespacesAndNewlines)
+		let s = SQLSplitter.stripComments(statement, syntax).trimmingCharacters(in: .whitespacesAndNewlines)
 		let up = s.uppercased()
 		let first = up.split(whereSeparator: { $0.isWhitespace || $0 == "(" }).first.map(String.init) ?? ""
 		func has(_ pattern: String) -> Bool { up.range(of: pattern, options: .regularExpression) != nil }
@@ -72,22 +72,22 @@ enum MCPPolicy {
 		case "UPDATE":
 			return has("\\bWHERE\\b") ? nil : "WHERE 없는 UPDATE 는 " + safeReason
 		case "ALTER":
-			return alterAddsColumnsOnly(up) ? nil : "컬럼 추가가 아닌 ALTER 는 " + safeReason
+			return alterAddsColumnsOnly(up, syntax) ? nil : "컬럼 추가가 아닌 ALTER 는 " + safeReason
 		default:
 			return safeReason
 		}
 	}
 
 	/// ALTER TABLE t ADD [COLUMN] … , ADD … 처럼 컬럼 추가 절만 있는지
-	private static func alterAddsColumnsOnly(_ up: String) -> Bool {
+	private static func alterAddsColumnsOnly(_ up: String, _ syntax: SQLSyntax) -> Bool {
 		guard let r = up.range(of: "^ALTER\\s+TABLE\\s+\\S+\\s+", options: .regularExpression) else { return false }
 		let rest = String(up[r.upperBound...])
 		// 괄호·따옴표 밖의 쉼표로 절을 나눈다
 		var clauses: [String] = [], cur = "", depth = 0, quote: Character?
 		for ch in rest {
 			if let q = quote { cur.append(ch); if ch == q { quote = nil }; continue }
+			if let u = ch.utf16.first, ch.utf16.count == 1, syntax.opensQuote(u) { quote = ch; cur.append(ch); continue }
 			switch ch {
-			case "'", "\"", "`": quote = ch; cur.append(ch)
 			case "(": depth += 1; cur.append(ch)
 			case ")": depth -= 1; cur.append(ch)
 			case "," where depth == 0: clauses.append(cur); cur = ""
@@ -382,10 +382,10 @@ final class MCPServer {
 			let t = try target(a)
 			let sql = try string(a, "sql")
 			let maxRows = min(max((a["max_rows"] as? Int) ?? 200, 1), 5000)
-			let statements = SQLSplitter.split(sql).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+			let statements = SQLSplitter.split(sql, t.dialect.syntax).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 			guard !statements.isEmpty else { throw MCPFailure("실행할 SQL 이 없습니다") }
 			for s in statements {
-				if let why = MCPPolicy.check(s, permission) {
+				if let why = MCPPolicy.check(s, permission, t.dialect.syntax) {
 					note("막음 · \(t.server.displayName) · \(s.prefix(80))", ok: false)
 					throw MCPFailure(why + "\n막힌 문장: " + String(s.prefix(200)))
 				}
@@ -398,7 +398,7 @@ final class MCPServer {
 			}
 			note("run_query · \(t.server.displayName) · \(statements.first!.prefix(80))\(statements.count > 1 ? " 외 \(statements.count - 1)개" : "")")
 			// 앱에서 접속한 서버의 구조를 바꿨으면 왼쪽 목록을 다시 읽는다
-			if let session = t.session, statements.contains(where: { Self.changesSchema($0) }) {
+			if let session = t.session, statements.contains(where: { Self.changesSchema($0, t.dialect.syntax) }) {
 				Task { try? await session.loadSchema() }
 			}
 			return json(out.count == 1 ? out[0] : out)
@@ -440,8 +440,8 @@ final class MCPServer {
 		}
 	}
 
-	private static func changesSchema(_ s: String) -> Bool {
-		let up = SQLSplitter.stripComments(s).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+	private static func changesSchema(_ s: String, _ syntax: SQLSyntax) -> Bool {
+		let up = SQLSplitter.stripComments(s, syntax).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
 		return ["CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE"].contains { up.hasPrefix($0 + " ") }
 	}
 

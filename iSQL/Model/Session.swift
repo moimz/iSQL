@@ -160,10 +160,11 @@ final class Session {
 	/// 콘솔에 이 연결의 쿼리를 남긴다 (서버 이름, 용도)
 	func attachLog(_ c: any DBConnection, purpose: String = "") {
 		let name = (server?.displayName ?? "") + (purpose.isEmpty ? "" : " · " + purpose)
+		let syntax = dialect.syntax
 		c.onQuery = { [weak self] sql, seconds, error in
 			DispatchQueue.main.async {
 				MainActor.assumeIsolated {
-					QueryLog.shared.add(server: name, database: purpose.isEmpty ? (self?.currentDB ?? "") : "", sql: sql, seconds: seconds, error: error)
+					QueryLog.shared.add(syntax: syntax, server: name, database: purpose.isEmpty ? (self?.currentDB ?? "") : "", sql: sql, seconds: seconds, error: error)
 				}
 			}
 		}
@@ -760,7 +761,7 @@ final class Session {
 			_ = try await query(dialect.use(v.schema))
 			currentDB = v.schema
 		}
-		let paged = SQLSplitter.canAutoLimit(v.sql)
+		let paged = SQLSplitter.canAutoLimit(v.sql, dialect.syntax)
 		let size = QueryOutput.currentPageSize
 		let r = try await query(paged ? dialect.paged(v.sql, limit: size + 1) : v.sql).last(where: \.isResultSet) ?? QueryResult()
 		let o = QueryOutput(sql: v.sql, paged: paged, result: r, pageSize: size, session: self)

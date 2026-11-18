@@ -23,11 +23,11 @@ final class QueryLog {
 	static let limit = 2000
 
 	@MainActor
-	func add(server: String, database: String, sql: String, seconds: Double, error: String?) {
+	func add(syntax: SQLSyntax, server: String, database: String, sql: String, seconds: Double, error: String?) {
 		nextID += 1
 		let text = sql.trimmingCharacters(in: .whitespacesAndNewlines)
 		entries.append(Entry(id: nextID, time: Date(), server: server, database: database,
-		                     sql: text, seconds: seconds, error: error, dangerous: SQLSplitter.danger(text) != nil))
+		                     sql: text, seconds: seconds, error: error, dangerous: SQLSplitter.danger(text, syntax) != nil))
 		if entries.count > Self.limit { entries.removeFirst(entries.count - Self.limit) }
 	}
 

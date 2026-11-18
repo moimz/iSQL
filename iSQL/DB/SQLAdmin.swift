@@ -9,6 +9,14 @@ protocol SQLAdminSQL {
 	func callRoutine(_ kind: RoutineKind, _ target: String, args: [String], outs: [String]) -> [String]
 	/// OUT 인자를 받을 변수 (CALL 의 인자 자리)
 	func outVariable(_ name: String) -> String
+	/// 편집기 글 → 서버에 보낼 한 문장 (클라이언트용 구분자·끝의 ; 떼기)
+	func cleanDefinition(_ s: String) -> String
+	/// 만든 계정(DEFINER) 빼기 (다른 계정으로 다시 만들 때 권한 오류 방지)
+	func stripDefiner(_ s: String) -> String
+	/// "CREATE … VIEW" → 있으면 바꾸는 꼴
+	func createOrReplace(_ s: String) -> String
+	/// CREATE 문에서 만드는 이름 (DB 가 붙어 있어도 이름만)
+	func definedName(_ s: String, _ k: RoutineKind) -> String?
 
 	// MARK: 계정
 	/// 'user'@'host'

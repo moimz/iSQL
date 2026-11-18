@@ -5,24 +5,9 @@ import AppKit
 enum SQLHighlight {
 	enum Kind { case keyword, string, number, comment }
 
-	private static let keywords: Set<String> = Set("""
-		CREATE TABLE VIEW KEY PRIMARY UNIQUE FULLTEXT SPATIAL INDEX CONSTRAINT FOREIGN REFERENCES ON DELETE UPDATE CASCADE RESTRICT
-		SET NULL NOT DEFAULT AUTO_INCREMENT COMMENT CHARACTER COLLATE ENGINE CHARSET ROW_FORMAT UNSIGNED ZEROFILL GENERATED ALWAYS
-		AS VIRTUAL STORED USING BTREE HASH WITH PARSER ALGORITHM DEFINER SQL SECURITY INVOKER SELECT FROM WHERE JOIN LEFT RIGHT INNER
-		OUTER AND OR IN IS LIKE CURRENT_TIMESTAMP CHECK OPTION CASCADED LOCAL PARTITION BY RANGE LIST VALUES LESS THAN MAXVALUE
-		INT TINYINT SMALLINT MEDIUMINT BIGINT DECIMAL NUMERIC FLOAT DOUBLE BIT BOOL BOOLEAN DATE DATETIME TIMESTAMP TIME YEAR CHAR
-		VARCHAR BINARY VARBINARY TINYBLOB BLOB MEDIUMBLOB LONGBLOB TINYTEXT TEXT MEDIUMTEXT LONGTEXT ENUM JSON GEOMETRY POINT
-		INSERT INTO REPLACE IGNORE DUPLICATE ORDER GROUP HAVING LIMIT OFFSET UNION ALL DISTINCT CASE WHEN THEN ELSE END EXISTS BETWEEN
-		ASC DESC CROSS NATURAL STRAIGHT_JOIN TRUE FALSE DROP ALTER ADD COLUMN MODIFY CHANGE RENAME TO TRUNCATE EXPLAIN SHOW DESCRIBE
-		USE DATABASE SCHEMA IF BEGIN DECLARE ELSEIF WHILE LOOP REPEAT UNTIL LEAVE ITERATE RETURN RETURNS PROCEDURE FUNCTION TRIGGER
-		EVENT CALL BEFORE AFTER EACH ROW FOR DO SCHEDULE EVERY STARTS ENDS AT INTERVAL DAY HOUR MINUTE SECOND MONTH WEEK QUARTER
-		NEW OLD DETERMINISTIC READS MODIFIES CONTAINS NO DATA OUT INOUT ENABLE DISABLE COMPLETION PRESERVE CURSOR HANDLER CONTINUE
-		EXIT OPEN CLOSE FETCH SIGNAL SQLSTATE START TRANSACTION COMMIT ROLLBACK GRANT REVOKE PRIVILEGES LOCK UNLOCK TABLES OVER
-		WINDOW PARTITION RECURSIVE LATERAL XOR DIV MOD REGEXP RLIKE SOUNDS ESCAPE COUNT SUM AVG MIN MAX NOW
-		""".split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init))
 
 	/// 색칠할 자리 (UTF-16 범위). 이름(`…`)은 칠하지 않는다
-	static func tokens(_ ns: NSString, limit: Int = .max) -> [(NSRange, Kind)] {
+	static func tokens(_ ns: NSString, _ syntax: SQLSyntax, limit: Int = .max) -> [(NSRange, Kind)] {
 		let n = min(ns.length, limit)
 		var out: [(NSRange, Kind)] = []
 		var buf = [unichar](repeating: 0, count: n)
@@ -35,25 +20,25 @@ enum SQLHighlight {
 		var i = 0
 		while i < n {
 			let c = buf[i]
-			if c == 39 || c == 34 {   // ' "
+			if syntax.stringQuotes.contains(c) {   // ' "
 				var j = i + 1
 				while j < n {
-					if buf[j] == 92 { j += 2; continue }   // \
+					if buf[j] == 92 && syntax.backslashEscapes { j += 2; continue }   // \
 					if buf[j] == c { if j + 1 < n, buf[j + 1] == c { j += 2; continue }; break }
 					j += 1
 				}
 				let end = min(j + 1, n)
 				out.append((NSRange(location: i, length: end - i), .string)); i = end
-			} else if c == 96 {   // `
+			} else if c == syntax.identifierQuote {   // `
 				var j = i + 1
-				while j < n, buf[j] != 96 { j += 1 }
+				while j < n, buf[j] != c { j += 1 }
 				i = min(j + 1, n)
 			} else if c == 47, i + 1 < n, buf[i + 1] == 42 {   // /*
 				var j = i + 2
 				while j + 1 < n, !(buf[j] == 42 && buf[j + 1] == 47) { j += 1 }
 				let end = min(j + 2, n)
 				out.append((NSRange(location: i, length: end - i), .comment)); i = end
-			} else if c == 35 || (c == 45 && i + 1 < n && buf[i + 1] == 45) {   // # 또는 --
+			} else if (c == 35 && syntax.hashComments) || (c == 45 && i + 1 < n && buf[i + 1] == 45) {   // # 또는 --
 				var j = i
 				while j < n, buf[j] != 10 { j += 1 }
 				out.append((NSRange(location: i, length: j - i), .comment)); i = j
@@ -63,7 +48,7 @@ enum SQLHighlight {
 				// 키워드는 영문뿐이라 짧은 낱말만 확인 (앞이 . 이면 이름: t.name)
 				if j - i <= 20, !(i > 0 && buf[i - 1] == 46) {
 					let w = ns.substring(with: NSRange(location: i, length: j - i)).uppercased()
-					if keywords.contains(w) { out.append((NSRange(location: i, length: j - i), .keyword)) }
+					if syntax.highlightKeywords.contains(w) { out.append((NSRange(location: i, length: j - i), .keyword)) }
 				}
 				i = j
 			} else if c >= 48 && c <= 57 {
@@ -89,10 +74,10 @@ enum SQLHighlight {
 	}
 
 	/// 보기 전용 글
-	static func attributed(_ sql: String) -> AttributedString {
+	static func attributed(_ sql: String, _ syntax: SQLSyntax) -> AttributedString {
 		// SwiftUI Text 는 AppKit 색 속성을 쓰지 않아 SwiftUI 색으로 넣는다
 		var a = AttributedString(sql)
-		for (r, k) in tokens(sql as NSString) {
+		for (r, k) in tokens(sql as NSString, syntax) {
 			guard let sr = Range(r, in: sql), let ar = Range(sr, in: a) else { continue }
 			a[ar].foregroundColor = Color(nsColor: color(k))
 		}
@@ -101,13 +86,13 @@ enum SQLHighlight {
 
 	/// 편집기 글을 칠한다: 글자색만 바꾸고(실행 취소에 남지 않음) 글꼴·커서는 그대로. 아주 긴 글은 앞부분만
 	@MainActor
-	static func apply(to tv: NSTextView) {
+	static func apply(to tv: NSTextView, _ syntax: SQLSyntax) {
 		guard let storage = tv.textStorage else { return }
 		let ns = storage.string as NSString
 		let all = NSRange(location: 0, length: ns.length)
 		storage.beginEditing()
 		storage.addAttribute(.foregroundColor, value: NSColor.labelColor, range: all)
-		for (r, k) in tokens(ns, limit: 300_000) { storage.addAttribute(.foregroundColor, value: color(k), range: r) }
+		for (r, k) in tokens(ns, syntax, limit: 300_000) { storage.addAttribute(.foregroundColor, value: color(k), range: r) }
 		storage.endEditing()
 		tv.typingAttributes[.foregroundColor] = NSColor.labelColor
 	}
@@ -116,17 +101,17 @@ enum SQLHighlight {
 
 	/// 괄호 밖의 FROM·WHERE·JOIN·GROUP BY·ORDER BY·HAVING·LIMIT·UNION 앞에서 줄을 나누고,
 	/// SELECT 목록의 쉼표 뒤에서 들여 줄을 나눈다. 글자·이름·주석 안은 건드리지 않는다
-	static func format(_ sql: String) -> String {
+	static func format(_ sql: String, _ syntax: SQLSyntax) -> String {
 		let ns = sql as NSString
 		let n = ns.length
 		// 건드리면 안 되는 범위: 글자·주석 + 이름(`…`)
-		var skip = tokens(ns).filter { $0.1 == .string || $0.1 == .comment }.map(\.0)
+		var skip = tokens(ns, syntax).filter { $0.1 == .string || $0.1 == .comment }.map(\.0)
 		do {
 			var i = 0
 			while i < n {
-				if ns.character(at: i) == 96 {
+				if ns.character(at: i) == syntax.identifierQuote {
 					var j = i + 1
-					while j < n, ns.character(at: j) != 96 { j += 1 }
+					while j < n, ns.character(at: j) != syntax.identifierQuote { j += 1 }
 					skip.append(NSRange(location: i, length: min(j + 1, n) - i)); i = j + 1
 				} else { i += 1 }
 			}

@@ -153,9 +153,9 @@ struct MySQLMeta: SQLMeta {
 		// FULLTEXT 파서: SHOW CREATE TABLE 의 "FULLTEXT KEY `이름` (…) /*!50100 WITH PARSER `ngram` */"
 		if list.contains(where: { $0.kind == .fulltext }), !createSQL.isEmpty {
 			for line in createSQL.split(separator: "\n") where line.contains("WITH PARSER") {
-				guard let name = TableInspector.firstQuoted(line.drop { $0 != "`" }),
+				guard let name = Self.firstQuoted(line.drop { $0 != "`" }),
 				      let r = line.range(of: "WITH PARSER "),
-				      let parser = TableInspector.firstQuoted(line[r.upperBound...].drop { $0 != "`" }) else { continue }
+				      let parser = Self.firstQuoted(line[r.upperBound...].drop { $0 != "`" }) else { continue }
 				if let k = list.firstIndex(where: { $0.name == name }) { list[k].parser = parser }
 			}
 		}
@@ -197,7 +197,7 @@ struct MySQLMeta: SQLMeta {
 		guard let cols = rs.first else { return nil }
 		let list = cols.rows.indices.map { StructColumn(row: cols, $0) }
 		guard !list.isEmpty else { return nil }
-		return (list, StructureEditor.parseCreate(rs.last?.rows.first?[safe: 1]?.string ?? ""))
+		return (list, Self.parseCreate(rs.last?.rows.first?[safe: 1]?.string ?? ""))
 	}
 
 	func schemaDefaults(_ run: DBRun, schema: String) async throws -> (charset: String, collation: String)? {
@@ -303,5 +303,51 @@ struct MySQLMeta: SQLMeta {
 			 WHERE TABLE_SCHEMA = \(lit(schema)) ORDER BY TABLE_NAME
 			""")
 		return r.rows.map { row in (row[0].string ?? "", row[1].string == "VIEW", row[2].string.flatMap { Int($0) }, row[3].string ?? "") }
+	}
+
+	// MARK: SHOW CREATE 글 읽기
+
+	/// "`a``b` …" → a`b (맨 앞 백틱 이름)
+	static func firstQuoted(_ s: Substring) -> String? {
+		guard s.first == "`" else { return nil }
+		var out = ""
+		var i = s.index(after: s.startIndex)
+		while i < s.endIndex {
+			if s[i] == "`" {
+				let n = s.index(after: i)
+				if n < s.endIndex, s[n] == "`" { out.append("`"); i = s.index(after: n); continue }
+				return out
+			}
+			out.append(s[i])
+			i = s.index(after: i)
+		}
+		return nil
+	}
+
+	/// "  `name` int unsigned NOT NULL," 줄들에서 이름 → 정의
+	static func parseCreate(_ ddl: String) -> [String: String] {
+		var out: [String: String] = [:]
+		for line in ddl.split(separator: "\n") {
+			let t = line.drop { $0 == " " }
+			guard t.first == "`" else { continue }
+			var name = ""
+			var i = t.index(after: t.startIndex)
+			var closed = false
+			while i < t.endIndex {
+				let ch = t[i]
+				if ch == "`" {
+					let next = t.index(after: i)
+					if next < t.endIndex, t[next] == "`" { name.append("`"); i = t.index(after: next); continue }
+					i = next; closed = true; break
+				}
+				name.append(ch)
+				i = t.index(after: i)
+			}
+			guard closed else { continue }
+			var rest = t[i...].trimmingCharacters(in: .whitespaces)
+			if rest.hasSuffix(",") { rest.removeLast() }
+			out[name] = rest
+		}
+		return out
 	}
 }

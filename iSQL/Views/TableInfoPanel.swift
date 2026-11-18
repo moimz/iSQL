@@ -471,7 +471,7 @@ struct TableInfoPanel: View {
 				.buttonStyle(.borderless)
 				.disabled(inspector.createSQL.isEmpty)
 			}
-			Text(inspector.createSQL.isEmpty ? AttributedString("—") : SQLHighlight.attributed(inspector.createSQL + ";"))
+			Text(inspector.createSQL.isEmpty ? AttributedString("—") : SQLHighlight.attributed(inspector.createSQL + ";", inspector.dialect.syntax))
 				.font(.system(size: 11, design: .monospaced))
 				.textSelection(.enabled)
 				.fixedSize(horizontal: false, vertical: true)

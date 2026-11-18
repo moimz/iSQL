@@ -130,8 +130,8 @@ final class RoutineEditor {
 		message = nil
 		isError = false
 		defer { saving = false }
-		let sql = Self.clean(keepDefiner ? text : Self.stripDefiner(text))
-		guard let newName = Self.parseName(sql, kind) else {
+		let sql = dialect.cleanDefinition(keepDefiner ? text : dialect.stripDefiner(text))
+		guard let newName = dialect.definedName(sql, kind) else {
 			isError = true
 			message = "CREATE \(kind.sqlWord) `이름` … 꼴이어야 합니다"
 			return nil
@@ -143,14 +143,14 @@ final class RoutineEditor {
 			_ = try await c.query(dialect.use(schema))
 			if kind == .view, let old = name, old == newName {
 				// 뷰는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
-				_ = try await c.query(Self.orReplace(sql))
+				_ = try await c.query(dialect.createOrReplace(sql))
 			} else if let old = name {
 				_ = try await c.query(dialect.dropRoutine(kind, "\(q(schema)).\(q(old))"))
 				do {
 					_ = try await c.query(sql)
 				} catch {
 					// 원래 정의로 되돌린다 (DEFINER 를 그대로 두면 권한 문제로 실패할 수 있어 한 번 더 빼고 시도)
-					if (try? await c.query(original)) == nil { _ = try? await c.query(Self.stripDefiner(original)) }
+					if (try? await c.query(original)) == nil { _ = try? await c.query(dialect.stripDefiner(original)) }
 					throw error
 				}
 			} else {
@@ -183,38 +183,6 @@ final class RoutineEditor {
 			isError = true
 			message = error.localizedDescription
 		}
-	}
-
-	// MARK: 글 다루기
-
-	/// 앞뒤 공백, 끝의 ; 와 DELIMITER 줄을 뗀다 (서버에 보낼 때는 한 문장이라 DELIMITER 가 필요 없다)
-	static func clean(_ s: String) -> String {
-		var lines = s.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).uppercased().hasPrefix("DELIMITER ") }
-		while let l = lines.last, l.trimmingCharacters(in: .whitespaces).isEmpty { lines.removeLast() }
-		var t = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-		for end in ["$$", "//", ";;", ";"] where t.hasSuffix(end) { t = String(t.dropLast(end.count)).trimmingCharacters(in: .whitespacesAndNewlines); break }
-		return t
-	}
-
-	/// "CREATE … VIEW" → "CREATE OR REPLACE … VIEW"
-	static func orReplace(_ s: String) -> String {
-		guard !s.uppercased().contains("OR REPLACE"),
-		      let r = s.range(of: #"^\s*CREATE\b"#, options: [.regularExpression, .caseInsensitive]) else { return s }
-		return s.replacingCharacters(in: r, with: "CREATE OR REPLACE")
-	}
-
-	static func stripDefiner(_ s: String) -> String {
-		s.replacingOccurrences(of: #"DEFINER\s*=\s*(`[^`]*`|'[^']*'|[^@\s]+)@(`[^`]*`|'[^']*'|\S+)\s+"#, with: "", options: [.regularExpression, .caseInsensitive])
-	}
-
-	/// CREATE … PROCEDURE `이름` 에서 이름 (DB 가 붙어 있어도)
-	static func parseName(_ s: String, _ k: RoutineKind) -> String? {
-		let pattern = #"\b"# + k.sqlWord + #"\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:`[^`]+`|\w+)\s*\.\s*)?(`[^`]+`|\w+)"#
-		guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
-		      let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range(at: 1), in: s) else { return nil }
-		var n = String(s[r])
-		if n.hasPrefix("`") { n = String(n.dropFirst().dropLast()).replacingOccurrences(of: "``", with: "`") }
-		return n
 	}
 
 	enum RoutineError: LocalizedError {

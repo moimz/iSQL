@@ -147,7 +147,7 @@ struct QueryPanelView: View {
 		guard !statements.isEmpty else { NSSound.beep(); return }
 		// 위험한 쿼리는 확인한다 (서버 설정 > 일반 에서 끌 수 있다, 기본 켬)
 		let warn = panel.session?.server?.warnsDangerousSQL ?? true
-		let found = warn ? statements.compactMap { st in SQLSplitter.danger(st).map { "• \($0)\n  \(st.prefix(120))" } } : []
+		let found = warn ? statements.compactMap { st in SQLSplitter.danger(st, panel.dialect.syntax).map { "• \($0)\n  \(st.prefix(120))" } } : []
 		if found.isEmpty {
 			Task { await panel.run(statements) }
 		} else {
@@ -327,6 +327,8 @@ struct QueryEditor: NSViewRepresentable {
 	weak var session: Session?
 	var database: String = ""
 	var onSelection: ((NSRange) -> Void)?
+	/// 글자 규칙 (색칠·자동 완성을 띄우는 글자): 접속한 서버 종류의 것
+	var syntax: SQLSyntax { session?.dialect.syntax ?? SQLKind.mysql.dialect.syntax }
 
 	func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -353,7 +355,7 @@ struct QueryEditor: NSViewRepresentable {
 		tv.autoresizingMask = [.width]
 		tv.textContainer?.widthTracksTextView = true
 		tv.string = text
-		SQLHighlight.apply(to: tv)
+		SQLHighlight.apply(to: tv, syntax)
 		tv.delegate = context.coordinator
 		scroll.documentView = tv
 		scroll.drawsBackground = false
@@ -368,7 +370,7 @@ struct QueryEditor: NSViewRepresentable {
 	func updateNSView(_ scroll: NSScrollView, context: Context) {
 		context.coordinator.parent = self
 		guard let tv = context.coordinator.textView else { return }
-		if tv.string != text { tv.string = text; SQLHighlight.apply(to: tv) }
+		if tv.string != text { tv.string = text; SQLHighlight.apply(to: tv, syntax) }
 	}
 
 	@MainActor
@@ -390,7 +392,7 @@ struct QueryEditor: NSViewRepresentable {
 		func textDidChange(_ notification: Notification) {
 			guard let tv = textView else { return }
 			parent.text = tv.string
-			SQLHighlight.apply(to: tv)
+			SQLHighlight.apply(to: tv, parent.syntax)
 			if typing { typing = false; refresh(force: false) } else { popup.hide() }
 		}
 
@@ -406,7 +408,7 @@ struct QueryEditor: NSViewRepresentable {
 
 		func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
 			// 한 글자를 치거나 지울 때만 목록을 띄우거나 고친다 (붙여넣기·실행 취소는 아님)
-			if let t = text, t.count == 1, let ch = t.first, ch.isLetter || ch.isNumber || ch == "_" || ch == "." || ch == "`" || ch == "$" {
+			if let t = text, t.count == 1, let ch = t.first, ch.isLetter || ch.isNumber || ch == "_" || ch == "." || ch == parent.syntax.identifierQuoteCharacter || ch == "$" {
 				typing = true
 			} else if text == "", range.length == 1, popup.isVisible {
 				typing = true

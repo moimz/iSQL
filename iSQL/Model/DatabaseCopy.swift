@@ -277,7 +277,7 @@ final class DatabaseCopyJob {
 		guard let session else { return }
 		guard let ddl = try await session.meta.createStatement(session.query, .view, schema: source, name: name), ddl.contains(" VIEW ") else { throw CopyError.noDDL(name) }
 		// "VIEW `원본`.`v` AS …" 처럼 DB 가 붙어 와서 " VIEW `v`" 로 찾으면 못 찾았다 → 이름 바꾸기와 같은 고치기
-		_ = try await session.query(DatabaseRenameJob.rewriteView(ddl, name: name, from: source, to: target, dialect: dialect))
+		_ = try await session.query(dialect.rewriteViewDefinition(ddl, name: name, from: source, to: target))
 	}
 
 	/// 프로시저·함수·트리거·이벤트를 새 DB 에: SHOW CREATE 를 읽어 `원본`. 을 `새`. 로 바꾸고 USE 새 DB 에서 만든다.
@@ -295,21 +295,12 @@ final class DatabaseCopyJob {
 		for (k, n) in items {
 			current = "\(k.label) \(n)"
 			guard let ddl0 = try await session.meta.createStatement(session.query, .routine(k), schema: source, name: n) else { throw CopyError.noDDL(n) }
-			let ddl = Self.retarget(ddl0, from: source, to: target, dialect: dialect)
-			do { _ = try await c.query(ddl) } catch { _ = try await c.query(RoutineEditor.stripDefiner(ddl)) }
+			let ddl = dialect.retargetSchema(ddl0, from: source, to: target)
+			do { _ = try await c.query(ddl) } catch { _ = try await c.query(dialect.stripDefiner(ddl)) }
 			if k == .event { _ = try? await c.query(dialect.setEventEnabled("\(q(target)).\(q(n))", false)); events += 1 }
 			made += 1
 		}
 		return ", 루틴 \(made)개" + (events > 0 ? " — 이벤트 \(events)개는 꺼진 채로" : "")
-	}
-
-	/// 정의 안의 DB 참조를 새 DB 로: `원본`. 과 따옴표 없는 원본. 둘 다 (프로시저 본문은 쓴 그대로 와서 따옴표가 없을 수 있다)
-	static func retarget(_ ddl: String, from: String, to: String, dialect: any SQLDialect) -> String {
-		let q = dialect.quote(_:)
-		var s = ddl.replacingOccurrences(of: q(from) + ".", with: q(to) + ".")
-		let name = NSRegularExpression.escapedPattern(for: from)
-		s = s.replacingOccurrences(of: #"(?<![\w`$.])"# + name + #"\.(?=[`\w])"#, with: NSRegularExpression.escapedTemplate(for: q(to) + "."), options: .regularExpression)
-		return s
 	}
 
 	enum CopyError: LocalizedError {

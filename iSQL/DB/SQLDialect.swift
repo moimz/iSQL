@@ -14,6 +14,14 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	/// 값 리터럴 (NULL, '글자', 바이너리)
 	func literal(_ v: Value) -> String
 
+	/// SQL 글자를 읽는 규칙 (따옴표·주석·키워드)
+	var syntax: SQLSyntax { get }
+
+	/// 실행계획 (표)
+	func explain(_ body: String) -> String
+	/// 실행계획 나무 모양 (없는 DB 면 nil)
+	func explainTree(_ body: String) -> String?
+
 	// MARK: 기본 문장
 
 	/// SELECT(또는 INSERT … SELECT)에 행 수 제한을 붙인다. offset 이 nil 이면 처음부터 (OFFSET 을 쓰지 않는다)

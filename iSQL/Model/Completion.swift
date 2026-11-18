@@ -23,21 +23,6 @@ enum SQLCompleter {
 		var items: [CompletionItem]
 	}
 
-	static let keywords = """
-		SELECT FROM WHERE AND OR NOT IN IS NULL LIKE BETWEEN EXISTS AS ON JOIN LEFT RIGHT INNER OUTER CROSS USING \
-		GROUP BY ORDER ASC DESC HAVING LIMIT OFFSET DISTINCT UNION ALL INSERT INTO VALUES UPDATE SET DELETE REPLACE \
-		CREATE ALTER DROP TRUNCATE TABLE DATABASE INDEX VIEW IF EXISTS PRIMARY KEY FOREIGN REFERENCES DEFAULT \
-		AUTO_INCREMENT UNIQUE COMMENT SHOW DESCRIBE EXPLAIN USE CASE WHEN THEN ELSE END WITH DUPLICATE \
-		START TRANSACTION COMMIT ROLLBACK
-		""".split(separator: " ").map(String.init)
-
-	static let functions = """
-		COUNT SUM AVG MIN MAX CONCAT CONCAT_WS IFNULL COALESCE NULLIF IF NOW CURDATE CURTIME DATE DATE_FORMAT \
-		DATE_ADD DATE_SUB DATEDIFF TIMESTAMPDIFF UNIX_TIMESTAMP FROM_UNIXTIME YEAR MONTH DAY HOUR MINUTE \
-		LENGTH CHAR_LENGTH SUBSTRING LEFT RIGHT TRIM UPPER LOWER REPLACE LOCATE ROUND FLOOR CEIL ABS \
-		GROUP_CONCAT JSON_EXTRACT JSON_UNQUOTE CAST CONVERT MD5 SHA2 UUID
-		""".split(separator: " ").map(String.init)
-
 	/// 테이블 이름 뒤(FROM big ▮)에 올 낱말
 	static let clauseKeywords = ["WHERE", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "CROSS JOIN", "ON", "USING",
 	                             "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "AS", "SET", "UNION"]
@@ -50,7 +35,6 @@ enum SQLCompleter {
 		CompletionItem(kind: .keyword, insert: noSpaceAfter.contains(k) ? k : k + " ", label: k, detail: "", comment: "")
 	}
 
-	private static let reserved: Set<String> = Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC", "RANGE", "READ", "WRITE", "RANK"])
 
 
 	private static func isIdent(_ c: unichar) -> Bool {
@@ -59,7 +43,7 @@ enum SQLCompleter {
 	}
 
 	/// 문장 안에서 커서가 따옴표·주석 안이면 true (그때는 띄우지 않는다)
-	private static func insideLiteral(_ s: NSString, from start: Int, to end: Int) -> Bool {
+	private static func insideLiteral(_ s: NSString, from start: Int, to end: Int, _ syntax: SQLSyntax) -> Bool {
 		var quote: unichar = 0
 		var i = start
 		var lineComment = false, blockComment = false
@@ -69,10 +53,10 @@ enum SQLCompleter {
 			if lineComment { if c == 0x0A { lineComment = false } }
 			else if blockComment { if c == 0x2A && next == 0x2F { blockComment = false; i += 1 } }
 			else if quote != 0 {
-				if c == 0x5C && quote != 0x60 { i += 1 }
+				if c == 0x5C && syntax.backslashEscapes && quote != syntax.identifierQuote { i += 1 }
 				else if c == quote { quote = 0 }
-			} else if c == 0x27 || c == 0x22 { quote = c }
-			else if c == 0x23 || (c == 0x2D && next == 0x2D) { lineComment = true }
+			} else if syntax.stringQuotes.contains(c) { quote = c }
+			else if (c == 0x23 && syntax.hashComments) || (c == 0x2D && next == 0x2D) { lineComment = true }
 			else if c == 0x2F && next == 0x2A { blockComment = true; i += 1 }
 			i += 1
 		}
@@ -85,28 +69,29 @@ enum SQLCompleter {
 		let s = text as NSString
 		guard caret <= s.length else { return nil }
 		// 지금 문장
-		let parts = SQLSplitter.split(text)
+		let syntax = session.dialect.syntax
+		let parts = SQLSplitter.split(text, syntax)
 		let part = parts.first { $0.range.location <= caret && caret <= NSMaxRange($0.range) }
 		let stmtStart = part?.range.location ?? (parts.last.map { NSMaxRange($0.range) } ?? 0)
 		let statement = part?.text ?? s.substring(with: NSRange(location: min(stmtStart, caret), length: caret - min(stmtStart, caret)))
-		if insideLiteral(s, from: min(stmtStart, caret), to: caret) { return nil }
+		if insideLiteral(s, from: min(stmtStart, caret), to: caret, syntax) { return nil }
 
 		// 커서 앞 낱말 (여는 백틱도 함께 바꾼다)
 		var start = caret
 		while start > 0, isIdent(s.character(at: start - 1)) { start -= 1 }
-		if start > 0, s.character(at: start - 1) == 0x60 { start -= 1 }
+		if start > 0, s.character(at: start - 1) == syntax.identifierQuote { start -= 1 }
 		let rawPrefix = s.substring(with: NSRange(location: start, length: caret - start))
-		let prefix = rawPrefix.hasPrefix("`") ? String(rawPrefix.dropFirst()) : rawPrefix
+		let prefix = rawPrefix.hasPrefix(syntax.identifierQuoteString) ? String(rawPrefix.dropFirst()) : rawPrefix
 
 		// 앞에 붙은 "a." / "a.b."
 		var qualifiers: [String] = []
 		var q = start
 		while q > 0, s.character(at: q - 1) == 0x2E, qualifiers.count < 2 {
 			var e = q - 1, b = e
-			if b > 0, s.character(at: b - 1) == 0x60 {
+			if b > 0, s.character(at: b - 1) == syntax.identifierQuote {
 				// `이름`
 				e = b - 1; b = e
-				while b > 0, s.character(at: b - 1) != 0x60 { b -= 1 }
+				while b > 0, s.character(at: b - 1) != syntax.identifierQuote { b -= 1 }
 				guard b > 0 else { break }
 				qualifiers.insert(s.substring(with: NSRange(location: b, length: e - b)), at: 0)
 				q = b - 1
@@ -133,7 +118,7 @@ enum SQLCompleter {
 
 		/// 이름이 그대로 쓸 수 있는 식별자면 그대로, 아니면 감싸기 (서버 종류의 문법으로)
 		let dialect = session.dialect
-		func ident(_ name: String) -> String { dialect.quoteIfNeeded(name, reserved: reserved) }
+		func ident(_ name: String) -> String { dialect.quoteIfNeeded(name, reserved: syntax.reservedWords) }
 		func columns(of t: TableInfo) -> [CompletionItem] {
 			(session.columns[t.id] ?? []).map {
 				CompletionItem(kind: .column, insert: ident($0.name), label: $0.name, detail: $0.type, comment: $0.comment)
@@ -167,8 +152,8 @@ enum SQLCompleter {
 			}
 			items += session.databases.map { CompletionItem(kind: .database, insert: ident($0), label: $0, detail: "DB", comment: "") }
 			if !wantsTable {
-				items += keywords.map(keywordItem)
-				items += functions.map { CompletionItem(kind: .function, insert: $0 + "(", label: $0 + "()", detail: "함수", comment: "") }
+				items += syntax.completionKeywords.map(keywordItem)
+				items += syntax.completionFunctions.map { CompletionItem(kind: .function, insert: $0 + "(", label: $0 + "()", detail: "함수", comment: "") }
 			}
 			if context == "USE" { items = items.filter { $0.kind == .database } }
 		}
@@ -234,18 +219,20 @@ enum SQLCompleter {
 	static func tableRefs(_ statement: String, session: Session, defaultDB: String) -> [TableRef] {
 		let pattern = #"(?i)\b(?:FROM|JOIN|UPDATE|INTO)\s+(.+?)(?=\b(?:WHERE|ON|SET|GROUP|ORDER|LIMIT|HAVING|JOIN|LEFT|RIGHT|INNER|OUTER|CROSS|NATURAL|STRAIGHT_JOIN|VALUES|VALUE|USING|UNION|SELECT|FOR|WINDOW)\b|;|\)|$)"#
 		guard let re = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else { return [] }
+		let syntax = session.dialect.syntax
+		let quote = CharacterSet(charactersIn: syntax.identifierQuoteString)
 		let ns = statement as NSString
 		var refs: [TableRef] = []
 		for m in re.matches(in: statement, range: NSRange(location: 0, length: ns.length)) {
 			let list = ns.substring(with: m.range(at: 1))
 			for item in list.split(separator: ",") {
-				let tokens = tokenize(String(item))
+				let tokens = tokenize(String(item), syntax.identifierQuoteCharacter)
 				guard let first = tokens.first else { continue }
-				let nameParts = first.split(separator: ".", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "`")) }
+				let nameParts = first.split(separator: ".", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: quote) }
 				var alias: String?
 				var rest = Array(tokens.dropFirst())
 				if rest.first?.uppercased() == "AS" { rest.removeFirst() }
-				if let a = rest.first, !reserved.contains(a.uppercased()), !a.hasPrefix("(") { alias = a.trimmingCharacters(in: CharacterSet(charactersIn: "`")) }
+				if let a = rest.first, !syntax.reservedWords.contains(a.uppercased()), !a.hasPrefix("(") { alias = a.trimmingCharacters(in: quote) }
 				let t = nameParts.count >= 2
 					? findTable(schema: nameParts[nameParts.count - 2], name: nameParts.last!, session: session)
 					: findTable(schema: nil, name: nameParts[0], session: session, defaultDB: defaultDB)
@@ -255,11 +242,11 @@ enum SQLCompleter {
 		return refs
 	}
 
-	/// 공백으로 나누되 백틱 안 공백은 이어 붙인다
-	private static func tokenize(_ s: String) -> [String] {
+	/// 공백으로 나누되 이름 따옴표(백틱) 안 공백은 이어 붙인다
+	private static func tokenize(_ s: String, _ quote: Character) -> [String] {
 		var out: [String] = [], cur = "", inTick = false
 		for ch in s {
-			if ch == "`" { inTick.toggle(); cur.append(ch) }
+			if ch == quote { inTick.toggle(); cur.append(ch) }
 			else if ch.isWhitespace && !inTick { if !cur.isEmpty { out.append(cur); cur = "" } }
 			else { cur.append(ch) }
 		}
