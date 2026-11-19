@@ -2,7 +2,7 @@ import Foundation
 import CommonCrypto
 
 /// 다른 앱에서 내보낸 접속 목록을 iSQL 서버로 읽는다 (가져오기 시트에서 .isql 이 아닌 파일).
-/// 지금: Sequel Ace 즐겨찾기 내보내기(plist, 비밀번호 없음), DBeaver 프로젝트 내보내기(.dbp, 비밀번호 있음). 다음: MySQL Workbench.
+/// 지금: Sequel Ace 즐겨찾기 내보내기(plist, 비밀번호 없음), DBeaver 프로젝트 내보내기(.dbp, 비밀번호 있음), MySQL Workbench 접속 내보내기(zip 안 connections.xml, 비밀번호 없음).
 /// 비밀번호가 없는 파일은 처음 접속할 때 로그인 시트가 묻는다
 enum OtherAppImport {
 	struct Result {
@@ -19,7 +19,7 @@ enum OtherAppImport {
 		case empty(String)
 		var errorDescription: String? {
 			switch self {
-			case .unknown: "읽을 수 없는 파일입니다 (iSQL .isql, Sequel Ace 즐겨찾기 내보내기, DBeaver 프로젝트 내보내기 .dbp 를 넣을 수 있습니다)"
+			case .unknown: "읽을 수 없는 파일입니다 (iSQL .isql, Sequel Ace 즐겨찾기 내보내기, DBeaver 프로젝트 내보내기 .dbp, MySQL Workbench 접속 내보내기 .zip 을 넣을 수 있습니다)"
 			case .empty(let app): "\(app) 파일에 가져올 접속이 없습니다"
 			}
 		}
@@ -32,12 +32,71 @@ enum OtherAppImport {
 			guard !r.items.isEmpty else { throw Failure.empty(r.app) }
 			return r
 		}
+		if let r = workbench(url, data: data, existing: existing) {
+			guard !r.items.isEmpty else { throw Failure.empty(r.app) }
+			return r
+		}
 		if let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
 		   let r = sequelAce(plist, existing: existing) {
 			guard !r.items.isEmpty else { throw Failure.empty(r.app) }
 			return r
 		}
 		throw Failure.unknown
+	}
+
+	// MARK: MySQL Workbench
+
+	/// MySQL Workbench > Manage Connections > Export (zip: connections.xml + server_instances.xml), 또는 connections.xml 을 바로.
+	/// GRT XML: struct-name="db.mgmt.Connection" 마다 driver 링크와 parameterValues(hostName·port·userName·schema·ssh…).
+	/// 비밀번호는 Workbench 가 맥 키체인에 두어 파일에 없다
+	private static func workbench(_ url: URL, data: Data, existing: [Server]) -> Result? {
+		var xml = data
+		if data.starts(with: [0x50, 0x4B]) {
+			let names = unzip(url, args: ["-Z1"]).map { String(decoding: $0, as: UTF8.self).split(separator: "\n").map(String.init) } ?? []
+			guard let n = names.first(where: { $0 == "connections.xml" || $0.hasSuffix("/connections.xml") }),
+			      let d = unzip(url, args: ["-p", n]) else { return nil }
+			xml = d
+		}
+		guard let doc = try? XMLDocument(data: xml),
+		      let conns = try? doc.nodes(forXPath: "//value[@struct-name='db.mgmt.Connection']") as? [XMLElement], !conns.isEmpty else { return nil }
+		var r = Result(app: "MySQL Workbench", items: [], skipped: [])
+		for c in conns {
+			let children = c.children?.compactMap { $0 as? XMLElement } ?? []
+			func child(_ key: String) -> XMLElement? { children.first { $0.attribute(forName: "key")?.stringValue == key } }
+			let name = child("name")?.stringValue ?? ""
+			let driver = child("driver")?.stringValue ?? ""
+			var p: [String: String] = [:]
+			for v in child("parameterValues")?.children?.compactMap({ $0 as? XMLElement }) ?? [] {
+				if let k = v.attribute(forName: "key")?.stringValue { p[k] = v.stringValue ?? "" }
+			}
+			// 드라이버: …native (TCP/IP), …native_sshtunnel (SSH), …native_socket (소켓·파이프)
+			guard driver.hasSuffix(".native") || driver.hasSuffix(".native_sshtunnel") else {
+				r.skipped.append("\(name): " + (driver.hasSuffix("socket") ? "소켓 접속" : "이 방식의 접속") + "은 iSQL 에서 쓸 수 없습니다")
+				continue
+			}
+			var s = Server()
+			s.name = name
+			s.host = (p["hostName"] ?? "").isEmpty ? "127.0.0.1" : p["hostName"]!
+			s.port = int(p["port"]) ?? 3306
+			s.user = p["userName"] ?? ""
+			s.database = p["schema"] ?? ""
+			if driver.hasSuffix(".native_sshtunnel") {
+				// sshHost = "호스트" 또는 "호스트:포트"
+				let sh = p["sshHost"] ?? ""
+				let parts = sh.split(separator: ":", omittingEmptySubsequences: false)
+				s.ssh.enabled = true
+				s.ssh.host = parts.count == 2 ? String(parts[0]) : sh
+				s.ssh.port = parts.count == 2 ? (Int(parts[1]) ?? 22) : 22
+				s.ssh.user = p["sshUserName"] ?? ""
+				let key = p["sshKeyFile"] ?? ""
+				// 키 파일이 있으면 키 방식, 없으면 비밀번호 방식(비밀번호는 접속할 때 묻는다)
+				s.ssh.auth = key.isEmpty ? .password : .key
+				s.ssh.keyPath = abbreviate(key)
+			}
+			if let same = existing.first(where: { sameConnection($0, s) }) { s.id = same.id }
+			r.items.append(ServerTransfer.Item(server: s))
+		}
+		return r
 	}
 
 	// MARK: Sequel Ace
