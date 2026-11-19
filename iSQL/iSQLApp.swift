@@ -11,6 +11,9 @@ enum Main {
 			AutoConnect.terminating = true
 			TunnelRegistry.killMine()
 		}
+		// macOS 기본 창 탭(보기 > 탭 막대 보기, 윈도우 > 이전 탭 보기 …)은 쓰지 않는다: iSQL 은 창 안에 자기 탭이 있어서
+		// 메뉴의 "이전 탭 · 다음 탭"(AppMenus.swift)과 헷갈린다 (사용자 2026-11-19)
+		NSWindow.allowsAutomaticWindowTabbing = false
 		iSQLApp.main()
 	}
 }
@@ -47,6 +50,10 @@ struct iSQLApp: App {
 			CommandGroup(after: .appInfo) {
 				UpdateMenuButton()
 			}
+			// 보기 · 파일 · 윈도우 메뉴의 탭 단축키 (AppMenus.swift)
+			CommandGroup(before: .toolbar) { ViewMenuItems() }
+			CommandGroup(after: .saveItem) { FileMenuItems() }
+			CommandGroup(before: .windowList) { WindowMenuItems() }
 			CommandGroup(replacing: .importExport) {
 				Button("서버 설정 가져오기…") { AppState.shared.requestTransfer(.importFile(nil)) }
 				Button("서버 정보 내보내기…") { AppState.shared.requestTransfer(.export) }

@@ -75,6 +75,52 @@ struct TabArea: View {
 		}
 	}
 
+	/// 메뉴 막대 항목이 쓸 지금 창의 동작 (AppMenus.swift)
+	private var tabCommands: TabCommands {
+		let d = active, o = activeOverview
+		return TabCommands(
+			mode: d?.mode,
+			setMode: { m in active?.mode = m },
+			filterOn: d.map { $0.showFilter } ?? o.map { $0.showSearch },
+			toggleFilter: {
+				if let d = active { d.mode = .data; d.showFilter.toggle() }
+				else if let o = activeOverview { o.showSearch.toggle(); if !o.showSearch { o.searchText = "" } }
+			},
+			infoOn: d == nil ? nil : focusedInfoOn,
+			toggleInfo: {
+				guard let d = active else { return }
+				if d.mode == .structure { toggleFocusedInfo() } else { d.mode = .structure; if !focusedInfoOn { toggleFocusedInfo() } }
+			},
+			queryOn: session.queryPanel?.open,
+			toggleQuery: { session.queryPanel?.open.toggle() },
+			consoleOn: model.showConsole,
+			toggleConsole: { model.showConsole.toggle() },
+			refresh: { refreshFocused() },
+			save: { saveFocused() },
+			quickOpen: { model.showQuickOpen.toggle() },
+			hasTab: focused != nil,
+			closeTab: { closeFocused() },
+			moveTab: { move($0) })
+	}
+
+	/// ⌘S: 쿼리 결과가 덮고 있으면 고른 결과, 루틴 탭이면 루틴(DROP → CREATE), 아니면 지금 표(데이터 · 구조)
+	private func saveFocused() {
+		if resultsCoverFocused, let q = session.queryPanel, q.outputs.indices.contains(q.selectedOutput) {
+			let src = q.outputs[q.selectedOutput].source
+			Task { await src.save() }
+			return
+		}
+		if let f = focused, let e = f.session.routineEditor(f.tab) {
+			let s = f.session, tab = f.tab
+			Task {
+				if let n = await e.save() { s.retargetRoutineTab(tab, to: RoutineInfo.tabID(e.kind, e.schema, n)) }
+			}
+			return
+		}
+		guard let d = active else { return }
+		Task { if d.mode == .structure { await d.saveStructure() } else { await d.saveIfNeeded() } }
+	}
+
 	private func toggleFocusedInfo() {
 		if model.hasSplit && model.splitFocus == .right { model.showRightInfo.toggle() } else { session.showTableInfo.toggle() }
 	}
@@ -184,50 +230,8 @@ struct TabArea: View {
 				.help("콘솔 (⇧⌘L)")
 			}
 		}
-		.background {
-			Group {
-				// ⌘⇧W 탭 닫기, ⌘⇧[ ] 탭 옮기기 (초점 쪽에서)
-				Button("") { closeFocused() }.keyboardShortcut("w", modifiers: [.command, .shift])
-				Button("") { move(-1) }.keyboardShortcut("[", modifiers: [.command, .shift])
-				Button("") { move(1) }.keyboardShortcut("]", modifiers: [.command, .shift])
-				// ⌘S 저장, ⌘1 데이터, ⌘2 구조, ⌥⌘F 조건 줄
-				Button("") {
-					// 쿼리 결과가 덮고 있으면 고른 결과를 저장
-					if resultsCoverFocused, let q = session.queryPanel, q.outputs.indices.contains(q.selectedOutput) {
-						let src = q.outputs[q.selectedOutput].source
-						Task { await src.save() }
-						return
-					}
-					// 루틴 탭: 저장 (DROP → CREATE)
-					if let f = focused, let e = f.session.routineEditor(f.tab) {
-						let s = f.session, tab = f.tab
-						Task {
-							if let n = await e.save() { s.retargetRoutineTab(tab, to: RoutineInfo.tabID(e.kind, e.schema, n)) }
-						}
-						return
-					}
-					guard let d = active else { return }
-					Task { if d.mode == .structure { await d.saveStructure() } else { await d.saveIfNeeded() } }
-				}.keyboardShortcut("s")
-				Button("") { active?.mode = .data }.keyboardShortcut("1")
-				Button("") { active?.mode = .structure }.keyboardShortcut("2")
-				Button("") {
-					if let d = active { d.mode = .data; d.showFilter.toggle() }
-					else if let o = activeOverview { o.showSearch.toggle(); if !o.showSearch { o.searchText = "" } }
-				}.keyboardShortcut("f", modifiers: [.command, .option])
-				// ⌘J 쿼리 패널 열기/닫기
-				Button("") { session.queryPanel?.open.toggle() }.keyboardShortcut("j")
-				// ⌘K 빠른 열기
-				Button("") { model.showQuickOpen.toggle() }.keyboardShortcut("k")
-				// ⇧⌘L 콘솔
-				Button("") { model.showConsole.toggle() }.keyboardShortcut("l", modifiers: [.command, .shift])
-				// ⌘R 새로고침 (초점 탭: 데이터 · 구조 · DB 개요 · 나만 보는 뷰, 탭이 없으면 사이드바 목록)
-				Button("") { refreshFocused() }.keyboardShortcut("r")
-				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)
-				Button("") { if let d = active { if d.mode == .structure { toggleFocusedInfo() } else { d.mode = .structure; if !focusedInfoOn { toggleFocusedInfo() } } } }.keyboardShortcut("i", modifiers: [.command, .option])
-			}
-			.hidden()
-		}
+		// 단축키는 메뉴 막대(보기 · 파일 · 윈도우, AppMenus.swift)에 있다. 일은 여기서 지금 초점 탭에 대해 정해 넘긴다
+		.focusedSceneValue(\.tabCommands, tabCommands)
 		.confirmationDialog("저장 안 된 변경이 있습니다", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } })) {
 			Button("버리고 닫기", role: .destructive) {
 				switch pendingClose {
