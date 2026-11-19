@@ -6,9 +6,11 @@
 
 ![데이터 보기 (Oracle)](docs/screenshots/data.png)
 
-| 쿼리 패널 | 구조 · 테이블 정보 (MySQL) |
+| 서버 목록 · 접속 | 쿼리 패널 |
 |---|---|
-| ![쿼리 패널](docs/screenshots/query.png) | ![구조 보기](docs/screenshots/structure.png) |
+| ![서버 목록과 접속 칸](docs/screenshots/servers.png) | ![쿼리 패널](docs/screenshots/query.png) |
+| **구조 · 테이블 정보 (MySQL)** | **패키지 보기 (Oracle)** |
+| ![구조 보기](docs/screenshots/structure.png) | ![패키지 보기](docs/screenshots/package.png) |
 
 ## 내려받기
 

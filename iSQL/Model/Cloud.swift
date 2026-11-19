@@ -23,14 +23,22 @@ final class StorageLocation: @unchecked Sendable {
 		if fm.ubiquityIdentityToken != nil, let c = fm.url(forUbiquityContainerIdentifier: Self.containerID) {
 			cloud = c.appendingPathComponent("Data", isDirectory: true)
 		}
-		let root = cloud ?? Self.local
+		var root = cloud ?? Self.local
+		var override = false
+		#if DEBUG
+		// 시험용(스크린샷 등): ISQL_DATA_DIR=<폴더> 면 그 폴더를 저장 위치로 (실제 서버 목록을 건드리지도 보이지도 않게). 배포판에는 없다
+		if let d = ProcessInfo.processInfo.environment["ISQL_DATA_DIR"], !d.isEmpty {
+			root = URL(fileURLWithPath: d, isDirectory: true)
+			override = true
+		}
+		#endif
 		servers = root.appendingPathComponent("Servers", isDirectory: true)
 		groups = root.appendingPathComponent("groups.json")
 		queries = root.appendingPathComponent("Queries", isDirectory: true)
 		isCloud = cloud != nil
 		try? fm.createDirectory(at: servers, withIntermediateDirectories: true)
 		try? fm.createDirectory(at: queries, withIntermediateDirectories: true)
-		if isCloud { migrateLocal() }
+		if isCloud && !override { migrateLocal() }
 	}
 
 	/// iCloud 를 못 쓰던 때 이 맥에 만든 서버를 한 번 올린다
