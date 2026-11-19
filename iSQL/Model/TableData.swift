@@ -333,7 +333,7 @@ final class TableData: ColumnOrderTracking {
 		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		// 고른 정렬이 먼저, 같은 값끼리는 기본 키 순
 		var orderParts: [String] = []
-		if let sort { orderParts.append(dialect.quote(sort.column) + (sort.ascending ? " ASC" : " DESC")) }
+		if let sort, let expr = sortExpression(sort.column) { orderParts.append(expr + (sort.ascending ? " ASC" : " DESC")) }
 		orderParts += pk.filter { $0 != sort.map { dialect.quote($0.column) } }
 		let order = orderParts.isEmpty ? "" : " ORDER BY " + orderParts.joined(separator: ", ")
 		let filter = whereClause.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -682,8 +682,15 @@ extension TableData: GridSource {
 	var currentSort: (key: String, ascending: Bool)? { sort.map { ($0.column, $0.ascending) } }
 
 	/// 서버에서 ORDER BY 로 다시 읽는다. 저장 안 한 변경이 있으면 사라지니 하지 않는다
+	/// 그 컬럼으로 정렬할 식 (정렬할 수 없는 형식이면 nil — Oracle 의 JSON · LONG 등)
+	private func sortExpression(_ column: String) -> String? {
+		let type = (session.columns[table.id] ?? []).first { $0.name == column }?.type ?? ""
+		return dialect.sortExpression(dialect.quote(column), type: type)
+	}
+
 	func sort(by key: String?, ascending: Bool) -> Bool {
 		if hasChanges { return false }
+		if let key, sortExpression(key) == nil { return false }
 		sort = key.map { ($0, ascending) }
 		Task { @MainActor in await load() }
 		return true

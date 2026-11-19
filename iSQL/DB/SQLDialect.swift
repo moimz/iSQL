@@ -54,6 +54,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func insertRow(_ table: String, columns: [String], values: [String]) -> String
 	/// 여러 행을 한 문장으로 넣기 (내보내기 파일). columns 는 "(…)" 안의 감싼 이름들, rows 는 "(값, …)" 들
 	func insertRows(_ table: String, columns: String, rows: [String]) -> String
+	/// 정렬에 쓸 식 (column 은 감싼 이름, type 은 컬럼 정의 타입). nil 이면 그 컬럼으로는 정렬할 수 없다
+	func sortExpression(_ column: String, type: String) -> String?
 	/// 바이트 길이 식 (큰 BLOB 은 앞부분만 읽으려고)
 	func byteLength(_ expr: String) -> String
 	/// 길이가 over 바이트를 넘으면 앞 keep 바이트만, 아니면 그대로인 식
@@ -70,6 +72,8 @@ extension SQLDialect {
 	/// 테이블 (스키마.테이블)
 	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
 	func paged(_ sql: String, limit: Int) -> String { paged(sql, limit: limit, offset: nil) }
+	/// 기본: 컬럼 그대로 (MySQL·SQLite 는 TEXT·BLOB 으로도 정렬된다)
+	func sortExpression(_ column: String, type: String) -> String? { column }
 	/// INSERT INTO t (…) VALUES (…), (…)
 	func insertRows(_ table: String, columns: String, rows: [String]) -> String {
 		"INSERT INTO \(table) (\(columns)) VALUES\n" + rows.joined(separator: ",\n")
