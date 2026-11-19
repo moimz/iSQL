@@ -80,6 +80,14 @@ enum OtherAppImport {
 			s.port = int(p["port"]) ?? 3306
 			s.user = p["userName"] ?? ""
 			s.database = p["schema"] ?? ""
+			// useSSL: 0 끔 · 1 되면 · 2 필수 · 3 CA 확인 · 4 이름까지 확인
+			switch int(p["useSSL"]) ?? 0 {
+			case 1: s.tls = .preferred
+			case 2: s.tls = .required
+			case 3, 4: s.tls = .verify
+			default: break
+			}
+			if let ca = p["sslCA"], !ca.isEmpty { s.tlsCA = abbreviate(ca) }
 			if driver.hasSuffix(".native_sshtunnel") {
 				// sshHost = "호스트" 또는 "호스트:포트"
 				let sh = p["sshHost"] ?? ""
@@ -124,6 +132,12 @@ enum OtherAppImport {
 				s.port = int(d["port"]) ?? 3306
 				s.user = str(d["user"])
 				s.database = str(d["database"])
+				// useSSL 켬 = 필수, CA 파일을 지정했으면 인증서 확인까지
+				if (int(d["useSSL"]) ?? 0) != 0 {
+					let caOn = (int(d["sslCACertFileLocationEnabled"]) ?? 0) != 0 && !str(d["sslCACertFileLocation"]).isEmpty
+					s.tls = caOn ? .verify : .required
+					if caOn { s.tlsCA = abbreviate(str(d["sslCACertFileLocation"])) }
+				}
 				let colors: [ServerColor] = [.red, .orange, .yellow, .green, .blue, .purple, .gray]
 				if let c = int(d["colorIndex"]), colors.indices.contains(c) { s.color = colors[c] }
 				if type == 2 {

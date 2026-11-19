@@ -13,9 +13,16 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 		var user: String
 		var password: String
 		var database: String
+		var tls: TLSMode = .off
+		/// 인증서 이름 확인에 쓸 원래 서버 이름 (SSH 터널이면 host 는 127.0.0.1 이라 따로)
+		var tlsHost = ""
+		var tlsCA = ""
 	}
 
 	private(set) var serverVersion = ""
+	/// TLS 로 붙었으면 그 TLS ("TLS 1.2"), 아니면 nil
+	var tlsSummary: String? { tls?.summary }
+	private var tls: MySQLTLS?
 	private(set) var connectionID: UInt32 = 0
 	private var fd: Int32 = -1
 	private var seq: UInt8 = 0
@@ -98,6 +105,22 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 		if !o.database.isEmpty { caps |= Cap.connectWithDB }
 		caps &= serverCaps | Cap.connectWithDB
 
+		// TLS: 서버가 받으면 SSLRequest(응답 앞 32바이트)를 먼저 보내고 같은 소켓을 TLS 로 바꾼 뒤 나머지를 TLS 안으로
+		if o.tls != .off {
+			if serverCaps & Cap.ssl != 0 {
+				caps |= Cap.ssl
+				var req = Writer()
+				req.u32(caps)
+				req.u32(16 * 1024 * 1024)
+				req.u8(45)
+				req.zeros(23)
+				try writePacket(req.data)
+				tls = try MySQLTLS(fd: fd, host: o.tlsHost.isEmpty ? o.host : o.tlsHost, verify: o.tls == .verify, caPath: o.tlsCA)
+			} else if o.tls != .preferred {
+				throw MySQLError.tls("서버가 TLS 를 지원하지 않습니다. 서버 설정에서 TLS 를 끄거나 \"지원하면 사용\" 으로 바꾸세요.")
+			}
+		}
+
 		let auth = Self.scramble(plugin: plugin, password: o.password, nonce: scramble)
 		var p = Writer()
 		p.u32(caps)
@@ -137,7 +160,9 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 				guard plugin == "caching_sha2_password", pkt.count >= 2 else { throw MySQLError.protocolError("알 수 없는 인증 응답입니다.") }
 				if pkt[1] == 3 { continue }    // 빠른 인증 성공, 다음에 OK 가 온다
 				if pkt[1] == 4 {
-					// 전체 인증: TLS 가 없으니 서버 공개키를 받아 비밀번호를 RSA 로 암호화해 보낸다
+					// 전체 인증: TLS 안이면 비밀번호를 그대로(끝에 0) 보낸다
+					if tls != nil { try writePacket(Array(password.utf8) + [0]); continue }
+					// TLS 가 없으면 서버 공개키를 받아 비밀번호를 RSA 로 암호화해 보낸다
 					try writePacket([0x02])
 					let keyPkt = try readPacket()
 					if keyPkt.first == 0xFF { throw parseError(keyPkt) }
@@ -346,7 +371,13 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 		while readBuffer.count - readPos < n {
 			if readPos > 0 { readBuffer.removeFirst(readPos); readPos = 0 }
 			var chunk = [UInt8](repeating: 0, count: max(65536, n))
-			let got = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+			let got: Int
+			if let tls {
+				do { got = try chunk.withUnsafeMutableBytes { try tls.read($0.baseAddress!, $0.count) } }
+				catch { closeSync(); throw error }
+			} else {
+				got = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
+			}
 			if got <= 0 {
 				closeSync()
 				throw got == 0 ? MySQLError.closed : MySQLError.io(String(cString: strerror(errno)))
@@ -361,7 +392,12 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 	private func writeAll(_ bytes: [UInt8]) throws {
 		var off = 0
 		while off < bytes.count {
-			let n = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + off, bytes.count - off) }
+			let n: Int
+			if let tls {
+				n = (try? bytes.withUnsafeBytes { try tls.write($0.baseAddress! + off, bytes.count - off) }) ?? -1
+			} else {
+				n = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + off, bytes.count - off) }
+			}
 			if n <= 0 { closeSync(); throw MySQLError.io(String(cString: strerror(errno))) }
 			off += n
 		}
@@ -371,6 +407,8 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 		guard fd >= 0 else { return }
 		seq = 0
 		_ = try? writePacket([0x01])     // COM_QUIT
+		tls?.close()
+		tls = nil
 		Darwin.close(fd)
 		fd = -1
 	}
@@ -411,6 +449,7 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 		static let longFlag: UInt32 = 0x4
 		static let connectWithDB: UInt32 = 0x8
 		static let protocol41: UInt32 = 0x200
+		static let ssl: UInt32 = 0x800
 		static let transactions: UInt32 = 0x2000
 		static let secureConnection: UInt32 = 0x8000
 		static let multiStatements: UInt32 = 0x10000
@@ -429,6 +468,7 @@ enum MySQLError: LocalizedError {
 	case server(code: Int, state: String, message: String)
 	case protocolError(String)
 	case io(String)
+	case tls(String)
 	case closed
 
 	var errorDescription: String? {
@@ -436,6 +476,7 @@ enum MySQLError: LocalizedError {
 		case .server(let code, _, let message): "\(message) (오류 \(code))"
 		case .protocolError(let s): s
 		case .io(let s): s
+		case .tls(let s): s
 		case .closed: "서버와 연결이 끊어졌습니다."
 		}
 	}

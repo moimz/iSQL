@@ -52,11 +52,38 @@ struct Server: Codable, Identifiable, Hashable {
 	var defaultCollation: String?
 	var warnsDangerousSQL: Bool { warnDangerousSQL ?? true }
 
+	/// TLS (SSH 없이 바로 붙는 서버). 예전 파일에는 없어서 옵셔널, nil = 끔
+	var tls: TLSMode?
+	/// 인증서 확인에 쓸 CA 파일 (비면 맥이 믿는 인증서)
+	var tlsCA: String?
+	var tlsMode: TLSMode { tls ?? .off }
+
 	var displayName: String { name.isEmpty ? (ssh.enabled ? "\(ssh.host) → \(host)" : host) : name }
 
 	/// Keychain 항목 이름
 	var mysqlPasswordKey: String { "\(id.uuidString)/mysql" }
 	var sshSecretKey: String { "\(id.uuidString)/ssh" }
+}
+
+/// TLS 쓰는 방식 (MySQL 클라이언트의 --ssl-mode 와 같은 뜻)
+enum TLSMode: String, Codable, CaseIterable, Identifiable {
+	/// 쓰지 않음
+	case off
+	/// 서버가 지원하면 쓴다 (인증서는 확인하지 않음)
+	case preferred
+	/// 꼭 쓴다 (인증서는 확인하지 않음)
+	case required
+	/// 꼭 쓰고, 인증서 사슬과 서버 이름까지 확인한다
+	case verify
+	var id: String { rawValue }
+	var label: String {
+		switch self {
+		case .off: "사용 안 함"
+		case .preferred: "지원하면 사용"
+		case .required: "필수"
+		case .verify: "필수 + 인증서 확인"
+		}
+	}
 }
 
 struct SSHSettings: Codable, Hashable {

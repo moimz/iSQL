@@ -198,6 +198,28 @@ struct ConnectForm: View {
 				row("비밀번호") { secret($mysqlPassword, show: $showPassword, "선택") }
 				row("DB") { field($server.database, "선택") }
 				row("포트") { number($server.port) }
+				// TLS: SSH 없이 바로 붙는 서버(RDS 등)용. SSH 터널 안에서도 서버가 TLS 를 요구하면 켠다
+				row("TLS") {
+					Picker("", selection: Binding(get: { server.tlsMode }, set: { server.tls = $0 == .off ? nil : $0 })) {
+						ForEach(TLSMode.allCases) { Text($0.label).tag($0) }
+					}
+					.labelsHidden()
+					.fixedSize()
+					.frame(maxWidth: .infinity, alignment: .leading)
+				}
+				if server.tlsMode == .verify {
+					row("CA 파일") {
+						HStack(spacing: 6) {
+							field(Binding(get: { server.tlsCA ?? "" }, set: { server.tlsCA = $0.isEmpty ? nil : $0 }), "선택 (비우면 맥이 믿는 인증서)")
+							Button("고르기…") {
+								let panel = NSOpenPanel()
+								panel.message = "서버 인증서를 확인할 CA 파일 (.pem · .crt)"
+								guard panel.runModal() == .OK, let u = panel.url else { return }
+								server.tlsCA = Server.abbreviatedPath(u.path)
+							}
+						}
+					}
+				}
 
 				if ssh {
 					divider

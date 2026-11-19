@@ -26,6 +26,10 @@ struct DBConnectOptions {
 	var database: String
 	/// SQLite 파일 (펼친 경로)
 	var path = ""
+	/// TLS (MySQL·MariaDB). tlsHost = 인증서 이름 확인용 원래 서버 이름
+	var tls: TLSMode = .off
+	var tlsHost = ""
+	var tlsCA = ""
 }
 
 enum DB {
@@ -35,7 +39,8 @@ enum DB {
 		case .sqlite:
 			try await SQLiteConnection.open(path: o.path)
 		case .mysql, .mariadb, .postgres, .sqlserver, .oracle:
-			try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database))
+			try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database,
+			                                        tls: o.tls, tlsHost: o.tlsHost, tlsCA: o.tlsCA))
 		}
 	}
 }
