@@ -97,7 +97,16 @@ struct ServerSidebar: View {
 		}
 		// ⌘F 로 검색칸
 		.background { Button("") { searchFocused = true }.keyboardShortcut("f").hidden() }
-		.safeAreaInset(edge: .bottom) { SyncStatus().padding(10) }
+		// 목록이 뒤로 스크롤되어 글자가 겹쳐 보였다 → safeAreaBar(목록 끝을 흐리게 가리는 막대) + 유리 알약
+		.safeAreaBar(edge: .bottom) {
+			HStack {
+				SyncStatus()
+					.padding(.horizontal, 10).padding(.vertical, 6)
+					.glassEffect(.regular, in: Capsule())
+				Spacer(minLength: 0)
+			}
+			.padding(10)
+		}
 		.toolbar {
 			ToolbarItem {
 				Menu {
@@ -361,7 +370,6 @@ struct SyncStatus: View {
 		Label(synced ? "iCloud 동기화" : "이 맥에만 저장", systemImage: synced ? "checkmark.icloud" : "icloud.slash")
 			.font(.caption)
 			.foregroundStyle(synced ? Color.secondary : Color.orange)
-			.frame(maxWidth: .infinity, alignment: .leading)
 			.help(synced ? "서버 목록과 비밀번호(키체인)가 iCloud 로 다른 맥과 동기화됩니다"
 			             : (store.isCloud ? "비밀번호가 이 맥 키체인에만 저장됩니다" : "서버 목록이 이 맥에만 저장됩니다"))
 	}

@@ -75,12 +75,12 @@ struct OracleDialect: SQLDialect {
 		"INSERT ALL\n" + rows.map { "  INTO \(table) (\(columns)) VALUES \($0)" }.joined(separator: "\n") + "\nSELECT 1 FROM dual"
 	}
 	func byteLength(_ expr: String) -> String { "DBMS_LOB.GETLENGTH(\(expr))" }
-	/// LOB 은 ORDER BY 에 못 쓴다(ORA-22848) → 앞부분으로. JSON · LONG · BFILE · 객체는 정렬할 수 없다
+	/// CLOB 은 ORDER BY 에 못 써서(ORA-22848) 앞 4000자로. 바이너리(BLOB · RAW 계열 LONG RAW)는 정렬해도 뜻이 없어 막는다
+	/// (MySQL · SQLite 의 BLOB 과 같게, 사용자 2026-11-20). JSON · LONG · BFILE · 객체도 정렬할 수 없다
 	func sortExpression(_ column: String, type: String) -> String? {
 		let t = type.uppercased()
 		if t == "CLOB" || t == "NCLOB" { return "DBMS_LOB.SUBSTR(\(column), 4000, 1)" }
-		if t == "BLOB" { return "DBMS_LOB.SUBSTR(\(column), 2000, 1)" }
-		if ["JSON", "LONG", "LONG RAW", "BFILE", "XMLTYPE", "VECTOR"].contains(t) || t.hasPrefix("VECTOR") { return nil }
+		if ["BLOB", "JSON", "LONG", "LONG RAW", "BFILE", "XMLTYPE", "VECTOR"].contains(t) || t.hasPrefix("VECTOR") { return nil }
 		return column
 	}
 	/// LOB 은 정의해서 통째로 받는다 (앞부분만 읽기는 아직)
