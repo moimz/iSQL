@@ -81,6 +81,13 @@ struct MySQLDialect: SQLDialect {
 	}
 
 	func byteLength(_ expr: String) -> String { "OCTET_LENGTH(\(expr))" }
+	/// BLOB 계열 · 공간 형식은 정렬해도 뜻이 없다 → 정렬하지 않는다 (TEXT · JSON 은 MySQL 이 정렬해 준다)
+	func sortExpression(_ column: String, type: String) -> String? {
+		let t = type.lowercased().split(separator: "(").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+		let unsortable: Set<String> = ["tinyblob", "blob", "mediumblob", "longblob", "geometry", "point", "linestring", "polygon",
+		                               "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection"]
+		return unsortable.contains(t) ? nil : column
+	}
 	func blobPeek(_ column: String, over: Int, keep: Int) -> String {
 		"IF(OCTET_LENGTH(\(column)) > \(over), LEFT(\(column), \(keep)), \(column))"
 	}

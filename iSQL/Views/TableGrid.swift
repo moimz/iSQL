@@ -22,6 +22,8 @@ struct GridColumn: Equatable {
 	var long = false
 	/// 고정폭 글꼴로 이 글자 수가 다 보이게 처음 너비를 맞춘다 (CHAR(n))
 	var monoChars: Int? = nil
+	/// 이 컬럼으로 정렬할 수 있는지 (BLOB · 공간 · Oracle JSON 등은 제목을 눌러도 정렬하지 않는다)
+	var sortable = true
 }
 
 /// 칸 하나
@@ -457,9 +459,10 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				cell.representedObject = col.comment
 				cell.tag = col.isKey ? GridHeaderCell.keyBit : 0
 				tc.headerCell = cell
-				tc.headerToolTip = col.comment.isEmpty ? col.title : "\(col.title)\n\(col.comment)"
-				// 제목을 누르면 정렬 (어떻게 할지는 공급자가 정한다)
-				tc.sortDescriptorPrototype = source.sortable ? NSSortDescriptor(key: col.key, ascending: true) : nil
+				tc.headerToolTip = (col.comment.isEmpty ? col.title : "\(col.title)\n\(col.comment)")
+					+ (source.sortable && !col.sortable ? "\n이 형식은 정렬할 수 없습니다" : "")
+				// 제목을 누르면 정렬 (어떻게 할지는 공급자가 정한다). 정렬할 수 없는 형식의 컬럼은 눌러도 아무 일 없음
+				tc.sortDescriptorPrototype = source.sortable && col.sortable ? NSSortDescriptor(key: col.key, ascending: true) : nil
 				tc.width = col.width ?? Self.initialWidth(col)
 				tc.minWidth = 40
 				defaultWidths[String(i)] = tc.width
@@ -1397,7 +1400,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				var items = source.headerMenu(col)
 				// 정렬은 모든 표에 공통 (공급자가 정렬을 못 하면 메뉴만 빠진다)
 				let key = columns[col].key
-				let sortItems: [GridMenuItem] = !source.sortable ? [] : [
+				let sortItems: [GridMenuItem] = !source.sortable || !columns[col].sortable ? [] : [
 					.action("오름차순 정렬") { self.sort(key, ascending: true) },
 					.action("내림차순 정렬") { self.sort(key, ascending: false) },
 				] + (source.currentSort != nil ? [.action("정렬 없애기") { self.sort(nil, ascending: true) }] : [])

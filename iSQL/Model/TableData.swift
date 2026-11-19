@@ -568,7 +568,8 @@ extension TableData: GridSource {
 			let key = c.orgName.isEmpty ? c.name : c.orgName
 			let chars = Self.charLength(types[key])
 			return GridColumn(key: key, title: c.name, comment: comments[key] ?? "", isKey: keyIndices.contains(i),
-			                  numeric: c.isNumeric, mono: chars != nil, long: c.length > 255, monoChars: chars)
+			                  numeric: c.isNumeric, mono: chars != nil, long: c.length > 255, monoChars: chars,
+			                  sortable: sortExpression(key) != nil)
 		}
 	}
 

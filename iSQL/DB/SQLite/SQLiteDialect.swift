@@ -69,6 +69,8 @@ struct SQLiteDialect: SQLDialect {
 			: "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(values.joined(separator: ", ")))"
 	}
 	func byteLength(_ expr: String) -> String { "length(CAST(\(expr) AS BLOB))" }
+	/// BLOB 은 정렬해도 뜻이 없다
+	func sortExpression(_ column: String, type: String) -> String? { type.uppercased() == "BLOB" ? nil : column }
 	func blobPeek(_ column: String, over: Int, keep: Int) -> String {
 		"CASE WHEN length(CAST(\(column) AS BLOB)) > \(over) THEN substr(CAST(\(column) AS BLOB), 1, \(keep)) ELSE \(column) END"
 	}
