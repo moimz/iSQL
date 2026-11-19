@@ -30,6 +30,8 @@ struct PagerBar: View {
 	var reload: (() -> Void)? = nil
 	var reloadHelp = "새로고침"
 	var reloading = false
+	/// 읽는 중에 새로고침 자리에 나오는 멈추기 (빨간 ■). 없으면 진행 표시만
+	var cancel: (() -> Void)? = nil
 
 	var body: some View {
 		HStack(spacing: 10) {
@@ -92,11 +94,23 @@ struct PagerBar: View {
 				.help("한 쪽에 보일 행 수")
 			}
 			if let reload {
-				Button(action: reload) {
-					if reloading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
+				if reloading, let cancel {
+					Button(action: cancel) {
+						Image(systemName: "stop.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+							.frame(width: 30, height: 28).contentShape(Rectangle())
+					}
+					// 유리 효과는 안의 아이콘 색을 지운다(흰 ■) → 유리 대신 빨간 알약을 칠한다
+					.buttonStyle(.plain)
+					.padding(.horizontal, 4)
+					.background(Capsule().fill(Color.red))
+					.help("읽기 멈추기")
+				} else {
+					Button(action: reload) {
+						if reloading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
+					}
+					.pill()
+					.help(reloadHelp)
 				}
-				.pill()
-				.help(reloadHelp)
 			}
 		}
 	}

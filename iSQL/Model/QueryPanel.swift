@@ -558,12 +558,48 @@ final class QueryResultSource: GridSource {
 
 	func cell(_ row: Int, _ col: Int) -> GridCell {
 		let v = value(row, col)
-		guard let o = orig(row) else { return GridCell(text: v.display, state: .inserted) }
-		if deleted.contains(o) { return GridCell(text: v.display, state: .deleted) }
-		if edits[o]?[col] != nil {
-			return GridCell(text: v.display, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].display ?? "NULL"))
+		var c: GridCell
+		if let o = orig(row) {
+			if deleted.contains(o) { c = GridCell(text: v.display, state: .deleted) }
+			else if edits[o]?[col] != nil { c = GridCell(text: v.display, state: .edited, tooltip: "원래 값: " + (result.rows[o][col].display ?? "NULL")) }
+			else { c = GridCell(text: v.display, tint: cellTint?(o, col)) }
+		} else {
+			c = GridCell(text: v.display, state: .inserted)
 		}
-		return GridCell(text: v.display, tint: cellTint?(o, col))
+		// 날짜로 보는 컬럼: 숫자를 날짜로 (실제 값은 풍선 도움말에)
+		if let u = unixUnit(col), case .text(let t) = v, let shown = u.display(t) {
+			c.text = shown
+			c.tooltip = (c.tooltip.map { $0 + "\n" } ?? "") + "유닉스 시간(\(u.name)): \(t)"
+		}
+		return c
+	}
+
+	// MARK: 컬럼을 날짜로 보기 (유닉스 시간). 결과는 그때뿐이라 서버마다 컬럼 이름으로 기억한다 (다음 쿼리의 같은 이름 컬럼에도)
+
+	private var unixKey: String { "unixTime.query.\(session?.server?.id.uuidString ?? "-")" }
+	private func columnName(_ col: Int) -> String { result.columns[col].name }
+	func unixUnit(_ col: Int) -> UnixTimeUnit? {
+		guard result.columns.indices.contains(col), result.columns[col].isNumeric else { return nil }
+		return (UserDefaults.standard.dictionary(forKey: unixKey)?[columnName(col)] as? String).flatMap(UnixTimeUnit.init(rawValue:))
+	}
+	func setUnixView(_ col: Int, _ unit: UnixTimeUnit?) {
+		guard result.columns.indices.contains(col) else { return }
+		var d = UserDefaults.standard.dictionary(forKey: unixKey) as? [String: String] ?? [:]
+		d[columnName(col)] = unit?.rawValue
+		if d.isEmpty { UserDefaults.standard.removeObject(forKey: unixKey) } else { UserDefaults.standard.set(d, forKey: unixKey) }
+		if unit != nil { fitRequests.insert(col) }
+		bump()
+	}
+	@ObservationIgnored private var fitRequests: Set<Int> = []
+	func takeFitRequests() -> [Int] { defer { fitRequests = [] }; return Array(fitRequests) }
+
+	func headerMenu(_ col: Int) -> [GridMenuItem] {
+		guard result.columns.indices.contains(col), result.columns[col].isNumeric else { return [] }
+		let now = unixUnit(col)
+		var sub: [GridMenuItem] = UnixTimeUnit.allCases.map { u in .action((now == u ? "✓ " : "") + u.label) { self.setUnixView(col, u) } }
+		sub.append(.separator)
+		sub.append(.action((now == nil ? "✓ " : "") + "숫자 그대로") { self.setUnixView(col, nil) })
+		return [.submenu("날짜로 보기 (유닉스 시간)", sub)]
 	}
 
 	/// 칸 경고색 (원래 행 번호, 컬럼). 실행계획 결과에서 쓴다
@@ -604,7 +640,11 @@ final class QueryResultSource: GridSource {
 		bump()
 	}
 
-	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
+	/// 날짜로 보는 컬럼에 날짜를 넣으면 그 단위의 숫자로
+	func setText(_ row: Int, _ col: Int, _ text: String) {
+		if let u = unixUnit(col), let raw = u.raw(text) { set(row, col, .text(raw)); return }
+		set(row, col, .text(text))
+	}
 
 	func addRow() {
 		guard canEdit else { return }

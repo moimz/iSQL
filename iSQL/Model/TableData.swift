@@ -315,11 +315,21 @@ final class TableData: ColumnOrderTracking {
 
 	// MARK: - 읽기
 
+	/// 읽는 중에 멈추기 (데이터 보기 오른쪽 아래 ■). 서버에 쿼리 취소를 보낸다
+	@MainActor
+	func cancelLoad() {
+		guard loading, !loadCancelled else { return }
+		loadCancelled = true
+		session.cancelQuery()
+	}
+	@ObservationIgnored private var loadCancelled = false
+
 	@MainActor
 	func load(offset newOffset: Int = 0) async {
 		loading = true
+		loadCancelled = false
 		error = nil
-		defer { loading = false }
+		defer { loading = false; loadCancelled = false }
 		let pk = (session.columns[table.id] ?? []).filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		// 고른 정렬이 먼저, 같은 값끼리는 기본 키 순
 		var orderParts: [String] = []
@@ -364,7 +374,7 @@ final class TableData: ColumnOrderTracking {
 			discard()
 		} catch {
 			loaded = true
-			self.error = error.localizedDescription
+			self.error = loadCancelled ? "읽기를 멈췄습니다. 새로고침(⌘R)으로 다시 읽습니다." : error.localizedDescription
 		}
 	}
 
