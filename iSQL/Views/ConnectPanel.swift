@@ -23,6 +23,8 @@ struct ConnectForm: View {
 	@State private var sshSecret = ""
 	@State private var testing = false
 	@State private var testSteps: [TestStep] = []
+	/// 접속 시험 차례 번호: 중단하면 올려서, 늦게 끝난 시험의 결과는 버리고 연결은 닫는다
+	@State private var testRun = 0
 	@State private var savedFlash = false
 
 	struct TestStep: Identifiable {
@@ -63,6 +65,7 @@ struct ConnectForm: View {
 		}
 		// 새 접속 내용은 다른 화면에 다녀와도 남게
 		.onChange(of: server) { _, s in if !saved { model.draft = s } }
+
 	}
 
 	/// 상자: 위 가장자리에 걸친 DB 종류 탭 + 라벨 오른쪽 정렬 입력칸. 접속 방식(TCP/IP · SSH)은 그룹 아래 구분선 가운데 (사용자 2026-11-18)
@@ -273,6 +276,14 @@ struct ConnectForm: View {
 							}
 							.frame(width: 16)
 							Text(step.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+							// 진행 중인 줄 옆: 접속 시험 중단 (사용자 2026-11-19)
+							if step.ok == nil && testing {
+								Button(action: cancelTest) {
+									Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+								}
+								.buttonStyle(.plain)
+								.help("접속 시험 중단")
+							}
 						}
 					}
 				}
@@ -401,28 +412,43 @@ struct ConnectForm: View {
 		}
 	}
 
+	/// 접속 시험 중단: 화면은 바로 끝내고, 아직 열리는 중인 터널·연결은 끝나는 대로 닫는다 (막힌 소켓은 밖에서 끊을 수 없어서)
+	private func cancelTest() {
+		testRun += 1
+		testing = false
+		if let i = testSteps.indices.last, testSteps[i].ok == nil { testSteps[i].ok = false }
+		testSteps.append(.init(ok: false, text: "접속 시험을 중단했습니다"))
+	}
+
 	private func test() {
+		testRun += 1
+		let run = testRun
 		testing = true
 		testSteps = []
 		let s = server
 		let mysqlPw = mysqlPassword
 		let sshPw = s.ssh.enabled ? sshSecret : nil
 		Task { @MainActor in
-			defer { testing = false }
+			defer { if run == testRun { testing = false } }
 			do {
 				let (tunnel, conn) = try await Session.open(s, mysqlPassword: mysqlPw, sshSecret: sshPw) { step in
+					guard run == testRun else { return }
 					if let i = testSteps.indices.last, testSteps[i].ok == nil { testSteps[i].ok = true }
 					testSteps.append(.init(ok: nil, text: step))
 				}
+				// 중단한 뒤에 열렸으면 닫고 끝
+				guard run == testRun else { conn.close(); tunnel?.close(); return }
 				if s.ssh.enabled, let t = tunnel { testSteps[0].text = "SSH 터널 열림 (\(s.ssh.host) → 이 맥 \(t.localPort) 포트)" }
 				// MySQL·MariaDB 는 버전을 보고 종류를 맞춘다 (저장하면 그 종류로)
 				let detected = s.sqlKind?.detected(fromVersion: conn.serverVersion) ?? s.sqlKind
 				if let detected, detected != server.sqlKind { server.kind = detected.rawValue }
 				let info = try await (detected ?? .mysql).meta.connectionInfo { try await conn.query($0) }
+				guard run == testRun else { conn.close(); tunnel?.close(); return }
 				testSteps[testSteps.count - 1] = .init(ok: true, text: "\(detected?.label ?? s.kindLabel) 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개")
 				conn.close()
 				tunnel?.close()
 			} catch {
+				guard run == testRun else { return }
 				if let i = testSteps.indices.last, testSteps[i].ok == nil { testSteps[i].ok = false }
 				testSteps.append(.init(ok: false, text: error.localizedDescription))
 			}
