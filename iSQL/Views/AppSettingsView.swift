@@ -10,7 +10,7 @@ struct AppSettingsView: View {
 	var body: some View {
 		TabView(selection: $tab) {
 			Tab("일반", systemImage: "gearshape", value: "general") {
-				AppGeneralPage().frame(width: Self.width, height: 450)
+				AppGeneralPage().frame(width: Self.width, height: 530)
 			}
 			Tab("MCP", systemImage: "point.3.connected.trianglepath.dotted", value: "mcp") {
 				MCPSettingsPage().frame(width: Self.width, height: 700)
@@ -36,10 +36,30 @@ private struct AppGeneralPage: View {
 			} footer: {
 				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)").foregroundStyle(.tertiary)
 			}
+			TimeZoneSection()
 			FileAssociationSection()
 			UpdateSection(version: version)
 		}
 		.formStyle(.grouped)
+	}
+}
+
+/// 앱 설정 > 일반 > 시간 표시: 날짜로 보는 컬럼(유닉스 시간)과 Oracle 의 시간대 붙은 값을 이 시간대로 (사용자 2026-11-20)
+private struct TimeZoneSection: View {
+	@AppStorage(DisplayTime.key) private var zone = ""
+
+	var body: some View {
+		Section {
+			Picker("시간대", selection: $zone) {
+				Text("시스템 시간대 사용 (\(TimeZone.current.identifier))").tag("")
+				Divider()
+				ForEach(DisplayTime.choices, id: \.self) { Text($0).tag($0) }
+			}
+		} header: {
+			Text("시간 표시")
+		} footer: {
+			Text("컬럼을 날짜로 볼 때(유닉스 시간)와 Oracle 의 시간대가 붙은 값을 이 시간대로 보여 줍니다. 서버에 저장된 값은 바뀌지 않습니다.").foregroundStyle(.tertiary)
+		}
 	}
 }
 

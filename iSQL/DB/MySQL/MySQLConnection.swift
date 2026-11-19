@@ -67,14 +67,39 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 	private func run<T>(_ work: @escaping () throws -> T) async throws -> T {
 		try await withCheckedThrowingContinuation { cont in
 			queue.async {
+				self.setBusy(true)
+				defer { self.setBusy(false) }
 				do { cont.resume(returning: try work()) } catch { cont.resume(throwing: error) }
 			}
+		}
+	}
+
+	/// 접속 정보 (취소할 때 같은 서버에 잠깐 붙으려고)와 지금 일하는 중인지
+	private var options: Options?
+	private let stateLock = NSLock()
+	private var busy = false
+	private func setBusy(_ b: Bool) { stateLock.lock(); busy = b; stateLock.unlock() }
+
+	/// 실행 중인 쿼리 멈추기: 연결을 하나 더 열어 KILL QUERY <이 연결 번호> (연결은 그대로, 쿼리만 1317 오류로 끝난다)
+	func cancel() {
+		stateLock.lock()
+		let go = busy, o = options, id = connectionID
+		stateLock.unlock()
+		guard go, let o, id != 0 else { return }
+		DispatchQueue.global(qos: .userInitiated).async {
+			let k = MySQLConnection()
+			do {
+				try k.openSync(o)
+				_ = try k.querySync("KILL QUERY \(id)")
+			} catch {}
+			k.closeSync()
 		}
 	}
 
 	// MARK: - 접속
 
 	private func openSync(_ o: Options) throws {
+		options = o
 		fd = try Self.openSocket(host: o.host, port: o.port)
 		let hs = try readPacket()
 		if hs.first == 0xFF { throw parseError(hs) }

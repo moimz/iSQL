@@ -78,9 +78,31 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 	private func run<T>(_ work: @escaping () throws -> T) async throws -> T {
 		try await withCheckedThrowingContinuation { cont in
 			queue.async {
+				self.setBusy(true)
+				defer { self.setBusy(false) }
 				do { cont.resume(returning: try work()) } catch { cont.resume(throwing: error) }
 			}
 		}
+	}
+
+	// MARK: - 취소
+
+	private let stateLock = NSLock()
+	private var busy = false
+	/// 취소를 보냈다 (한 번만 보낸다)
+	private var cancelRequested = false
+	private let writeLock = NSLock()
+	private func setBusy(_ b: Bool) { stateLock.lock(); busy = b; if !b { cancelRequested = false }; stateLock.unlock() }
+
+	/// 실행 중인 쿼리 멈추기: 같은 소켓에 중단(interrupt) 표시를 보낸다 (python-oracledb 의 OOB 없는 break).
+	/// 서버가 break 표시로 답하면 reset 을 주고받고 ORA-01013 오류로 끝난다 (nextDataPayload)
+	func cancel() {
+		stateLock.lock()
+		let go = busy && !cancelRequested && fd >= 0
+		if go { cancelRequested = true }
+		stateLock.unlock()
+		guard go else { return }
+		try? writePacket(type: TNS.packetMarker, [1, 0, TNS.markerInterrupt])
 	}
 
 	// MARK: - 접속
@@ -92,6 +114,8 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		do {
 			try negotiate(o)
 			try authenticate(o)
+			// 세션 시간대를 지역 이름으로 (서머타임까지 표시와 맞게). 서버가 모르는 이름이면 로그인 때 맞춘 숫자 시차 그대로
+			_ = try? executeSync("ALTER SESSION SET TIME_ZONE = '\(DisplayTime.zone.identifier.replacingOccurrences(of: "'", with: "''"))'")
 			if !o.schema.isEmpty {
 				_ = try executeSync("ALTER SESSION SET CURRENT_SCHEMA = \"" + o.schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"")
 			}
@@ -234,7 +258,7 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 	/// 세션 시간대를 이 맥의 시간대로, 날짜 글자 형식을 앱이 보여 주는 형식으로 (그래야 '2026-11-20 13:45:00' 같은 글자를 그대로 넣을 수 있다).
 	/// 끝에 NUL 이 있어야 서버가 받는다
 	private static func alterSessionStatement() -> String {
-		let off = TimeZone.current.secondsFromGMT()
+		let off = DisplayTime.zone.secondsFromGMT()
 		let sign = off < 0 ? "-" : "+"
 		return String(format: "ALTER SESSION SET TIME_ZONE='%@%02d:%02d'", sign, abs(off) / 3600, abs(off) % 3600 / 60)
 			+ " NLS_DATE_FORMAT='YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT='YYYY-MM-DD HH24:MI:SS.FF'"
@@ -356,6 +380,7 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 
 		// 남은 행을 받아 온다 (ORA-01403 "더 없음" 이 올 때까지)
 		var moreRows = isQuery && resp.errorNumber == 0 && cursor != 0
+		// 취소는 여기서 끊지 않는다: 서버가 다음 FETCH 응답 대신 break 로 답하고 ORA-01013 으로 끝내야 연결이 어긋나지 않는다
 		while moreRows {
 			var f = OracleWriter()
 			writePiggybacks(&f)
@@ -586,8 +611,29 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		}
 	}
 
+	/// reset 을 주고받았다 (읽던 메시지는 버리고 새 데이터 패킷의 처음부터 다시 읽는다)
+	private var markerHandled = false
+	private struct Restart: Error { let payload: [UInt8] }
+
 	private func readMessages(_ resp: Response) throws {
-		let r = OracleReader(try nextDataPayload(), more: { [unowned self] in try self.nextDataPayload() })
+		var first = try nextDataPayload()
+		markerHandled = false
+		while true {
+			do {
+				try readMessages(resp, from: first)
+				return
+			} catch let r as Restart {
+				first = r.payload
+			}
+		}
+	}
+
+	private func readMessages(_ resp: Response, from first: [UInt8]) throws {
+		let r = OracleReader(first, more: { [unowned self] in
+			let p = try self.nextDataPayload()
+			if self.markerHandled { self.markerHandled = false; throw Restart(payload: p) }
+			return p
+		})
 		while true {
 			let t = try r.u8()
 			switch t {
@@ -1063,6 +1109,8 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 			h = [UInt8(len >> 8 & 0xFF), UInt8(len & 0xFF), 0, 0]
 		}
 		h += [type, 0, 0, 0]
+		writeLock.lock()
+		defer { writeLock.unlock() }
 		try writeAll(h + body)
 	}
 
@@ -1080,6 +1128,7 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 	private func nextDataPayload() throws -> [UInt8] {
 		var p = try readPacket()
 		if p.type == TNS.packetMarker {
+			markerHandled = true
 			try writePacket(type: TNS.packetMarker, [1, 0, TNS.markerReset])
 			while !(p.type == TNS.packetMarker && p.payload.count >= 3 && p.payload[2] == TNS.markerReset) {
 				p = try readPacket()

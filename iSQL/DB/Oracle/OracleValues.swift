@@ -48,22 +48,26 @@ enum OracleValues {
 		let second = Int(b[6]) - 1
 		var zone = ""
 		if b.count >= 13 && type == TNS.typeTimestampTZ {
-			// 시간대가 붙은 값은 UTC 시각으로 온다 → 그 값의 시간대 시각으로 바꿔 보여 준다.
-			// 지역 이름 시간대(첫 바이트 0x80)는 이름 표를 아직 풀지 않아 UTC 로 보여 준다
+			// 시간대가 붙은 값은 UTC 시각으로 온다 → 숫자 시간대(+09:00)는 그 값의 시간대 시각으로,
+			// 지역 이름 시간대(첫 바이트 0x80: Asia/Seoul …)는 이름 표를 풀지 않고 앱 설정의 표시 시간대로 바꿔 보여 준다
 			var offset = 0
 			if b[11] & 0x80 == 0 {
 				offset = (Int(b[11]) - 20) * 60 + Int(b[12]) - 60
-				zone = String(format: " %@%02d:%02d", offset < 0 ? "-" : "+", abs(offset) / 60, abs(offset) % 60)
 			} else {
-				zone = " UTC"
+				var cal = Calendar(identifier: .gregorian)
+				cal.timeZone = TimeZone(secondsFromGMT: 0)!
+				if let d = cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute)) {
+					offset = DisplayTime.zone.secondsFromGMT(for: d) / 60
+				}
 			}
+			zone = String(format: " %@%02d:%02d", offset < 0 ? "-" : "+", abs(offset) / 60, abs(offset) % 60)
 			shift(offset)
 		} else if type == TNS.typeTimestampLTZ {
-			// 지역 시간대 시각(LOCAL TIME ZONE)도 UTC 로 온다 → 이 맥의 시간대로 (세션 시간대도 접속 때 이 맥에 맞춘다)
+			// 지역 시간대 시각(LOCAL TIME ZONE)도 UTC 로 온다 → 앱 설정의 표시 시간대로 (세션 시간대도 접속 때 그것에 맞춘다)
 			var cal = Calendar(identifier: .gregorian)
 			cal.timeZone = TimeZone(secondsFromGMT: 0)!
 			if let d = cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute)) {
-				shift(TimeZone.current.secondsFromGMT(for: d) / 60)
+				shift(DisplayTime.zone.secondsFromGMT(for: d) / 60)
 			}
 		}
 

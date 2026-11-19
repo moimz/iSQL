@@ -74,6 +74,11 @@ final class SQLiteConnection: DBConnection, @unchecked Sendable {
 
 	deinit { if let db { sqlite3_close_v2(db) } }
 
+	/// 실행 중인 문장 멈추기: sqlite3_interrupt 는 다른 스레드에서 불러도 된다 (문장은 SQLITE_INTERRUPT 로 끝난다)
+	func cancel() {
+		if let db { sqlite3_interrupt(db) }
+	}
+
 	private func run<T>(_ work: @escaping () throws -> T) async throws -> T {
 		try await withCheckedThrowingContinuation { cont in
 			queue.async {

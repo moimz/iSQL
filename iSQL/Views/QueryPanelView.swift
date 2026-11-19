@@ -39,6 +39,7 @@ struct QueryPanelView: View {
 	@Bindable var panel: QueryPanel
 	@State private var dangers: [String] = []
 	@State private var pending: [String] = []
+	@State private var pendingAll = false
 	@State private var dragStart: CGFloat?
 
 	var body: some View {
@@ -74,7 +75,7 @@ struct QueryPanelView: View {
 			Button("그래도 실행", role: .destructive) {
 				let run = pending
 				dangers = []
-				Task { await panel.run(run) }
+				Task { await panel.run(run, button: pendingAll ? .all : .run) }
 			}
 		} message: {
 			Text(dangers.joined(separator: "\n"))
@@ -86,27 +87,39 @@ struct QueryPanelView: View {
 			PopUp(selection: $panel.database, options: [("DB 고르지 않음", Optional(""))] + session.databases.map { ($0, Optional($0)) })
 				.frame(width: 170)
 				.help("쿼리를 돌릴 기본 DB (USE)")
-			Button { run(all: false) } label: {
-				HStack(spacing: 5) {
-					if panel.running { ProgressView().controlSize(.small) } else { Image(systemName: "play.fill") }
-					Text("실행")
-					ShortcutKeys(symbols: ["command", "return"]).opacity(0.75)
+			// 실행 중에는 누른 버튼이 취소 버튼이 된다 (⌘. 도 취소)
+			if panel.runningButton == .run {
+				cancelButton(prominent: true)
+			} else {
+				Button { run(all: false) } label: {
+					HStack(spacing: 5) {
+						Image(systemName: "play.fill")
+						Text("실행")
+						ShortcutKeys(symbols: ["command", "return"]).opacity(0.75)
+					}
 				}
-			}
-			.buttonStyle(.borderedProminent)
-			.keyboardShortcut(.return, modifiers: .command)
-			.disabled(panel.running)
-			.help("선택한 부분, 없으면 커서가 있는 문장 (⌘↩)")
-			Button { run(all: true) } label: {
-				HStack(spacing: 5) {
-					Text("전체 실행")
-					ShortcutKeys(symbols: ["command", "shift", "return"]).foregroundStyle(.secondary)
-				}
-			}
-				.keyboardShortcut(.return, modifiers: [.command, .shift])
+				.buttonStyle(.borderedProminent)
+				.keyboardShortcut(.return, modifiers: .command)
 				.disabled(panel.running)
-				.help("모든 문장 (⌘⇧↩)")
+				.help("선택한 부분, 없으면 커서가 있는 문장 (⌘↩)")
+			}
+			if panel.runningButton == .all {
+				cancelButton(prominent: false)
+			} else {
+				Button { run(all: true) } label: {
+					HStack(spacing: 5) {
+						Text("전체 실행")
+						ShortcutKeys(symbols: ["command", "shift", "return"]).foregroundStyle(.secondary)
+					}
+				}
+					.keyboardShortcut(.return, modifiers: [.command, .shift])
+					.disabled(panel.running)
+					.help("모든 문장 (⌘⇧↩)")
+			}
 			// 실행계획: 실행하지 않고 EXPLAIN 만 (고른 부분, 없으면 커서가 있는 문장)
+			if panel.runningButton == .explain {
+				cancelButton(prominent: false)
+			} else {
 			Button {
 				let st = panel.statementsToRun(all: false)
 				if st.isEmpty { NSSound.beep() } else { Task { await panel.explain(st) } }
@@ -119,6 +132,7 @@ struct QueryPanelView: View {
 				.keyboardShortcut(.return, modifiers: [.command, .option])
 				.disabled(panel.running)
 				.help("EXPLAIN: 쿼리를 실행하지 않고 어떻게 읽을지 봅니다 (⌥⌘↩)")
+			}
 			if let m = panel.message {
 				Text(m)
 					.foregroundStyle(panel.isError ? Color.red : .secondary)
@@ -143,6 +157,22 @@ struct QueryPanelView: View {
 		.padding(.vertical, 8)
 	}
 
+	/// 실행 중인 버튼 자리에 놓이는 취소 버튼
+	private func cancelButton(prominent: Bool) -> some View {
+		Button { panel.cancel() } label: {
+			HStack(spacing: 5) {
+				ProgressView().controlSize(.small)
+				Text("취소")
+				ShortcutKeys(symbols: ["command"]).opacity(0.75)
+				Text(".").font(.system(size: 11, weight: .medium)).opacity(0.75)
+			}
+		}
+		.tint(prominent ? .red : nil)
+		.buttonStyle(.bordered)
+		.keyboardShortcut(".", modifiers: .command)
+		.help("실행 중인 쿼리를 멈춥니다 (⌘.)")
+	}
+
 	private func run(all: Bool) {
 		let statements = panel.statementsToRun(all: all)
 		guard !statements.isEmpty else { NSSound.beep(); return }
@@ -150,9 +180,10 @@ struct QueryPanelView: View {
 		let warn = panel.session?.server?.warnsDangerousSQL ?? true
 		let found = warn ? statements.compactMap { st in SQLSplitter.danger(st, panel.dialect.syntax).map { "• \($0)\n  \(st.prefix(120))" } } : []
 		if found.isEmpty {
-			Task { await panel.run(statements) }
+			Task { await panel.run(statements, button: all ? .all : .run) }
 		} else {
 			pending = statements
+			pendingAll = all
 			dangers = found
 		}
 	}

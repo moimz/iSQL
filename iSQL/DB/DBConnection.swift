@@ -17,10 +17,14 @@ protocol DBConnection: AnyObject, Sendable {
 	/// 결과 하나만 필요할 때 (마지막 결과)
 	func rows(_ sql: String) async throws -> QueryResult
 	func close()
+	/// 지금 실행 중인 쿼리 멈추기 (다른 스레드에서 부른다. 실행 중이 아니면 아무것도 안 한다).
+	/// 멈춘 쿼리는 서버 오류(취소됨)로 끝나고 연결은 그대로 쓸 수 있다
+	func cancel()
 }
 
 extension DBConnection {
 	var tlsSummary: String? { nil }
+	func cancel() {}
 }
 
 /// 접속에 필요한 것 (비밀번호는 메모리에만)

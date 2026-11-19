@@ -18,6 +18,7 @@ enum TNS {
 
 	static let markerBreak: UInt8 = 1
 	static let markerReset: UInt8 = 2
+	static let markerInterrupt: UInt8 = 3
 
 	// 메시지 종류 (데이터 패킷 안)
 	static let msgProtocol: UInt8 = 1

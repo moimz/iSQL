@@ -280,7 +280,29 @@ final class TableData: ColumnOrderTracking {
 		let info = session.columns[table.id] ?? []
 		columns = info.map(Self.placeholderColumn)
 		keyIndices = info.indices.filter { info[$0].key == "PRI" }
+		if let d = UserDefaults.standard.dictionary(forKey: unixKey) as? [String: String] {
+			unixViews = d.compactMapValues(UnixTimeUnit.init(rawValue:))
+		}
 	}
+
+	// MARK: 컬럼을 날짜로 보기 (유닉스 시간, 사용자 2026-11-20)
+
+	/// 컬럼 이름 → 유닉스 시간 단위 (날짜로 보는 컬럼). 이 맥에 테이블마다 기억한다
+	private(set) var unixViews: [String: UnixTimeUnit] = [:]
+	private var unixKey: String { "unixTime.\(session.server?.id.uuidString ?? "-").\(table.id)" }
+	private func columnKey(_ col: Int) -> String { columns[col].orgName.isEmpty ? columns[col].name : columns[col].orgName }
+	func unixUnit(_ col: Int) -> UnixTimeUnit? { col < columns.count ? unixViews[columnKey(col)] : nil }
+
+	func setUnixView(_ col: Int, _ unit: UnixTimeUnit?) {
+		guard col < columns.count else { return }
+		unixViews[columnKey(col)] = unit
+		if unixViews.isEmpty { UserDefaults.standard.removeObject(forKey: unixKey) }
+		else { UserDefaults.standard.set(unixViews.mapValues(\.rawValue), forKey: unixKey) }
+		if unit != nil { fitRequests.insert(col) }
+		version += 1
+	}
+	@ObservationIgnored private var fitRequests: Set<Int> = []
+	func takeFitRequests() -> [Int] { defer { fitRequests = [] }; return Array(fitRequests) }
 
 	/// 구조(COLUMN_TYPE)로 만든 임시 컬럼. 실제 결과가 오면 서버가 준 것으로 바뀐다 (이름이 같아 표는 다시 안 만든다)
 	private static func placeholderColumn(_ c: ColumnInfo) -> Column {
@@ -594,10 +616,18 @@ extension TableData: GridSource {
 		if st == .clean, let n = partial[row]?[col], case .bytes(let d) = v {
 			return GridCell(text: BinaryInfo.describe(d, total: n), state: st, tooltip: "크기가 커서 앞부분만 읽었습니다. 복사·훑어보기·저장할 때 전체를 읽습니다")
 		}
+		// 날짜로 보는 컬럼: 숫자를 날짜로 (실제 값은 풍선 도움말에)
+		if let u = unixUnit(col), case .text(let t) = v, let shown = u.display(t) {
+			return GridCell(text: shown, state: st, tooltip: (tip.map { $0 + "\n" } ?? "") + "유닉스 시간(\(u.name)): \(t)")
+		}
 		return GridCell(text: v.display, state: st, tooltip: tip)
 	}
 
-	func setText(_ row: Int, _ col: Int, _ text: String) { set(row, col, .text(text)) }
+	/// 날짜로 보는 컬럼에 날짜를 넣으면 그 단위의 숫자로 바꿔 넣는다 (숫자를 넣으면 그대로)
+	func setText(_ row: Int, _ col: Int, _ text: String) {
+		if let u = unixUnit(col), let raw = u.raw(text) { set(row, col, .text(raw)); return }
+		set(row, col, .text(text))
+	}
 
 	var insertTarget: InsertTarget? {
 		guard !table.isView else { return nil }
@@ -651,7 +681,18 @@ extension TableData: GridSource {
 
 	func headerMenu(_ col: Int) -> [GridMenuItem] {
 		let key = gridColumns[col].key
-		return [.action("‘\(key)’ 으로 찾기") { self.searchColumn(key) }]
+		var items: [GridMenuItem] = [.action("‘\(key)’ 으로 찾기") { self.searchColumn(key) }]
+		// 숫자 컬럼: 유닉스 시간이면 날짜로 보기 (단위를 고른다)
+		if col < columns.count, columns[col].isNumeric {
+			let now = unixUnit(col)
+			var sub: [GridMenuItem] = UnixTimeUnit.allCases.map { u in
+				.action((now == u ? "✓ " : "") + u.label) { self.setUnixView(col, u) }
+			}
+			sub.append(.separator)
+			sub.append(.action((now == nil ? "✓ " : "") + "숫자 그대로") { self.setUnixView(col, nil) })
+			items.append(.submenu("날짜로 보기 (유닉스 시간)", sub))
+		}
+		return items
 	}
 
 	func cellMenu(row: Int, col: Int?, selection: IndexSet) -> [GridMenuItem] {

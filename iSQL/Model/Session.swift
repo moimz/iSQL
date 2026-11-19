@@ -914,6 +914,9 @@ final class Session {
 		return try await conn.query(sql)
 	}
 
+	/// 이 창 연결에서 실행 중인 쿼리 멈추기 (쿼리 패널의 취소)
+	func cancelQuery() { conn?.cancel() }
+
 	// MARK: 테이블 정보 패널 (구조 보기 오른쪽)
 
 	/// 구조 보기에서 테이블 정보 패널을 펼쳤는지 (탭을 바꿔도 그대로).

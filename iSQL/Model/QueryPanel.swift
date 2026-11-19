@@ -25,6 +25,11 @@ final class QueryPanel {
 	var database = ""
 
 	private(set) var running = false
+	/// 실행 중에 취소 버튼으로 바뀌는 버튼 (누른 버튼)
+	enum RunButton { case run, all, explain }
+	private(set) var runningButton: RunButton?
+	/// 취소를 눌렀다 (남은 문장은 실행하지 않는다)
+	@ObservationIgnored private var cancelled = false
 	private(set) var outputs: [QueryOutput] = []
 	var selectedOutput = 0
 	/// SELECT 결과가 탭 영역을 덮고 있는지 (×로 걷어도 패널은 열려 있다)
@@ -130,10 +135,21 @@ final class QueryPanel {
 
 	// MARK: - 실행
 
+	/// 실행 중인 쿼리 멈추기 (서버에 취소를 보낸다)
 	@MainActor
-	func run(_ statements: [String]) async {
+	func cancel() {
+		guard running, !cancelled else { return }
+		cancelled = true
+		message = "취소하는 중…"
+		session?.cancelQuery()
+	}
+
+	@MainActor
+	func run(_ statements: [String], button: RunButton = .run) async {
 		guard let session, !statements.isEmpty, !running else { return }
 		running = true
+		runningButton = button
+		cancelled = false
 		message = nil
 		isError = false
 		let start = Date()
@@ -141,13 +157,14 @@ final class QueryPanel {
 		var affected: UInt64 = 0
 		var changes = 0
 		var touched: [String] = []
-		defer { running = false }
+		defer { running = false; runningButton = nil }
 		do {
 			if !database.isEmpty, database != session.currentDB {
 				_ = try await session.query(dialect.use(database))
 				session.currentDB = database
 			}
 			for st in statements {
+				if cancelled { break }
 				// LIMIT 없는 SELECT 는 한 쪽 행 수만큼만 (쪽을 넘기면 다시 실행)
 				let paged = SQLSplitter.canAutoLimit(st, dialect.syntax)
 				let size = QueryOutput.currentPageSize
@@ -166,12 +183,13 @@ final class QueryPanel {
 			var parts: [String] = []
 			if !outs.isEmpty { parts.append(outs.count == 1 ? outs[0].totalText : "결과 \(outs.count)개") }
 			if changes > 0 { parts.append("\(affected.formatted())행 바뀜") }
+			if cancelled { parts.append("취소함 (남은 문장은 실행하지 않음)") }
 			if parts.isEmpty { parts.append("완료") }
 			parts.append(String(format: "%.2f초", secs))
 			message = parts.joined(separator: " · ")
 		} catch {
 			isError = true
-			message = error.localizedDescription
+			message = cancelled ? "취소했습니다 (\(error.localizedDescription))" : error.localizedDescription
 		}
 		if !outs.isEmpty {
 			outputs = outs
@@ -190,9 +208,11 @@ final class QueryPanel {
 	func explain(_ statements: [String]) async {
 		guard let session, !statements.isEmpty, !running else { return }
 		running = true
+		runningButton = .explain
+		cancelled = false
 		message = nil
 		isError = false
-		defer { running = false }
+		defer { running = false; runningButton = nil }
 		var outs: [QueryOutput] = []
 		var warnCount = 0
 		do {

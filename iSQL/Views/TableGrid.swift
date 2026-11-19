@@ -120,6 +120,8 @@ protocol GridSource: AnyObject {
 	func moveRows(_ rows: IndexSet, to: Int)
 	/// 공급자가 표에게 맡긴 편집 시작 (새 줄의 이름 칸 등). 한 번 꺼내면 사라진다
 	func takeEditRequest() -> (row: Int, col: Int)?
+	/// 공급자가 표에게 맡긴 너비 맞추기 (보이는 글자가 길어진 컬럼들: 날짜로 보기 등). 한 번 꺼내면 사라진다
+	func takeFitRequests() -> [Int]
 	/// 칸 안에서 고치지 않고 따로 편집 창(시트)을 여는 칸 (여러 줄 글자·JSON)
 	func opensEditor(_ row: Int, _ col: Int) -> Bool
 	func openEditor(_ row: Int, _ col: Int)
@@ -164,6 +166,7 @@ extension GridSource {
 	var canMoveRows: Bool { false }
 	func moveRows(_ rows: IndexSet, to: Int) {}
 	func takeEditRequest() -> (row: Int, col: Int)? { nil }
+	func takeFitRequests() -> [Int] { [] }
 	func opensEditor(_ row: Int, _ col: Int) -> Bool { false }
 	func openEditor(_ row: Int, _ col: Int) {}
 	func tabStop(_ row: Int, _ col: Int) -> Bool { isEditable(row, col) && choices(row, col) == nil && !opensEditor(row, col) }
@@ -407,6 +410,15 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 					table.scrollRowToVisible(req.row)
 					table.selectRowIndexes([req.row], byExtendingSelection: false)
 					if let ci = table.tableColumns.firstIndex(where: { colIndex($0) == req.col }) { beginEditing(row: req.row, column: ci) }
+				}
+			}
+			for col in source.takeFitRequests() {
+				// 내용이 길어진 컬럼: 좁으면 내용에 맞게 넓힌다 (줄이지는 않는다)
+				for tv in [table, frozen] {
+					if let ci = tv.tableColumns.firstIndex(where: { colIndex($0) == col }) {
+						let w = tableView(tv, sizeToFitWidthOfColumn: ci)
+						if tv.tableColumns[ci].width < w { tv.tableColumns[ci].width = w }
+					}
 				}
 			}
 		}
