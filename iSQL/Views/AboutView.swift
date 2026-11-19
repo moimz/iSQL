@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// iSQL 정보 창 (메뉴 iSQL > iSQL에 관하여). macOS 기본 정보 창은 글 영역이 창 가로를 꽉 채워
-/// 여백·둥근 상자를 줄 수 없어서 직접 만든다 (사용자 2026-11-20). 글이 길면 상자 안에서 스크롤
+/// 여백·둥근 상자를 줄 수 없어서 직접 만든다 (사용자 2026-11-20). 상자는 글 길이에 맞춘다 (스크롤 없음)
 struct AboutView: View {
 	static let windowID = "about"
 
@@ -21,8 +21,7 @@ struct AboutView: View {
 			Text("iSQL").font(.title2.bold()).padding(.top, 10)
 			Text(version).font(.callout).foregroundStyle(.secondary).padding(.top, 4)
 
-			ScrollView {
-				VStack(alignment: .leading, spacing: 12) {
+			VStack(alignment: .leading, spacing: 12) {
 					section("상표") {
 						Text("MySQL · Oracle 은 Oracle, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표이며, 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 씁니다. iSQL 은 이 회사들과 관계가 없습니다.")
 					}
@@ -35,9 +34,8 @@ struct AboutView: View {
 				.font(.caption)
 				.foregroundStyle(.secondary)
 				.frame(maxWidth: .infinity, alignment: .leading)
+				.fixedSize(horizontal: false, vertical: true)
 				.padding(14)
-			}
-			.frame(height: 170)
 			.background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
 			.overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
 			.clipShape(RoundedRectangle(cornerRadius: 10))
