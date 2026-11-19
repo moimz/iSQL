@@ -89,7 +89,7 @@ struct QueryPanelView: View {
 				.help("쿼리를 돌릴 기본 DB (USE)")
 			// 실행 중에는 누른 버튼이 취소 버튼이 된다 (⌘. 도 취소)
 			if panel.runningButton == .run {
-				cancelButton(prominent: true)
+				cancelButton()
 			} else {
 				Button { run(all: false) } label: {
 					HStack(spacing: 5) {
@@ -101,10 +101,12 @@ struct QueryPanelView: View {
 				.buttonStyle(.borderedProminent)
 				.keyboardShortcut(.return, modifiers: .command)
 				.disabled(panel.running)
+				// 파란 강조 버튼은 막혀도 흐려지지 않아 눌리는 것처럼 보였다 → 다른 버튼이 실행 중이면 흐리게
+				.opacity(panel.running ? 0.45 : 1)
 				.help("선택한 부분, 없으면 커서가 있는 문장 (⌘↩)")
 			}
 			if panel.runningButton == .all {
-				cancelButton(prominent: false)
+				cancelButton()
 			} else {
 				Button { run(all: true) } label: {
 					HStack(spacing: 5) {
@@ -118,7 +120,7 @@ struct QueryPanelView: View {
 			}
 			// 실행계획: 실행하지 않고 EXPLAIN 만 (고른 부분, 없으면 커서가 있는 문장)
 			if panel.runningButton == .explain {
-				cancelButton(prominent: false)
+				cancelButton()
 			} else {
 			Button {
 				let st = panel.statementsToRun(all: false)
@@ -158,7 +160,7 @@ struct QueryPanelView: View {
 	}
 
 	/// 실행 중인 버튼 자리에 놓이는 취소 버튼
-	private func cancelButton(prominent: Bool) -> some View {
+	private func cancelButton() -> some View {
 		Button { panel.cancel() } label: {
 			HStack(spacing: 5) {
 				ProgressView().controlSize(.small)
@@ -167,7 +169,7 @@ struct QueryPanelView: View {
 				Text(".").font(.system(size: 11, weight: .medium)).opacity(0.75)
 			}
 		}
-		.tint(prominent ? .red : nil)
+		.tint(.red)
 		.buttonStyle(.bordered)
 		.keyboardShortcut(".", modifiers: .command)
 		.help("실행 중인 쿼리를 멈춥니다 (⌘.)")
