@@ -328,6 +328,8 @@ struct QueryEditor: NSViewRepresentable {
 	weak var session: Session?
 	var database: String = ""
 	var onSelection: ((NSRange) -> Void)?
+	/// 보기만 (루틴 탭의 패키지)
+	var readOnly = false
 	/// 글자 규칙 (색칠·자동 완성을 띄우는 글자): 접속한 서버 종류의 것
 	var syntax: SQLSyntax { session?.dialect.syntax ?? SQLKind.mysql.dialect.syntax }
 
@@ -340,6 +342,7 @@ struct QueryEditor: NSViewRepresentable {
 		tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
 		tv.isRichText = false
 		tv.allowsUndo = true
+		tv.isEditable = !readOnly
 		tv.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
 		tv.textColor = .labelColor
 		tv.backgroundColor = .clear

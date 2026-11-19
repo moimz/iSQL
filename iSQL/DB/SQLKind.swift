@@ -81,7 +81,7 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		}
 		if self == .oracle {
 			// "데이터베이스" = 스키마(사용자): 만들기·지우기·이름 바꾸기·복제는 없다. 서버 관리·계정·엔진·문자셋도 아직 없다
-			c.routineKinds = [.procedure, .function, .trigger]
+			c.routineKinds = [.procedure, .function, .package, .trigger]
 			c.routineDefiner = false
 			c.serverStatus = false; c.processKill = false; c.queryDigests = false; c.serverVariables = false
 			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false

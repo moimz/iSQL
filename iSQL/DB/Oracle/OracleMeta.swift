@@ -110,14 +110,15 @@ struct OracleMeta: SQLMeta {
 	func routines(_ run: DBRun) async throws -> [RoutineInfo] {
 		let objs = try await one(run, """
 			SELECT owner, object_name, object_type, status FROM all_objects
-			WHERE object_type IN ('PROCEDURE', 'FUNCTION') AND owner IN (\(userSchemas)) ORDER BY owner, object_name
+			WHERE object_type IN ('PROCEDURE', 'FUNCTION', 'PACKAGE') AND owner IN (\(userSchemas)) ORDER BY owner, object_name
 			""")
 		let trig = try await one(run, """
 			SELECT owner, trigger_name, trigger_type, triggering_event, table_name, status FROM all_triggers
 			WHERE owner IN (\(userSchemas)) ORDER BY owner, trigger_name
 			""")
 		var out = objs.rows.map { r in
-			RoutineInfo(schema: r[0].string ?? "", name: r[safe: 1]?.string ?? "", kind: r[safe: 2]?.string == "FUNCTION" ? .function : .procedure,
+			RoutineInfo(schema: r[0].string ?? "", name: r[safe: 1]?.string ?? "",
+			            kind: r[safe: 2]?.string == "FUNCTION" ? .function : r[safe: 2]?.string == "PACKAGE" ? .package : .procedure,
 			            detail: r[safe: 3]?.string == "INVALID" ? "INVALID" : "")
 		}
 		out += trig.rows.map { r in
@@ -184,6 +185,7 @@ struct OracleMeta: SQLMeta {
 			case .trigger: type = "TRIGGER"
 			case .view: type = "VIEW"
 			case .event: return nil
+			case .package: return try await packageSource(run, schema: schema, name: name)
 			}
 		}
 		await setTransforms(run, forDump: false)
@@ -193,7 +195,26 @@ struct OracleMeta: SQLMeta {
 		if ddl == nil, case .table = object {
 			ddl = try? await one(run, "SELECT DBMS_METADATA.GET_DDL('VIEW', \(lit(name)), \(owner)) FROM dual").rows.first?.first?.string
 		}
+		// 남의 스키마 프로시저 · 함수 · 트리거는 GET_DDL 권한이 없어도 실행 권한이 있으면 ALL_SOURCE 로 읽힌다
+		if ddl == nil, case .routine = object, ["PROCEDURE", "FUNCTION", "TRIGGER"].contains(type), !schema.isEmpty {
+			ddl = try await source(run, schema: schema, name: name, type: type)
+		}
 		return ddl?.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	/// ALL_SOURCE 의 줄들 → "CREATE OR REPLACE " + 원본 (없으면 nil)
+	private func source(_ run: DBRun, schema: String, name: String, type: String) async throws -> String? {
+		let rows = try await one(run, "SELECT text FROM all_source WHERE owner = \(lit(schema)) AND name = \(lit(name)) AND type = \(lit(type)) ORDER BY line").rows
+		guard !rows.isEmpty else { return nil }
+		return "CREATE OR REPLACE " + rows.map { $0.first?.string ?? "" }.joined()
+	}
+
+	/// 패키지: 명세 + 본문 (본문은 주인이거나 권한이 있을 때만 보인다)
+	private func packageSource(_ run: DBRun, schema: String, name: String) async throws -> String? {
+		guard let spec = try await source(run, schema: schema, name: name, type: "PACKAGE") else { return nil }
+		let body = try await source(run, schema: schema, name: name, type: "PACKAGE BODY")
+		return spec.trimmingCharacters(in: .whitespacesAndNewlines) + "\n/\n\n"
+			+ (body?.trimmingCharacters(in: .whitespacesAndNewlines).appending("\n/") ?? "-- 패키지 본문이 없거나 볼 권한이 없습니다")
 	}
 
 	/// DBMS_METADATA 세션 설정: 저장소 · 세그먼트 절과 끝 ; 은 늘 빼고, 내보내기면 외래 키와 스키마 이름도 뺀다
@@ -308,9 +329,9 @@ struct OracleMeta: SQLMeta {
 	func routineNames(_ run: DBRun, schema: String) async throws -> [(kind: RoutineKind, name: String)] {
 		try await one(run, """
 			SELECT object_type, object_name FROM all_objects
-			WHERE owner = \(lit(schema)) AND object_type IN ('PROCEDURE', 'FUNCTION', 'TRIGGER') ORDER BY object_type, object_name
+			WHERE owner = \(lit(schema)) AND object_type IN ('PROCEDURE', 'FUNCTION', 'TRIGGER', 'PACKAGE') ORDER BY object_type, object_name
 			""").rows.map { r in
-			let k: RoutineKind = r[0].string == "FUNCTION" ? .function : r[0].string == "TRIGGER" ? .trigger : .procedure
+			let k: RoutineKind = r[0].string == "FUNCTION" ? .function : r[0].string == "TRIGGER" ? .trigger : r[0].string == "PACKAGE" ? .package : .procedure
 			return (k, r[safe: 1]?.string ?? "")
 		}
 	}

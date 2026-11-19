@@ -12,6 +12,7 @@ extension MySQLDialect {
 		case .trigger: return "CREATE TRIGGER `new_trigger` BEFORE INSERT ON \(t) FOR EACH ROW\nBEGIN\n\t-- SET NEW.컬럼 = 값;\nEND"
 		case .event: return "CREATE EVENT `new_event`\nON SCHEDULE EVERY 1 DAY\nDO\n\tSELECT 1"
 		case .view: return "CREATE VIEW `new_view` AS\nSELECT 1"
+		case .package: return "-- MySQL 에는 패키지가 없습니다"
 		}
 	}
 

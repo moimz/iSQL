@@ -5,21 +5,25 @@ import Observation
 /// 프로시저·함수·트리거·이벤트 (사이드바 DB 아래 묶음, 탭으로 열어 SQL 로 고친다)
 enum RoutineKind: String, CaseIterable {
 	case procedure, function, trigger, event, view
+	/// Oracle 패키지 (명세 + 본문). 보기만 한다 (사용자 2026-11-20: 고치고 컴파일하기는 급하지 않다)
+	case package
 
 	/// 사이드바 묶음·새로 만들기에 나오는 것 (뷰는 테이블 목록에 있고 정의 고치기만 탭으로)
 	static let routineKinds: [RoutineKind] = [.procedure, .function, .trigger, .event]
 
 	var label: String {
-		switch self { case .procedure: "프로시저"; case .function: "함수"; case .trigger: "트리거"; case .event: "이벤트"; case .view: "뷰" }
+		switch self { case .procedure: "프로시저"; case .function: "함수"; case .trigger: "트리거"; case .event: "이벤트"; case .view: "뷰"; case .package: "패키지" }
 	}
 	var sqlWord: String { rawValue.uppercased() }
 	var icon: String {
-		switch self { case .procedure: "gearshape.2"; case .function: "function"; case .trigger: "bolt"; case .event: "clock"; case .view: "eye" }
+		switch self { case .procedure: "gearshape.2"; case .function: "function"; case .trigger: "bolt"; case .event: "clock"; case .view: "eye"; case .package: "shippingbox" }
 	}
 	/// SHOW CREATE 결과에서 정의가 든 컬럼
 	var createColumn: String {
-		switch self { case .procedure: "Create Procedure"; case .function: "Create Function"; case .trigger: "SQL Original Statement"; case .event: "Create Event"; case .view: "Create View" }
+		switch self { case .procedure: "Create Procedure"; case .function: "Create Function"; case .trigger: "SQL Original Statement"; case .event: "Create Event"; case .view: "Create View"; case .package: "" }
 	}
+	/// 보기만 하는 종류 (만들기·저장·삭제를 숨긴다)
+	var isReadOnly: Bool { self == .package }
 
 }
 
@@ -83,7 +87,7 @@ final class RoutineEditor {
 	private(set) var schedulerOff = false
 
 	var isNew: Bool { name == nil }
-	var changed: Bool { isNew || text != original }
+	var changed: Bool { !kind.isReadOnly && (isNew || text != original) }
 
 	init(kind: RoutineKind, schema: String, name: String?, session: Session) {
 		self.kind = kind
@@ -141,8 +145,8 @@ final class RoutineEditor {
 			let c = try await session.sideConnection(purpose: kind.label)
 			conn = c
 			_ = try await c.query(dialect.use(schema))
-			if kind == .view, let old = name, old == newName {
-				// 뷰는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
+			if kind == .view || dialect.kind == .oracle, let old = name, old == newName {
+				// 뷰(와 Oracle 의 모든 루틴)는 이름이 같으면 CREATE OR REPLACE 로 (지우지 않아 권한이 그대로, 실패해도 원래 것이 남는다)
 				_ = try await c.query(dialect.createOrReplace(sql))
 			} else if let old = name {
 				_ = try await c.query(dialect.dropRoutine(kind, "\(q(schema)).\(q(old))"))

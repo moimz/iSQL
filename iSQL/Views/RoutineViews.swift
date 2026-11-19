@@ -19,7 +19,7 @@ struct RoutineGroups: View {
 				RoutineGroupRow(kind: kind, count: items.count, open: open) {
 					if session.expandedRoutineGroups.contains(key) { session.expandedRoutineGroups.remove(key) } else { session.expandedRoutineGroups.insert(key) }
 				}
-				.contextMenu { Button("새 \(kind.label)…") { session.newRoutine(kind, schema: schema) } }
+				.contextMenu { if !kind.isReadOnly { Button("새 \(kind.label)…") { session.newRoutine(kind, schema: schema) } } }
 				if open {
 					ForEach(items) { r in
 						RoutineRow(routine: r, selected: session.activeTab == r.id)
@@ -42,7 +42,7 @@ struct NewRoutineMenu: View {
 	let schema: String
 	var body: some View {
 		// 루틴이 없는 서버 종류면 메뉴째 숨긴다
-		let kinds = session.capabilities.routineKinds
+		let kinds = session.capabilities.routineKinds.filter { !$0.isReadOnly }
 		if !kinds.isEmpty {
 			Menu("새로 만들기") {
 				ForEach(kinds, id: \.self) { k in
@@ -135,10 +135,12 @@ struct RoutineMenu: View {
 				}
 			}
 		}
-		Divider()
-		Button("새 \(routine.kind.label)…") { session.newRoutine(routine.kind, schema: routine.schema) }
-		Divider()
-		Button("\(routine.kind.label) 삭제…", role: .destructive) { RoutineDrop.confirm(routine, session: session) }
+		if !routine.kind.isReadOnly {
+			Divider()
+			Button("새 \(routine.kind.label)…") { session.newRoutine(routine.kind, schema: routine.schema) }
+			Divider()
+			Button("\(routine.kind.label) 삭제…", role: .destructive) { RoutineDrop.confirm(routine, session: session) }
+		}
 	}
 }
 
@@ -197,6 +199,9 @@ struct RoutineTabView: View {
 					Button("줄바꿈") { editor.text = SQLHighlight.format(editor.text, dialect.syntax) }
 						.help("FROM · WHERE · JOIN 앞과 SELECT 목록의 쉼표 뒤에서 줄을 나눕니다 (뜻은 그대로)")
 				}
+				if editor.kind.isReadOnly {
+					Text("보기만").foregroundStyle(.secondary)
+				} else {
 				if !editor.isNew {
 					Button("되돌리기") { editor.revert() }.disabled(!editor.changed)
 					Button(role: .destructive) { if let r = info { RoutineDrop.confirm(r, session: session) } } label: { Text("삭제…") }
@@ -211,6 +216,7 @@ struct RoutineTabView: View {
 				}
 				.buttonStyle(.borderedProminent)
 				.disabled(!editor.changed || editor.saving)
+				}
 			}
 			.controlSize(.regular)
 			.padding(.horizontal, 12)
@@ -223,7 +229,7 @@ struct RoutineTabView: View {
 			}
 			Divider()
 			if editor.loaded {
-				QueryEditor(text: $editor.text, session: session, database: editor.schema)
+				QueryEditor(text: $editor.text, session: session, database: editor.schema, readOnly: editor.kind.isReadOnly)
 			} else {
 				ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
 			}
@@ -234,8 +240,9 @@ struct RoutineTabView: View {
 						.foregroundStyle(editor.isError ? Color.red : .green)
 						.lineLimit(2).textSelection(.enabled)
 				} else {
-					Text(editor.isNew ? "CREATE 문을 고친 뒤 만들기 (⌘S). DELIMITER 는 쓰지 않습니다 — BEGIN … END 를 그대로"
-					     : editor.kind == .view ? "고친 뒤 저장(⌘S)하면 CREATE OR REPLACE 로 바꿉니다 (이름을 바꾸면 삭제하고 새로 만듭니다)"
+					Text(editor.kind.isReadOnly ? "패키지는 명세와 본문을 보기만 합니다 (본문은 볼 권한이 있을 때만)"
+					     : editor.isNew ? "CREATE 문을 고친 뒤 만들기 (⌘S). DELIMITER 는 쓰지 않습니다 — BEGIN … END 를 그대로"
+					     : editor.kind == .view || session.kind == .oracle ? "고친 뒤 저장(⌘S)하면 CREATE OR REPLACE 로 바꿉니다 (이름을 바꾸면 삭제하고 새로 만듭니다)"
 					     : "고친 뒤 저장(⌘S)하면 삭제하고 다시 만듭니다. 만들다 실패하면 원래 것으로 되돌립니다")
 						.foregroundStyle(.secondary)
 				}

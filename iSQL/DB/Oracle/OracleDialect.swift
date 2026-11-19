@@ -127,7 +127,7 @@ extension OracleDialect {
 	func dropRoutine(_ kind: RoutineKind, _ target: String) -> String {
 		switch kind {
 		case .procedure, .function, .trigger, .view: "DROP \(kind.sqlWord) \(target)"
-		case .event: none
+		case .event, .package: none
 		}
 	}
 	func setEventEnabled(_ target: String, _ on: Bool) -> String { none }
@@ -237,7 +237,7 @@ extension OracleDialect {
 		case .function: "CREATE OR REPLACE FUNCTION \"NEW_FUNCTION\" RETURN NUMBER AS\nBEGIN\n\tRETURN 1;\nEND;"
 		case .trigger: "CREATE OR REPLACE TRIGGER \"NEW_TRIGGER\"\nAFTER INSERT ON \(table.map(quote) ?? "테이블")\nFOR EACH ROW\nBEGIN\n\tNULL;\nEND;"
 		case .view: "CREATE OR REPLACE VIEW \"NEW_VIEW\" AS\nSELECT 1 AS X FROM DUAL"
-		case .event: none
+		case .event, .package: none
 		}
 	}
 	func callRoutine(_ kind: RoutineKind, _ target: String, args: [String], outs: [String]) -> [String] {
