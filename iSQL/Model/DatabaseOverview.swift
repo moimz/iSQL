@@ -15,8 +15,10 @@ struct TableStat: Hashable {
 	var collation: String
 	var comment: String
 	var updated: String
+	/// 행 수를 정확히 센 값인지 (SQLite 는 COUNT 로 센다)
+	var exact = false
 	var total: Int64 { dataLength + indexLength }
-	var rowsExact: Bool { ["MYISAM", "ARIA"].contains(engine.uppercased()) }
+	var rowsExact: Bool { exact || ["MYISAM", "ARIA"].contains(engine.uppercased()) }
 }
 
 /// DB 개요 탭의 내용. 공용 표(TableGrid)에 대는 공급자이기도 하다

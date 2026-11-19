@@ -216,8 +216,12 @@ final class StructureEditor: GridSource {
 	var alterSQL: String? {
 		let c = clauses
 		guard !c.isEmpty else { return nil }
+		if needsRebuild { return rebuildPreview }
 		return dialect.alterTable(dialect.quote(table: table), c, multiline: true)
 	}
+
+	/// SQL 미리보기 제목
+	var previewTitle: String { needsRebuild ? "SQLite 는 테이블을 새로 만들어 옮깁니다 (한 트랜잭션)" : "저장하면 ALTER TABLE 하나로 실행됩니다" }
 
 	/// 저장 전에 막을 문제
 	var problem: String? {
@@ -229,23 +233,120 @@ final class StructureEditor: GridSource {
 		if let r = final.first(where: { NewColumn.needsLength.contains($0.col.type) && $0.col.length.trimmingCharacters(in: .whitespaces).isEmpty }) {
 			return "\(r.col.name) (\(r.col.type)) 은(는) 길이·값이 필요합니다"
 		}
-		if dialect.kind == .sqlite, let p = sqliteProblem(final) { return p }
 		return nil
 	}
 
-	/// SQLite 의 ALTER 는 컬럼 더하기(맨 뒤)·이름 바꾸기·지우기만 된다. 정의·순서를 바꾸려면 테이블을 새로 만들어야 한다
-	private func sqliteProblem(_ final: [Row]) -> String? {
-		let rebuild = "SQLite 는 테이블을 새로 만들어야 합니다"
-		if let r = final.first(where: { r in r.original.map { !r.col.sameDefinition($0) } ?? false }) {
-			return "\(r.col.name): 컬럼 정의를 바꾸려면 \(rebuild)"
-		}
+	/// SQLite 의 ALTER 는 컬럼 더하기(맨 뒤)·이름 바꾸기·지우기만 된다 → 정의·순서를 바꾸거나 중간에 더하면 테이블을 새로 만들어 옮긴다
+	/// (사용자 2026-11-19: 예전엔 막았다)
+	var needsRebuild: Bool {
+		guard dialect.kind == .sqlite else { return false }
+		let final = rows.filter { !$0.deleted }
+		if final.contains(where: { r in r.original.map { !r.col.sameDefinition($0) } ?? false }) { return true }
 		let index = Dictionary(uniqueKeysWithValues: originalOrder.enumerated().map { ($1, $0) })
 		let kept = final.compactMap { $0.original.flatMap { index[$0.name] } }
-		if kept != kept.sorted() { return "컬럼 순서를 바꾸려면 \(rebuild)" }
-		if let last = final.lastIndex(where: { $0.original != nil }), final[..<last].contains(where: { $0.original == nil }) {
-			return "새 컬럼은 맨 뒤에만 더할 수 있습니다 (\(rebuild))"
+		if kept != kept.sorted() { return true }
+		if let last = final.lastIndex(where: { $0.original != nil }), final[..<last].contains(where: { $0.original == nil }) { return true }
+		return false
+	}
+
+	/// 새로 만들 테이블의 컬럼 정의 (raw = 지금 CREATE 의 컬럼 정의, 이름 → 정의). 정의가 같으면 그대로, 바뀌면 편집기 값 + 원래 키·제약
+	private func rebuildDefinitions(_ raw: [String: String]) -> (defs: [String], copy: [String]) {
+		let d = dialect
+		var defs: [String] = [], copy: [String] = []
+		for r in rows where !r.deleted {
+			let n = r.col.name
+			if let o = r.original {
+				let base = raw[n] ?? raw[o.name]
+				let def = r.col.sameDefinition(o) ? (base ?? r.col.definition(d)) : r.col.definition(d) + SQLiteMeta.keptColumnConstraints(base ?? "")
+				defs.append(d.quote(n) + " " + def)
+				// 계산 컬럼은 값을 넣을 수 없다
+				if o.generated == nil && r.col.generated == nil { copy.append(d.quote(n)) }
+			} else {
+				defs.append(d.quote(n) + " " + r.col.definition(d))
+			}
 		}
-		return nil
+		return (defs, copy)
+	}
+
+	private var rebuildTemp: String { "__isql_new_" + table.name }
+
+	/// 미리보기 (표 제약·인덱스·트리거는 저장할 때 읽어서 다시 만든다)
+	private var rebuildPreview: String {
+		let d = dialect, t = d.quote(table.name), tmp = d.quote(rebuildTemp)
+		var out = ["-- SQLite 는 컬럼 정의·순서를 바꾸려면 테이블을 새로 만들어 데이터를 옮깁니다", "PRAGMA foreign_keys = OFF", "BEGIN"]
+		for r in rows where !r.deleted { if let o = r.original, o.name != r.col.name { out.append("ALTER TABLE \(t) RENAME COLUMN \(d.quote(o.name)) TO \(d.quote(r.col.name))") } }
+		var raw: [String: String] = [:]
+		for r in rows where !r.deleted { if let o = r.original, let def = rawDefinitions[o.name] { raw[r.col.name] = def } }
+		let (defs, copy) = rebuildDefinitions(raw)
+		out.append("CREATE TABLE \(tmp) (\n  " + (defs + ["-- (원래 표 제약)"]).joined(separator: ",\n  ") + "\n)")
+		out.append("INSERT INTO \(tmp) (\(copy.joined(separator: ", "))) SELECT \(copy.joined(separator: ", ")) FROM \(t)")
+		out.append("DROP TABLE \(t)")
+		out.append("ALTER TABLE \(tmp) RENAME TO \(t)")
+		out.append("-- 원래 인덱스·트리거를 다시 만들고, 외래 키를 확인합니다 (PRAGMA foreign_key_check)")
+		out.append("COMMIT")
+		out.append("PRAGMA foreign_keys = ON")
+		return out.joined(separator: ";\n")
+	}
+
+	/// SQLite 테이블 다시 만들기 (SQLite 문서의 순서). 한 트랜잭션, 실패하면 모두 되돌린다
+	@MainActor
+	private func rebuildSQLite(_ session: Session) async throws {
+		let d = dialect, t = table.name, qt = d.quote(table.name), tmp = d.quote(rebuildTemp)
+		func lit(_ v: String) -> String { d.literal(.text(v)) }
+		func strings(_ sql: String) async throws -> [String] { (try await session.query(sql)).last?.rows.compactMap { $0.first?.string } ?? [] }
+		let fkWasOn = (try await strings("PRAGMA foreign_keys")).first == "1"
+		let legacyWasOn = (try await strings("PRAGMA legacy_alter_table")).first == "1"
+		if fkWasOn { _ = try await session.query("PRAGMA foreign_keys = OFF") }
+		_ = try await session.query("BEGIN")
+		do {
+			// 1. 이름 바꾸기는 SQLite 의 ALTER 로 먼저 (인덱스·트리거·뷰 안의 이름도 SQLite 가 바꿔 준다).
+			//    삭제할 컬럼은 새 테이블에 넣지 않는다 (DROP COLUMN 은 UNIQUE·기본 키 컬럼을 못 지운다)
+			let renames = rows.filter { !$0.deleted }.compactMap { r in r.original.flatMap { $0.name != r.col.name ? ($0.name, r.col.name) : nil } }
+			let existing = Set(rows.compactMap { $0.original?.name.lowercased() })
+			// 이름을 서로 맞바꾸면 겹치니 잠깐 다른 이름을 거친다
+			if renames.contains(where: { existing.contains($0.1.lowercased()) && $0.1.lowercased() != $0.0.lowercased() }) {
+				for (i, rn) in renames.enumerated() { _ = try await session.query("ALTER TABLE \(qt) RENAME COLUMN \(d.quote(rn.0)) TO \(d.quote("__isql_tmp_\(i)"))") }
+				for (i, rn) in renames.enumerated() { _ = try await session.query("ALTER TABLE \(qt) RENAME COLUMN \(d.quote("__isql_tmp_\(i)")) TO \(d.quote(rn.1))") }
+			} else {
+				for rn in renames { _ = try await session.query("ALTER TABLE \(qt) RENAME COLUMN \(d.quote(rn.0)) TO \(d.quote(rn.1))") }
+			}
+			// 2. 지금 정의·인덱스·트리거
+			guard let create = try await strings("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = \(lit(t))").first else {
+				throw DBError.message("테이블 정의를 읽지 못했습니다")
+			}
+			let indexes = try await strings("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = \(lit(t)) AND sql IS NOT NULL")
+			let triggers = try await strings("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = \(lit(t))")
+			let seq = create.range(of: "AUTOINCREMENT", options: .caseInsensitive) != nil
+				? (try? await strings("SELECT seq FROM sqlite_sequence WHERE name = \(lit(t))"))?.first : nil
+			// 3. 새 테이블 → 옮기기 → 옛 테이블 삭제 → 이름 바꾸기
+			let (defs, copy) = rebuildDefinitions(SQLiteMeta.parseCreate(create))
+			let options = SQLiteMeta.tableOptions(create)
+			_ = try await session.query("CREATE TABLE \(tmp) (\n  " + (defs + SQLiteMeta.tableConstraints(create)).joined(separator: ",\n  ") + "\n)" + (options.isEmpty ? "" : " " + options))
+			if !copy.isEmpty {
+				_ = try await session.query("INSERT INTO \(tmp) (\(copy.joined(separator: ", "))) SELECT \(copy.joined(separator: ", ")) FROM \(qt)")
+			}
+			_ = try await session.query("DROP TABLE \(qt)")
+			// 이름을 바꿀 때 다른 뷰·트리거가 옛 테이블을 가리켜도 막히지 않게 (SQLite 문서 권장)
+			if !legacyWasOn { _ = try await session.query("PRAGMA legacy_alter_table = ON") }
+			_ = try await session.query("ALTER TABLE \(tmp) RENAME TO \(qt)")
+			if !legacyWasOn { _ = try await session.query("PRAGMA legacy_alter_table = OFF") }
+			// 4. 인덱스·트리거 다시, AUTOINCREMENT 다음 값 지키기, 외래 키 확인
+			for sql in indexes + triggers { _ = try await session.query(sql) }
+			if let seq, Int64(seq) != nil {
+				_ = try await session.query("UPDATE sqlite_sequence SET seq = MAX(seq, \(seq)) WHERE name = \(lit(t))")
+				_ = try await session.query("INSERT INTO sqlite_sequence (name, seq) SELECT \(lit(t)), \(seq) WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = \(lit(t)))")
+			}
+			if fkWasOn, let bad = (try await session.query("PRAGMA foreign_key_check(\(qt))")).last, !bad.rows.isEmpty {
+				throw DBError.message("외래 키가 맞지 않는 행이 \(bad.rows.count)개 생겨 되돌렸습니다")
+			}
+			_ = try await session.query("COMMIT")
+		} catch {
+			_ = try? await session.query("ROLLBACK")
+			if !legacyWasOn { _ = try? await session.query("PRAGMA legacy_alter_table = OFF") }
+			if fkWasOn { _ = try? await session.query("PRAGMA foreign_keys = ON") }
+			throw error
+		}
+		if fkWasOn { _ = try await session.query("PRAGMA foreign_keys = ON") }
 	}
 
 	func discard() {
@@ -262,7 +363,7 @@ final class StructureEditor: GridSource {
 		defer { saving = false }
 		saveError = nil
 		do {
-			_ = try await session.query(sql)
+			if needsRebuild { try await rebuildSQLite(session) } else { _ = try await session.query(sql) }
 		} catch {
 			saveError = error.localizedDescription
 			return

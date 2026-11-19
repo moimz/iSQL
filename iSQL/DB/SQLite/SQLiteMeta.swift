@@ -74,12 +74,37 @@ struct SQLiteMeta: SQLMeta {
 
 	func serverCatalog(_ run: DBRun) async throws -> ServerCatalog { ServerCatalog() }
 
-	/// 행 수·크기는 읽지 않는다 (COUNT 는 큰 파일에서 느리다)
+	/// DB 개요의 행 수·크기 (사용자 2026-11-19): 행 = COUNT(*) (정확), 크기 = dbstat 가상 테이블의 페이지 크기 합
+	/// (테이블 b-tree = 데이터, 그 테이블의 인덱스 b-tree 합 = 인덱스). dbstat 이 없는 SQLite 면 크기는 0. 다음 AUTOINCREMENT 는 sqlite_sequence
 	func tableStats(_ run: DBRun, schema: String) async throws -> [TableStat] {
-		try await one(run, "SELECT name, type FROM sqlite_master WHERE \(userObjects) ORDER BY name").rows.map { v in
-			TableStat(name: v[0].string ?? "", isView: v[safe: 1]?.string == "view", engine: "", rows: nil, dataLength: 0, indexLength: 0,
-			          dataFree: 0, autoIncrement: nil, collation: "", comment: "", updated: "")
+		let objs = try await one(run, "SELECT name, type FROM sqlite_master WHERE \(userObjects) ORDER BY name").rows
+		var data: [String: Int64] = [:], index: [String: Int64] = [:]
+		if let r = try? await one(run, """
+			SELECT m.tbl_name, m.type, s.size FROM (SELECT name, SUM(pgsize) AS size FROM dbstat GROUP BY name) s
+			JOIN sqlite_master m ON m.name = s.name
+			""") {
+			for v in r.rows {
+				let t = v[0].string ?? "", size = Int64(v[safe: 2]?.string ?? "") ?? 0
+				if v[safe: 1]?.string == "index" { index[t, default: 0] += size } else { data[t, default: 0] += size }
+			}
 		}
+		var seq: [String: Int64] = [:]
+		if let r = try? await one(run, "SELECT name, seq FROM sqlite_sequence") {
+			for v in r.rows { if let n = v[0].string, let s = Int64(v[safe: 1]?.string ?? "") { seq[n] = s + 1 } }
+		}
+		var out: [TableStat] = []
+		for v in objs {
+			let name = v[0].string ?? "", isView = v[safe: 1]?.string == "view"
+			var rows: Int64?
+			if !isView, let c = try? await one(run, "SELECT COUNT(*) FROM \"\(name.replacingOccurrences(of: "\"", with: "\"\""))\"").rows.first?.first?.string {
+				rows = Int64(c)
+			}
+			var st = TableStat(name: name, isView: isView, engine: "", rows: rows, dataLength: data[name] ?? 0, indexLength: index[name] ?? 0,
+			                   dataFree: 0, autoIncrement: seq[name], collation: "", comment: "", updated: "")
+			st.exact = true
+			out.append(st)
+		}
+		return out
 	}
 
 	func tableStatus(_ run: DBRun, _ table: TableInfo) async throws -> TableStatus? {
@@ -260,7 +285,17 @@ struct SQLiteMeta: SQLMeta {
 
 	/// CREATE TABLE 의 괄호 안을 맨 위 쉼표로 나눠 컬럼 이름 → 정의 ("x" INTEGER NOT NULL → INTEGER NOT NULL). 제약 줄은 뺀다
 	static func parseCreate(_ ddl: String) -> [String: String] {
-		guard let open = ddl.firstIndex(of: "("), let close = ddl.lastIndex(of: ")"), open < close else { return [:] }
+		var out: [String: String] = [:]
+		for t in createParts(ddl) where !isTableConstraint(t) {
+			guard let (name, rest) = splitName(t) else { continue }
+			out[name] = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+		}
+		return out
+	}
+
+	/// CREATE TABLE 괄호 안을 맨 바깥 쉼표로 나눈 조각들 (컬럼 정의·표 제약)
+	static func createParts(_ ddl: String) -> [String] {
+		guard let open = ddl.firstIndex(of: "("), let close = ddl.lastIndex(of: ")"), open < close else { return [] }
 		var parts: [String] = [], cur = "", depth = 0
 		var quote: Character?
 		for ch in ddl[ddl.index(after: open)..<close] {
@@ -274,14 +309,64 @@ struct SQLiteMeta: SQLMeta {
 			}
 		}
 		parts.append(cur)
-		var out: [String: String] = [:]
-		for p in parts {
-			let t = p.trimmingCharacters(in: .whitespacesAndNewlines)
-			guard let (name, rest) = splitName(t) else { continue }
-			if ["CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN"].contains(name.uppercased()), !t.hasPrefix("\""), !t.hasPrefix("`"), !t.hasPrefix("[") { continue }
-			out[name] = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+		return parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+	}
+
+	/// 표 제약 조각 (PRIMARY KEY (a, b) · UNIQUE · CHECK · FOREIGN KEY · CONSTRAINT 이름 …)
+	static func isTableConstraint(_ t: String) -> Bool {
+		guard let f = t.first, f != "\"", f != "`", f != "[" else { return false }
+		let word = t.prefix { $0.isLetter }.uppercased()
+		return ["CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "FOREIGN"].contains(word)
+	}
+
+	/// 표 제약들 (테이블을 새로 만들 때 그대로 옮긴다)
+	static func tableConstraints(_ ddl: String) -> [String] { createParts(ddl).filter(isTableConstraint) }
+
+	/// 닫는 괄호 뒤 테이블 옵션 (WITHOUT ROWID, STRICT)
+	static func tableOptions(_ ddl: String) -> String {
+		guard let close = ddl.lastIndex(of: ")") else { return "" }
+		return ddl[ddl.index(after: close)...].trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ";")))
+	}
+
+	/// 컬럼 정의에서 다시 만들 때 남길 제약: PRIMARY KEY …(AUTOINCREMENT), UNIQUE, CHECK (…), REFERENCES … (+ 앞의 CONSTRAINT 이름).
+	/// 타입·NOT NULL·DEFAULT·COLLATE·GENERATED 는 편집기 값으로 새로 쓰므로 뺀다
+	static func keptColumnConstraints(_ def: String) -> String {
+		let words = ["CONSTRAINT", "PRIMARY", "NOT", "NULL", "UNIQUE", "CHECK", "DEFAULT", "COLLATE", "REFERENCES", "GENERATED", "AS"]
+		// 맨 바깥(괄호·따옴표 밖) 낱말 시작 위치에서 자른다
+		var cuts: [(String.Index, String)] = []
+		var depth = 0, quote: Character?, i = def.startIndex
+		while i < def.endIndex {
+			let ch = def[i]
+			if let q = quote { if ch == q || (q == "[" && ch == "]") { quote = nil }; i = def.index(after: i); continue }
+			if "'\"`[".contains(ch) { quote = ch } else if ch == "(" { depth += 1 } else if ch == ")" { depth -= 1 }
+			else if depth == 0, ch.isLetter, i == def.startIndex || !(def[def.index(before: i)].isLetter || def[def.index(before: i)].isNumber || def[def.index(before: i)] == "_") {
+				let w = def[i...].prefix { $0.isLetter }.uppercased()
+				if words.contains(w) {
+					// REFERENCES 절 안의 NOT DEFERRABLE 등은 자르지 않는다 (NOT 은 NOT NULL 일 때만)
+					let inRef = cuts.last?.1 == "REFERENCES"
+					var cut = true
+					if w == "NOT" { cut = def[i...].dropFirst(3).trimmingCharacters(in: .whitespaces).uppercased().hasPrefix("NULL") }
+					if w == "NULL", cuts.last?.1 == "NOT" { cut = false }
+					if inRef && !["CONSTRAINT", "PRIMARY", "UNIQUE", "CHECK", "DEFAULT", "COLLATE", "GENERATED", "NOT"].contains(w) { cut = false }
+					if w == "AS", cuts.last?.1 == "GENERATED" { cut = false }
+					if cut { cuts.append((i, w)) }
+				}
+			}
+			i = def.index(after: i)
 		}
-		return out
+		var kept: [String] = []
+		var pendingName: String?
+		for (k, c) in cuts.enumerated() {
+			let end = k + 1 < cuts.count ? cuts[k + 1].0 : def.endIndex
+			let seg = def[c.0..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+			switch c.1 {
+			case "CONSTRAINT": pendingName = seg
+			case "PRIMARY", "UNIQUE", "CHECK", "REFERENCES":
+				kept.append(((pendingName.map { $0 + " " }) ?? "") + seg); pendingName = nil
+			default: pendingName = nil
+			}
+		}
+		return kept.isEmpty ? "" : " " + kept.joined(separator: " ")
 	}
 
 	/// 맨 앞 이름("a""b", `a`, [a], a)과 나머지

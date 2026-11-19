@@ -314,6 +314,19 @@ struct ServerIcon: View {
 	var kind: SQLKind? = nil
 	var size: CGFloat = 30
 
+	@Environment(\.colorScheme) private var scheme
+
+	/// 바탕이 밝으면(노랑 등) 흰 로고가 안 보여 어두운 로고 (사용자 2026-11-19)
+	private var logoColor: Color {
+		guard let c = color.swiftUI else { return .white }
+		var env = EnvironmentValues()
+		env.colorScheme = scheme
+		let r = c.resolve(in: env)
+		// 상대 휘도 (sRGB 선형값)
+		let l = 0.2126 * Double(r.linearRed) + 0.7152 * Double(r.linearGreen) + 0.0722 * Double(r.linearBlue)
+		return l > 0.55 ? Color.black.opacity(0.72) : .white  // 노랑 0.64~0.69, 초록 0.42~0.47
+	}
+
 	var body: some View {
 		RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
 			.fill(color.swiftUI ?? Color.gray)
@@ -322,11 +335,11 @@ struct ServerIcon: View {
 				if let logo = kind?.logoAsset {
 					Image(logo).resizable().renderingMode(.template).scaledToFit()
 						.frame(width: size * 0.66, height: size * 0.66)
-						.foregroundStyle(.white)
+						.foregroundStyle(logoColor)
 				} else {
 					Image(systemName: "cylinder.split.1x2.fill")
 						.font(.system(size: size * 0.48, weight: .semibold))
-						.foregroundStyle(.white)
+						.foregroundStyle(logoColor)
 				}
 			}
 	}

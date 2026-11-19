@@ -21,7 +21,7 @@ struct NewColumn: Identifiable, Hashable {
 	var primary = false
 	var comment = ""
 
-	static let numericTypes: Set<String> = ["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE"]
+	static let numericTypes: Set<String> = ["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE", "INTEGER", "REAL", "NUMERIC"]  // 뒤 셋은 SQLite
 	/// 종류 고르기 목록 (nil = 구분선)
 	static let typeOptions: [String?] = [
 		"INT", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT", "DECIMAL", "FLOAT", "DOUBLE", nil,
