@@ -74,7 +74,7 @@
 
 **MCP**
 - Claude 같은 AI 도구가 iSQL 로 DB 를 볼 수 있는 로컬 MCP 서버 (앱 설정에서 켜고, 읽기 전용부터 권한을 고름)
-- 진단 도구 `server_status` · `top_queries`: "이 서버 왜 느려?" 를 상태 요약 · 프로세스 · 쿼리 통계로 바로 봄
+- 진단 도구 `server_status` · `top_queries`: 서버 상태 요약 · 프로세스 목록 · 쿼리 통계 제공 (서버가 느린 원인 진단용)
 
 ## 앞으로
 
