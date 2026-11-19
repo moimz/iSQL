@@ -45,6 +45,36 @@ struct TabArea: View {
 		model.hasSplit && model.splitFocus == .right ? model.showRightInfo : session.showTableInfo
 	}
 
+	/// ⌘R: 초점 탭의 새로고침 버튼과 같은 일 (사용자 2026-11-19).
+	/// 저장 안 된 변경이 있으면 버튼처럼 하지 않고 삐 소리. 쿼리 결과가 탭을 덮고 있으면 하지 않는다 (결과를 다시 받는 건 쿼리 실행)
+	private func refreshFocused() {
+		if resultsCoverFocused { NSSound.beep(); return }
+		if let d = active {
+			if d.mode == .structure {
+				// 구조 표 + 테이블 정보(인덱스) + 사이드바 테이블 목록 (구조 줄의 새로고침 버튼과 같게)
+				let e = d.structureEditor(), s = d.session, table = d.table
+				if e.hasChanges { NSSound.beep(); return }
+				Task {
+					try? await s.loadSchema()
+					await e.load()
+					await s.reloadInspector(table)
+				}
+			} else {
+				if d.hasChanges { NSSound.beep(); return }
+				Task { await d.load(offset: d.offset) }
+			}
+		} else if let o = activeOverview {
+			Task { await o.load() }
+		} else if let f = focused, let v = f.session.privateView(tab: f.tab) {
+			NotificationCenter.default.post(name: PrivateViewTabView.refreshRequest, object: f.session, userInfo: ["view": v.id])
+		} else if focused == nil {
+			let s = focusedSession
+			Task { try? await s.loadSchema() }
+		} else {
+			NSSound.beep()   // 루틴 탭 등: 새로고침이 없다
+		}
+	}
+
 	private func toggleFocusedInfo() {
 		if model.hasSplit && model.splitFocus == .right { model.showRightInfo.toggle() } else { session.showTableInfo.toggle() }
 	}
@@ -191,6 +221,8 @@ struct TabArea: View {
 				Button("") { model.showQuickOpen.toggle() }.keyboardShortcut("k")
 				// ⇧⌘L 콘솔
 				Button("") { model.showConsole.toggle() }.keyboardShortcut("l", modifiers: [.command, .shift])
+				// ⌘R 새로고침 (초점 탭: 데이터 · 구조 · DB 개요 · 나만 보는 뷰, 탭이 없으면 사이드바 목록)
+				Button("") { refreshFocused() }.keyboardShortcut("r")
 				// ⌥⌘I 테이블 정보 (구조 보기로 바꿔서)
 				Button("") { if let d = active { if d.mode == .structure { toggleFocusedInfo() } else { d.mode = .structure; if !focusedInfoOn { toggleFocusedInfo() } } } }.keyboardShortcut("i", modifiers: [.command, .option])
 			}

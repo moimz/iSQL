@@ -22,6 +22,7 @@ struct ServerStatusTab: View {
 				}
 				Spacer()
 				Button { Task { await monitor.refresh() } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
+					.keyboardShortcut("r").help("새로고침 (⌘R)")
 			}
 			.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
 			if let e = monitor.error {
@@ -130,6 +131,7 @@ struct ServerVariablesTab: View {
 				Spacer()
 				Label("읽기 전용", systemImage: "lock.fill").font(.callout).foregroundStyle(.secondary)
 				Button { Task { await load() } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
+					.keyboardShortcut("r").help("새로고침 (⌘R)")
 			}
 			.padding(.horizontal, 16).padding(.vertical, 10)
 			if let error { Label(error, systemImage: "xmark.octagon.fill").foregroundStyle(.red).padding(.bottom, 8) }

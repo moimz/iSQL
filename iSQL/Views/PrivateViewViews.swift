@@ -120,6 +120,7 @@ struct PrivateViewTabView: View {
 				Spacer()
 				Button { Task { await run(refresh: true) } } label: { Label("새로고침", systemImage: "arrow.clockwise") }
 					.disabled(loading)
+					.help("새로고침 (⌘R)")
 			}
 			.padding(.horizontal, 12).padding(.vertical, 8)
 			Divider()
@@ -132,7 +133,13 @@ struct PrivateViewTabView: View {
 			}
 		}
 		.task(id: view.id) { await run(refresh: false) }
+		// ⌘R (TabArea 가 초점 탭이 이 뷰일 때 보낸다)
+		.onReceive(NotificationCenter.default.publisher(for: Self.refreshRequest, object: session)) { n in
+			if n.userInfo?["view"] as? UUID == view.id, !loading { Task { await run(refresh: true) } }
+		}
 	}
+
+	static let refreshRequest = Notification.Name("iSQL.privateViewRefresh")
 
 	@MainActor
 	private func run(refresh: Bool) async {

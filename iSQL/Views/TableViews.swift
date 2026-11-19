@@ -140,7 +140,7 @@ struct TableSidebar: View {
 					if session.loadingSchema { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 				}
 				.pill()
-				.help("데이터베이스·테이블 목록 새로고침")
+				.help("데이터베이스·테이블 목록 새로고침 (탭이 없을 때 ⌘R)")
 			}
 			.padding(.horizontal, 10)
 			.padding(.vertical, 8)
@@ -392,7 +392,7 @@ struct StructureBody: View {
 				if editor.loading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 			}
 			.pill()
-			.help("구조·인덱스·테이블 목록 새로고침")
+			.help("구조·인덱스·테이블 목록 새로고침 (⌘R)")
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 14)

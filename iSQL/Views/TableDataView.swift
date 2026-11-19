@@ -189,7 +189,7 @@ struct TableDetailView: View {
 			PagerBar(pager: data, reload: {
 				// 다시 읽으면 저장 안 한 변경이 사라지므로 그때는 하지 않는다
 				if data.hasChanges { NSSound.beep() } else { Task { await data.load(offset: data.offset) } }
-			}, reloadHelp: data.hasChanges ? "저장 안 된 변경이 있어 새로고침하지 않습니다" : "새로고침",
+			}, reloadHelp: data.hasChanges ? "저장 안 된 변경이 있어 새로고침하지 않습니다" : "새로고침 (⌘R)",
 			   reloading: data.loading)
 		}
 		.controlSize(.large)

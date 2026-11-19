@@ -28,7 +28,7 @@ struct UserAccountsView: View {
 				} description: {
 					Text(e).textSelection(.enabled)
 				} actions: {
-					Button("새로고침") { Task { await manager.load() } }
+					Button("새로고침") { Task { await manager.load() } }.keyboardShortcut("r")
 				}
 			} else {
 				// Mail 계정 설정처럼: 목록 상자와 탭 상자는 아래 끝이 맞고, [+ −] [↻] 는 목록 밑에
@@ -147,7 +147,8 @@ struct UserAccountsView: View {
 			}
 			.buttonStyle(.bordered)
 			.buttonBorderShape(.roundedRectangle)
-			.help("새로고침")
+			.keyboardShortcut("r")
+			.help("새로고침 (⌘R)")
 		}
 	}
 

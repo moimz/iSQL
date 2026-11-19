@@ -54,7 +54,7 @@ struct DatabaseOverviewView: View {
 					if overview.loading { ProgressView().controlSize(.small).frame(width: 30, height: 28) } else { PillIcon(systemName: "arrow.clockwise") }
 				}
 				.pill()
-				.help("새로고침")
+				.help("새로고침 (⌘R)")
 			}
 			.controlSize(.large)
 			.padding(.horizontal, 14)
