@@ -125,10 +125,7 @@ final class QueryPanel {
 		}
 		let parts = SQLSplitter.split(text, dialect.syntax)
 		let cursor = min(selection.location, ns.length)
-		// 커서가 들어 있는 문장, 없으면 커서 바로 앞 문장 (줄 끝에서 ⌘↩ 하는 경우)
-		if let p = parts.first(where: { $0.range.location <= cursor && cursor <= NSMaxRange($0.range) }) { return [p.text] }
-		if let p = parts.last(where: { NSMaxRange($0.range) <= cursor }) { return [p.text] }
-		return parts.first.map { [$0.text] } ?? []
+		return SQLSplitter.statement(at: cursor, in: parts, text: ns).map { [$0.text] } ?? []
 	}
 
 	// MARK: - 실행
@@ -775,6 +772,26 @@ enum SQLSplitter {
 		}
 		cut(u.count)
 		return parts
+	}
+
+	/// 커서 자리의 문장. 문장 범위는 ; 바로 뒤부터 다음 ; 앞까지라서 "쿼리1;|" 처럼 ; 바로 뒤(같은 줄)에 커서가 있으면
+	/// 다음 문장 범위의 맨 앞이 된다 → 다음 문장 글자보다 앞이고 ; 와 커서 사이에 줄바꿈이 없으면 앞 문장 (사용자 2026-11-19).
+	/// 어느 범위에도 없으면 커서 바로 앞 문장 (맨 끝 ; 뒤), 그것도 없으면 첫 문장
+	static func statement(at cursor: Int, in parts: [Part], text ns: NSString) -> Part? {
+		if let k = parts.firstIndex(where: { $0.range.location <= cursor && cursor <= NSMaxRange($0.range) }) {
+			let p = parts[k]
+			if k > 0 {
+				let body = ns.substring(with: p.range)
+				let lead = body.utf16.prefix { CharacterSet.whitespacesAndNewlines.contains(Unicode.Scalar($0) ?? " ") }.count
+				let prevEnd = NSMaxRange(parts[k - 1].range)
+				if cursor < p.range.location + lead, cursor >= prevEnd,
+				   !ns.substring(with: NSRange(location: prevEnd, length: cursor - prevEnd)).contains(where: \.isNewline) {
+					return parts[k - 1]
+				}
+			}
+			return p
+		}
+		return parts.last(where: { NSMaxRange($0.range) <= cursor }) ?? parts.first
 	}
 
 	private static func onlyComments(_ t: String, _ syntax: SQLSyntax) -> Bool {
