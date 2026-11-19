@@ -127,19 +127,18 @@ struct ConnectForm: View {
 			url = u
 		} else {
 			let panel = SQLiteFile.openPanel()
-			guard panel.runModal() == .OK, let u = panel.url, SQLiteFile.checkOrAlert(u) else { return }
+			guard panel.runModal() == .OK, let u = panel.url else { return }
 			url = u
 		}
-		guard SQLiteFile.confirmSyncedFolder(url, create: create) else { return }
-		if create {
-			Task {
+		Task {
+			if !create { guard await SQLiteFile.checkOrAlert(url) else { return } }
+			guard await SQLiteFile.confirmSyncedFolder(url, create: create) else { return }
+			if create {
 				do { (try await SQLiteConnection.open(path: url.path, create: true)).close() } catch {
-					let a = NSAlert(); a.messageText = "파일을 만들지 못했습니다"; a.informativeText = error.localizedDescription; a.runModal()
+					await Confirm.inform("파일을 만들지 못했습니다", error.localizedDescription)
 					return
 				}
-				setPath(url.path)
 			}
-		} else {
 			setPath(url.path)
 		}
 	}
@@ -393,26 +392,21 @@ struct ConnectForm: View {
 			persist(server)
 			return
 		}
-		let alert = NSAlert()
-		alert.messageText = "이름이 변경되었습니다.\n새로운 서버로 등록하시겠습니까?"
-		alert.informativeText = "[아니오] 를 누르면 ‘\(original.displayName)’ 의 이름을 바꿉니다."
-		alert.addButton(withTitle: "예")
-		alert.addButton(withTitle: "아니오")
-		alert.addButton(withTitle: "취소").keyEquivalent = "\u{1b}"
-		let finish: (NSApplication.ModalResponse) -> Void = { r in
-			switch r {
-			case .alertFirstButtonReturn:
+		Task {
+			switch await Confirm.ask("이름이 변경되었습니다.\n새로운 서버로 등록하시겠습니까?",
+			                         "[아니오] 를 누르면 ‘\(original.displayName)’ 의 이름을 바꿉니다.",
+			                         buttons: ["예", "아니오"]) {
+			case 0:
 				var copy = server
 				copy.id = UUID()
 				copy.order = nil
 				persist(copy, asNew: true)
-			case .alertSecondButtonReturn:
+			case 1:
 				persist(server)
 			default:
 				break
 			}
 		}
-		if let w = NSApp.keyWindow { alert.beginSheetModal(for: w, completionHandler: finish) } else { finish(alert.runModal()) }
 	}
 
 	/// 서버 파일·키체인에 저장. asNew: 목록 서버를 고치다 새 서버로 등록 → 새 서버를 고른다 (원래 서버는 그대로)

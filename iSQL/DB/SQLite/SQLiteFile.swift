@@ -31,24 +31,20 @@ enum SQLiteFile {
 	}
 
 	/// SQLite 가 아니면 알리고 false
-	static func checkOrAlert(_ url: URL) -> Bool {
+	@MainActor
+	static func checkOrAlert(_ url: URL) async -> Bool {
 		if isSQLite(url) { return true }
-		let a = NSAlert()
-		a.messageText = "SQLite 파일이 아닙니다"
-		a.informativeText = "\(url.lastPathComponent) 은(는) SQLite 데이터베이스 파일이 아닙니다."
-		a.runModal()
+		await Confirm.inform("SQLite 파일이 아닙니다", "\(url.lastPathComponent) 은(는) SQLite 데이터베이스 파일이 아닙니다.")
 		return false
 	}
 
 	/// 동기화 폴더면 한 번 묻는다 (사용자 2026-11-18). 계속하면 true
-	static func confirmSyncedFolder(_ url: URL, create: Bool) -> Bool {
+	@MainActor
+	static func confirmSyncedFolder(_ url: URL, create: Bool) async -> Bool {
 		guard Server.isInSyncedFolder(url.path) else { return true }
-		let a = NSAlert()
-		a.messageText = "동기화되는 폴더의 파일입니다"
-		a.informativeText = "iCloud Drive·Dropbox 처럼 실시간으로 동기화되는 폴더의 SQLite 파일은, 열어 둔 채 고치면 동기화가 중간 상태(-wal·-journal 파일)를 옮겨 파일이 깨질 수 있습니다. 동기화되지 않는 폴더를 권합니다."
-		a.addButton(withTitle: create ? "그래도 만들기" : "그래도 쓰기")
-		a.addButton(withTitle: "취소")
-		return a.runModal() == .alertFirstButtonReturn
+		return await Confirm.ask("동기화되는 폴더의 파일입니다",
+		                         "iCloud Drive·Dropbox 처럼 실시간으로 동기화되는 폴더의 SQLite 파일은, 열어 둔 채 고치면 동기화가 중간 상태(-wal·-journal 파일)를 옮겨 파일이 깨질 수 있습니다. 동기화되지 않는 폴더를 권합니다.",
+		                         buttons: [create ? "그래도 만들기" : "그래도 쓰기"]) == 0
 	}
 
 	/// 그 파일을 쓰는 저장한 서버 (이 맥 경로로 견준다)

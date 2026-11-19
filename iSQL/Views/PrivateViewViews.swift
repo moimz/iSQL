@@ -84,27 +84,19 @@ struct PrivateViewMenu: View {
 		}
 		Divider()
 		Button("이름 바꾸기…") {
-			let a = NSAlert()
-			a.messageText = "나만 보는 뷰 이름"
 			let f = NSTextField(string: view.name)
 			f.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-			a.accessoryView = f
-			a.addButton(withTitle: "바꾸기")
-			a.addButton(withTitle: "취소")
-			a.window.initialFirstResponder = f
-			if a.runModal() == .alertFirstButtonReturn {
+			Task {
+				guard await Confirm.ask("나만 보는 뷰 이름", buttons: ["바꾸기"], accessory: f) == 0 else { return }
 				let n = f.stringValue.trimmingCharacters(in: .whitespaces)
 				if !n.isEmpty { session.renamePrivateView(view, to: n) }
 			}
 		}
 		Button("삭제…", role: .destructive) {
-			let a = NSAlert()
-			a.messageText = "나만 보는 뷰 ‘\(view.name)’ 을 지울까요?"
-			a.informativeText = "서버에는 없는 뷰라 데이터는 그대로입니다. 다른 맥에서도 사라집니다."
-			a.addButton(withTitle: "지우기")
-			a.addButton(withTitle: "취소")
-			a.buttons[0].hasDestructiveAction = true
-			if a.runModal() == .alertFirstButtonReturn { session.deletePrivateView(view) }
+			Task {
+				if await Confirm.ask("나만 보는 뷰 ‘\(view.name)’ 을 지울까요?", "서버에는 없는 뷰라 데이터는 그대로입니다. 다른 맥에서도 사라집니다.",
+				                     buttons: ["지우기"], destructive: true) == 0 { session.deletePrivateView(view) }
+			}
 		}
 	}
 }

@@ -145,20 +145,10 @@ struct RoutineMenu: View {
 enum RoutineDrop {
 	@MainActor
 	static func confirm(_ r: RoutineInfo, session: Session) {
-		let a = NSAlert()
-		a.messageText = "\(r.kind.label) ‘\(r.name)’ 을 지울까요?"
-		a.informativeText = "\(r.schema).\(r.name) — 되돌릴 수 없습니다."
-		a.addButton(withTitle: "지우기")
-		a.addButton(withTitle: "취소")
-		a.buttons[0].hasDestructiveAction = true
-		guard a.runModal() == .alertFirstButtonReturn else { return }
 		Task {
-			if let e = await session.dropRoutine(r) {
-				let f = NSAlert()
-				f.messageText = "지우지 못했습니다"
-				f.informativeText = e
-				f.runModal()
-			}
+			guard await Confirm.ask("\(r.kind.label) ‘\(r.name)’ 을 지울까요?", "\(r.schema).\(r.name) — 되돌릴 수 없습니다.",
+			                        buttons: ["지우기"], destructive: true) == 0 else { return }
+			if let e = await session.dropRoutine(r) { await Confirm.inform("지우지 못했습니다", e) }
 		}
 	}
 }

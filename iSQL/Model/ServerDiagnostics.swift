@@ -194,10 +194,7 @@ final class ServerStatusMonitor {
 		do {
 			_ = try await session.query(session.dialect.kill(p.id, connection: connection))
 		} catch {
-			let a = NSAlert()
-			a.messageText = connection ? "연결을 끊지 못했습니다" : "쿼리를 멈추지 못했습니다"
-			a.informativeText = error.localizedDescription
-			a.runModal()
+			await Confirm.inform(connection ? "연결을 끊지 못했습니다" : "쿼리를 멈추지 못했습니다", error.localizedDescription)
 		}
 		await refresh()
 	}
@@ -253,13 +250,12 @@ final class ProcessListSource: GridSource {
 		let own = p.id == m.ownConnectionID || p.id == m.appConnectionID
 		func confirm(_ title: String, _ connection: Bool) -> () -> Void {
 			{
-				let a = NSAlert()
-				a.messageText = "\(title) (ID \(p.id))"
-				a.informativeText = "\(p.user)@\(p.host)" + (p.info.isEmpty ? "" : "\n\n" + String(p.info.prefix(300)))
-				a.addButton(withTitle: connection ? "끊기" : "멈추기")
-				a.addButton(withTitle: "취소")
-				a.buttons[0].hasDestructiveAction = true
-				if a.runModal() == .alertFirstButtonReturn { Task { await m.kill(p, connection: connection) } }
+				Task { @MainActor in
+					let ok = await Confirm.ask("\(title) (ID \(p.id))",
+					                           "\(p.user)@\(p.host)" + (p.info.isEmpty ? "" : "\n\n" + String(p.info.prefix(300))),
+					                           buttons: [connection ? "끊기" : "멈추기"], destructive: true)
+					if ok == 0 { await m.kill(p, connection: connection) }
+				}
 			}
 		}
 		if own { return [.disabled("iSQL 이 쓰는 연결입니다")] }

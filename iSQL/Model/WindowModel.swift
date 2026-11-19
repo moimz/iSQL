@@ -82,8 +82,13 @@ final class WindowModel {
 	func openFile(_ url: URL, store: ServerStore) {
 		guard url.isFileURL else { return }
 		if url.pathExtension.lowercased() == "isql" { transfer = .importFile(url); return }
-		guard SQLiteFile.checkOrAlert(url) else { return }
 		openedFile = true
+		Task { await openSQLiteFile(url, store: store) }
+	}
+
+	@MainActor
+	private func openSQLiteFile(_ url: URL, store: ServerStore) async {
+		guard await SQLiteFile.checkOrAlert(url) else { return }
 		// 저장한 서버의 파일이면 그 서버로 접속
 		if let s = SQLiteFile.server(for: url, in: store.servers) {
 			selectedServerID = s.id
@@ -91,7 +96,7 @@ final class WindowModel {
 			return
 		}
 		// 처음 보는 파일: 새 접속 칸에 경로·이름을 채워 둔다 (저장·접속은 사용자가)
-		guard SQLiteFile.confirmSyncedFolder(url, create: false) else { return }
+		guard await SQLiteFile.confirmSyncedFolder(url, create: false) else { return }
 		var s = Server()
 		s.kind = SQLKind.sqlite.rawValue
 		s.path = Server.abbreviatedPath(url.path)
