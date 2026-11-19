@@ -32,7 +32,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		case .mysql: "DBLogoMySQL"
 		case .mariadb: "DBLogoMariaDB"
 		case .sqlite: "DBLogoSQLite"
-		case .postgres, .sqlserver, .oracle: nil
+		case .oracle: "DBLogoOracle"
+		case .postgres, .sqlserver: nil
 		}
 	}
 

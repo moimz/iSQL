@@ -52,6 +52,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func updateRow(_ table: String, sets: [String], condition: String) -> String
 	func deleteRow(_ table: String, condition: String) -> String
 	func insertRow(_ table: String, columns: [String], values: [String]) -> String
+	/// 여러 행을 한 문장으로 넣기 (내보내기 파일). columns 는 "(…)" 안의 감싼 이름들, rows 는 "(값, …)" 들
+	func insertRows(_ table: String, columns: String, rows: [String]) -> String
 	/// 바이트 길이 식 (큰 BLOB 은 앞부분만 읽으려고)
 	func byteLength(_ expr: String) -> String
 	/// 길이가 over 바이트를 넘으면 앞 keep 바이트만, 아니면 그대로인 식
@@ -68,4 +70,8 @@ extension SQLDialect {
 	/// 테이블 (스키마.테이블)
 	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
 	func paged(_ sql: String, limit: Int) -> String { paged(sql, limit: limit, offset: nil) }
+	/// INSERT INTO t (…) VALUES (…), (…)
+	func insertRows(_ table: String, columns: String, rows: [String]) -> String {
+		"INSERT INTO \(table) (\(columns)) VALUES\n" + rows.joined(separator: ",\n")
+	}
 }

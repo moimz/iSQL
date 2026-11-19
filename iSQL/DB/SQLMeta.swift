@@ -115,4 +115,17 @@ protocol SQLMeta: Sendable {
 
 	/// MCP: DB 의 테이블 목록
 	func tableList(_ run: DBRun, schema: String) async throws -> [(name: String, isView: Bool, approxRows: Int?, comment: String)]
+
+	// MARK: SQL 파일 내보내기
+	/// 내보내기 파일의 CREATE 문 (기본: createStatement). Oracle 은 외래 키·스키마 이름을 빼서 순서와 상관없이, 다른 스키마에도 넣을 수 있게
+	func dumpCreate(_ run: DBRun, schema: String, name: String) async throws -> String?
+	/// 내보내기 파일 맨 끝에 붙일 문장 (; 없이. Oracle: 외래 키, 자동 증가 번호 맞추기)
+	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String]
+}
+
+extension SQLMeta {
+	func dumpCreate(_ run: DBRun, schema: String, name: String) async throws -> String? {
+		try await createStatement(run, .table, schema: schema, name: name)
+	}
+	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String] { [] }
 }

@@ -186,13 +186,7 @@ struct OracleMeta: SQLMeta {
 			case .event: return nil
 			}
 		}
-		_ = try? await run("""
-			BEGIN
-			  DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'STORAGE', FALSE);
-			  DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'SEGMENT_ATTRIBUTES', FALSE);
-			  DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'SQLTERMINATOR', FALSE);
-			END;
-			""")
+		await setTransforms(run, forDump: false)
 		let owner = schema.isEmpty ? "SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')" : lit(schema)
 		// 다른 객체가 같은 이름이면(뷰를 테이블로 물으면) 오류 → 뷰로 다시
 		var ddl = try? await one(run, "SELECT DBMS_METADATA.GET_DDL('\(type)', \(lit(name)), \(owner)) FROM dual").rows.first?.first?.string
@@ -200,6 +194,46 @@ struct OracleMeta: SQLMeta {
 			ddl = try? await one(run, "SELECT DBMS_METADATA.GET_DDL('VIEW', \(lit(name)), \(owner)) FROM dual").rows.first?.first?.string
 		}
 		return ddl?.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	/// DBMS_METADATA 세션 설정: 저장소 · 세그먼트 절과 끝 ; 은 늘 빼고, 내보내기면 외래 키와 스키마 이름도 뺀다
+	/// (EMIT_SCHEMA 는 오래된 서버에 없을 수 있어 하나씩 따로)
+	private func setTransforms(_ run: DBRun, forDump: Bool) async {
+		var params = ["'STORAGE', FALSE", "'SEGMENT_ATTRIBUTES', FALSE", "'SQLTERMINATOR', FALSE",
+		              "'REF_CONSTRAINTS', \(forDump ? "FALSE" : "TRUE")", "'EMIT_SCHEMA', \(forDump ? "FALSE" : "TRUE")"]
+		params = params.map { "BEGIN DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, \($0)); EXCEPTION WHEN OTHERS THEN NULL; END;" }
+		_ = try? await run(params.joined(separator: "\n/\n"))
+	}
+
+	/// 내보내기: 외래 키 · 스키마 이름 없이 (외래 키는 dumpTrailer 가 맨 끝에)
+	func dumpCreate(_ run: DBRun, schema: String, name: String) async throws -> String? {
+		// 끝나고 되돌리지 않는다: createStatement 가 부를 때마다 전체 꼴로 다시 맞춘다
+		await setTransforms(run, forDump: true)
+		var ddl = try? await one(run, "SELECT DBMS_METADATA.GET_DDL('TABLE', \(lit(name)), \(lit(schema))) FROM dual").rows.first?.first?.string
+		if ddl == nil { ddl = try? await one(run, "SELECT DBMS_METADATA.GET_DDL('VIEW', \(lit(name)), \(lit(schema))) FROM dual").rows.first?.first?.string }
+		return ddl?.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	/// 내보내기 끝: 외래 키(시스템이 지은 SYS_C… 이름은 빼서 새 스키마에서 겹치지 않게)와 IDENTITY 다음 값을 지금 최댓값 뒤로
+	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String] {
+		var out: [String] = []
+		let names = Set(tables)
+		for t in tables {
+			for fk in try await foreignKeys(run, schema: schema, table: t, incoming: false) where names.contains(fk.refTable) && fk.refSchema == schema {
+				let cols = fk.columns.map(dialect.quote).joined(separator: ", ")
+				let refs = fk.refColumns.map(dialect.quote).joined(separator: ", ")
+				let named = fk.name.hasPrefix("SYS_C") ? "" : "CONSTRAINT \(dialect.quote(fk.name)) "
+				var s = "ALTER TABLE \(dialect.quote(t)) ADD \(named)FOREIGN KEY (\(cols)) REFERENCES \(dialect.quote(fk.refTable)) (\(refs))"
+				if ["CASCADE", "SET NULL"].contains(fk.onDelete.uppercased()) { s += " ON DELETE \(fk.onDelete.uppercased())" }
+				out.append(s)
+			}
+		}
+		let ids = try await one(run, "SELECT table_name, column_name, generation_type FROM all_tab_identity_cols WHERE owner = \(lit(schema)) ORDER BY table_name")
+		for r in ids.rows where names.contains(r[0].string ?? "") {
+			let how = r[safe: 2]?.string == "ALWAYS" ? "ALWAYS" : "BY DEFAULT"
+			out.append("ALTER TABLE \(dialect.quote(r[0].string ?? "")) MODIFY \(dialect.quote(r[safe: 1]?.string ?? "")) GENERATED \(how) AS IDENTITY (START WITH LIMIT VALUE)")
+		}
+		return out
 	}
 
 	func indexes(_ run: DBRun, _ table: TableInfo, createSQL: String) async throws -> [IndexInfo] {

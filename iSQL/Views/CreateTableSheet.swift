@@ -21,7 +21,21 @@ struct NewColumn: Identifiable, Hashable {
 	var primary = false
 	var comment = ""
 
-	static let numericTypes: Set<String> = ["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE", "INTEGER", "REAL", "NUMERIC"]  // 뒤 셋은 SQLite
+	static let numericTypes: Set<String> = ["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE", "INTEGER", "REAL", "NUMERIC",  // 뒤 셋은 SQLite
+	                                        "NUMBER", "BINARY_FLOAT", "BINARY_DOUBLE"]  // Oracle
+	/// 이 DB 종류의 종류 고르기 목록 (nil = 구분선)
+	static func typeOptions(_ kind: SQLKind) -> [String?] { kind == .oracle ? oracleTypeOptions : typeOptions }
+	/// 새 컬럼의 기본 종류 · 자동 증가 기본 키(id)의 종류
+	static func defaultType(_ kind: SQLKind) -> String { kind == .oracle ? "VARCHAR2" : "VARCHAR" }
+	static func idType(_ kind: SQLKind) -> String { kind == .oracle ? "NUMBER" : "INT" }
+	/// Oracle 종류 고르기 목록
+	static let oracleTypeOptions: [String?] = [
+		"NUMBER", "INTEGER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE", nil,
+		"VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "CLOB", "NCLOB", nil,
+		"DATE", "TIMESTAMP", nil,
+		"JSON", "BOOLEAN", nil,
+		"BLOB", "RAW",
+	]
 	/// 종류 고르기 목록 (nil = 구분선)
 	static let typeOptions: [String?] = [
 		"INT", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT", "DECIMAL", "FLOAT", "DOUBLE", nil,
@@ -33,18 +47,21 @@ struct NewColumn: Identifiable, Hashable {
 	/// 종류를 고르면 채우는 길이 (없으면 비움)
 	static func defaultLength(_ type: String) -> String {
 		switch type {
-		case "VARCHAR", "VARBINARY": "255"
-		case "CHAR", "BINARY": "1"
+		case "VARCHAR", "VARBINARY", "VARCHAR2": "255"
+		case "NVARCHAR2": "100"
+		case "RAW": "16"
+		case "CHAR", "BINARY", "NCHAR": "1"
 		case "DECIMAL": "10,2"
 		default: ""
 		}
 	}
 	/// 길이·값이 꼭 있어야 하는 종류
-	static let needsLength: Set<String> = ["VARCHAR", "VARBINARY", "ENUM", "SET"]
+	static let needsLength: Set<String> = ["VARCHAR", "VARBINARY", "ENUM", "SET", "VARCHAR2", "NVARCHAR2", "RAW"]
 	/// 길이·값을 받는 종류 (나머지는 칸을 끈다)
 	static let takesLength: Set<String> = ["VARCHAR", "CHAR", "VARBINARY", "BINARY", "DECIMAL", "FLOAT", "DOUBLE",
 	                                       "TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "ENUM", "SET",
-	                                       "DATETIME", "TIMESTAMP", "TIME"]
+	                                       "DATETIME", "TIMESTAMP", "TIME",
+	                                       "VARCHAR2", "NVARCHAR2", "NCHAR", "NUMBER", "RAW"]  // Oracle
 
 	var isNumeric: Bool { Self.numericTypes.contains(type) }
 
@@ -134,7 +151,14 @@ struct CreateTableSheet: View {
 		.frame(width: 900)
 		.interactiveDismissDisabled(running)
 		.task { await loadDefaults() }
-		.onAppear { focus = .table }
+		.onAppear {
+			focus = .table
+			// 처음 id 컬럼을 이 DB 의 종류로 (Oracle: NUMBER)
+			if columns.count == 1, columns[0].name == "id", columns[0].type == "INT" {
+				columns[0].type = NewColumn.idType(session.kind)
+				if !caps.unsignedColumns { columns[0].unsigned = false }
+			}
+		}
 		.onChange(of: focus) { _, f in
 			switch f {
 			case .name(let id), .length(let id), .value(let id), .comment(let id): selected = id
@@ -228,7 +252,7 @@ struct CreateTableSheet: View {
 				c.wrappedValue.type = t
 				c.wrappedValue.length = NewColumn.defaultLength(t)
 				if !NewColumn.numericTypes.contains(t) { c.wrappedValue.unsigned = false; c.wrappedValue.autoIncrement = false }
-			}), options: NewColumn.typeOptions.map { t in (t ?? "", t) })
+			}), options: NewColumn.typeOptions(session.kind).map { t in (t ?? "", t) })
 				.frame(width: W.type)
 			TextField(col.type == "ENUM" || col.type == "SET" ? "'a','b'" : "", text: c.length)
 				.focused($focus, equals: .length(col.id))
@@ -352,7 +376,8 @@ struct CreateTableSheet: View {
 	}
 
 	private func addColumn() {
-		let c = NewColumn()
+		var c = NewColumn()
+		c.type = NewColumn.defaultType(session.kind)
 		if let i = selectedIndex { columns.insert(c, at: i + 1) } else { columns.append(c) }
 		selected = c.id
 		Task { @MainActor in focus = .name(c.id) }

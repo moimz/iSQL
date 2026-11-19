@@ -840,7 +840,8 @@ enum SQLSplitter {
 		guard s.hasPrefix("SELECT ") || s.hasPrefix("SELECT\n") || s.hasPrefix("SELECT\t") || s.hasPrefix("(SELECT") else { return false }
 		// 따옴표 안 글자는 빼고 본다
 		let bare = s.replacingOccurrences(of: "'(?:[^'\\\\]|\\\\.)*'", with: "''", options: .regularExpression)
-		for w in ["\\bLIMIT\\b", "\\bINTO\\b", "\\bFOR\\s+UPDATE\\b", "\\bLOCK\\s+IN\\s+SHARE\\s+MODE\\b", "\\bFOR\\s+SHARE\\b"] {
+		// FETCH FIRST/NEXT … ROWS · OFFSET … ROWS: Oracle · MariaDB 의 행 제한
+		for w in ["\\bLIMIT\\b", "\\bFETCH\\s+(FIRST|NEXT)\\b", "\\bOFFSET\\s+\\S+\\s+ROWS?\\b", "\\bINTO\\b", "\\bFOR\\s+UPDATE\\b", "\\bLOCK\\s+IN\\s+SHARE\\s+MODE\\b", "\\bFOR\\s+SHARE\\b"] {
 			if bare.range(of: w, options: .regularExpression) != nil { return false }
 		}
 		return true

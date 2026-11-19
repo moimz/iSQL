@@ -379,6 +379,7 @@ final class StructureEditor: GridSource {
 	func addColumn(after row: Int?) {
 		guard loaded else { NSSound.beep(); return }
 		var c = StructColumn()
+		c.type = NewColumn.defaultType(session?.kind ?? .mysql)
 		c.nullable = false
 		let at = row.map { min($0 + 1, rows.count) } ?? rows.count
 		rows.insert(Row(col: c, original: nil), at: at)
@@ -536,7 +537,7 @@ final class StructureEditor: GridSource {
 		let c = rows[row].col
 		switch gridColumns[col].key {
 		case "type":
-			var list = NewColumn.typeOptions
+			var list = NewColumn.typeOptions(session?.kind ?? .mysql)
 			if !list.contains(c.type) { list = [c.type, nil] + list }
 			return list
 		case "extra":

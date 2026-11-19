@@ -345,7 +345,7 @@ final class ExportJob {
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
 				if o.includeStructure {
 					if o.includeDrop { write(dialect.dropIfExists(dialect.quote(t.name), view: t.isView) + ";\n") }
-					if let create = try await session.meta.createStatement(session.query, .table, schema: schema, name: t.name) { write(create + ";\n\n") }
+					if let create = try await session.meta.dumpCreate(session.query, schema: schema, name: t.name) { write(create + ";\n\n") }
 				}
 				guard o.includeData, !t.isView else { continue }
 				let cols = (session.columns[schema + "." + t.name] ?? [])
@@ -364,7 +364,7 @@ final class ExportJob {
 							if e.offset < numeric.count, numeric[e.offset], case .text(let v) = e.element, Double(v) != nil { return v }
 							return dialect.literal(e.element)
 						}.joined(separator: ", ") + ")" }
-						write("INSERT INTO \(dialect.quote(t.name)) (\(names)) VALUES\n" + values.joined(separator: ",\n") + ";\n")
+						write(dialect.insertRows(dialect.quote(t.name), columns: names, rows: values) + ";\n")
 						i += 100
 					}
 					written += res.rows.count
@@ -372,6 +372,10 @@ final class ExportJob {
 					offset += size
 				}
 				write("\n")
+			}
+			if o.includeStructure, !cancelled {
+				let trailer = try await session.meta.dumpTrailer(session.query, schema: schema, tables: tables.filter { !$0.isView }.map(\.name))
+				if !trailer.isEmpty { write("-- 외래 키 · 자동 증가\n" + trailer.map { $0 + ";\n" }.joined() + "\n") }
 			}
 			write(dialect.dumpEpilogue.map { $0 + ";\n" }.joined())
 			message = cancelled ? "그만둠 · \(written.formatted())행까지 썼습니다" : "테이블 \(tables.count)개 · \(written.formatted())행 내보냄 · \(url.lastPathComponent)"

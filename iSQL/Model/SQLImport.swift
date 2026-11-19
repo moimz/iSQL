@@ -83,6 +83,26 @@ final class SQLDumpReader: @unchecked Sendable {
 
 	private enum State { case normal, quote(UInt8), lineComment, blockComment(keep: Bool) }
 
+	/// 지금 자리가 줄 맨 앞인지 (문장에 쌓인 글의 마지막 줄바꿈 뒤가 공백뿐)
+	private func atLineStart(_ out: [UInt8]) -> Bool {
+		for b in out.reversed() {
+			if b == 0x0A { return true }
+			if b != 0x20 && b != 0x09 && b != 0x0D { return false }
+		}
+		return true
+	}
+
+	/// k 번째 앞부터 줄 끝(또는 파일 끝)까지 공백뿐인지
+	private func restOfLineBlank(from k: Int) -> Bool {
+		var i = k
+		while let b = peek(i) {
+			if b == 0x0A { return true }
+			if b != 0x20 && b != 0x09 && b != 0x0D { return false }
+			i += 1
+		}
+		return true
+	}
+
 	/// 다음 문장. 파일 끝이면 nil
 	func next() -> Statement? {
 		var out: [UInt8] = []
@@ -98,8 +118,23 @@ final class SQLDumpReader: @unchecked Sendable {
 			case .normal:
 				if !content && syntax.delimiterCommand && (b == 0x44 || b == 0x64), takeDelimiterCommand() { continue }
 				if matchesDelimiter() {
+					// Oracle: PL/SQL 블록(BEGIN · CREATE PROCEDURE …) 안의 ; 는 문장 끝이 아니다 (블록은 / 줄에서 끝난다)
+					if syntax.plsqlBlocks && content && OracleScript.startsBlock(String(decoding: out, as: UTF8.self)) {
+						out.append(take())
+						continue
+					}
 					for _ in delimiter { take() }
 					if content { return Statement(bytes: out, line: startLine) }
+					continue
+				}
+				// Oracle: 줄에 / 하나만 있으면 문장 끝 (SQL*Plus 방식)
+				if syntax.plsqlBlocks && b == 0x2F && peek(1) != 0x2A && atLineStart(out) && restOfLineBlank(from: 1) {
+					take()
+					while let c = peek(0), c != 0x0A { take(); _ = c }
+					if content {
+						while let l = out.last, Self.isSpace(l) { out.removeLast() }
+						return Statement(bytes: out, line: startLine)
+					}
 					continue
 				}
 				if syntax.opensQuote(UInt16(b)) {   // ' " `

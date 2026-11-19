@@ -70,6 +70,10 @@ struct OracleDialect: SQLDialect {
 		columns.isEmpty ? "INSERT INTO \(table) VALUES (DEFAULT)"
 			: "INSERT INTO \(table) (\(columns.joined(separator: ", "))) VALUES (\(values.joined(separator: ", ")))"
 	}
+	/// 여러 행 VALUES 는 23ai 부터라 INSERT ALL (12c · 19c 에서도 된다)
+	func insertRows(_ table: String, columns: String, rows: [String]) -> String {
+		"INSERT ALL\n" + rows.map { "  INTO \(table) (\(columns)) VALUES \($0)" }.joined(separator: "\n") + "\nSELECT 1 FROM dual"
+	}
 	func byteLength(_ expr: String) -> String { "DBMS_LOB.GETLENGTH(\(expr))" }
 	/// LOB 은 정의해서 통째로 받는다 (앞부분만 읽기는 아직)
 	func blobPeek(_ column: String, over: Int, keep: Int) -> String { column }
