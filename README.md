@@ -166,7 +166,7 @@ iCloud 를 쓸 수 없으면 서버 목록은 이 맥에만, 비밀번호는 이
 | 비밀번호 | 키체인 (iCloud 키체인 동기화 항목, 안 되면 이 맥에만) |
 | 쿼리 패널 내용 (저장한 서버) | iCloud Drive 앱 전용 폴더 `Data/Queries/<UUID>.sql` |
 | 컬럼 순서 · 너비 · 숨김 · 고정 (저장한 서버) | iCloud Drive 앱 전용 폴더 `Data/Layouts/<UUID>.json` |
-| 나만 보는 뷰 | iCloud Drive 앱 전용 폴더 `Data/Views/` |
+| 나만 보는 뷰 (저장한 서버) | iCloud Drive 앱 전용 폴더 `Data/Views/<UUID>.json` |
 | 열어 둔 탭, WHERE 기록, 날짜로 보는 컬럼, 퀵 커넥트 서버의 쿼리 내용 | 이 맥의 앱 설정 (UserDefaults) |
 
 서버 하나가 JSON 파일 하나이고, 비밀번호는 파일에 들어가지 않습니다.
