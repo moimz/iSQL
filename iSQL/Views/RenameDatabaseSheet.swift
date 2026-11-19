@@ -78,7 +78,7 @@ struct RenameDatabaseSheet: View {
 				Text("데이터를 복사하지 않고 옮겨서 크기와 상관없이 빠릅니다. 다만 옮기는 동안 쓰고 있는 테이블이 있으면 그 쿼리가 끝날 때까지 기다리고, 그동안 새 쿼리도 잠깐 멈춥니다. 운영 서버는 한가할 때 하세요.")
 					.foregroundStyle(.secondary)
 				if job.routines + job.events > 0 {
-					Label("프로시저·함수 \(job.routines)개, 이벤트 \(job.events)개는 옮기지 않고 \(job.source) 에 남깁니다 (옛 데이터베이스도 지우지 않음)", systemImage: "exclamationmark.triangle.fill")
+					Label("프로시저·함수 \(job.routines)개, 이벤트 \(job.events)개는 옮기지 않고 \(job.source) 에 남깁니다 (옛 데이터베이스도 삭제하지 않음)", systemImage: "exclamationmark.triangle.fill")
 						.foregroundStyle(.orange)
 				}
 				Text("이 데이터베이스 이름으로 준 사용자 권한(GRANT)은 따라오지 않습니다.")

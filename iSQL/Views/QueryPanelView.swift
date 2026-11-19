@@ -222,7 +222,7 @@ struct ResultBody: View {
 		HStack(spacing: 10) {
 			if source.canEdit {
 				AddExportGroup(addHelp: "행 추가", add: { source.addRow() },
-				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				               showsRemove: true, removeHelp: "고른 행 삭제 (저장할 때 반영)",
 				               remove: selection.isEmpty ? nil : { source.toggleDelete(selection) },
 				               exportHelp: "내보내기", makeView: viewable ? { creatingView = true } : nil) { output.session?.requestExport(.data(output)) }
 			} else {
@@ -250,7 +250,7 @@ struct ResultBody: View {
 			}
 			HStack(spacing: 10) {
 				AddRemovePill(addHelp: "행 추가", add: { source.addRow() },
-				              removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				              removeHelp: "고른 행 삭제 (저장할 때 반영)",
 				              remove: selection.isEmpty ? nil : { source.toggleDelete(selection) })
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
 				// 좁은 칸(분할)에서도 한 줄로: 종류(수정·추가·삭제)는 행 색으로 보이므로 개수만, 나눈 수는 마우스를 올리면

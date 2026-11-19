@@ -123,7 +123,7 @@ struct TableSidebar: View {
 				// DB 가 하나뿐인 종류(SQLite 등)는 만들기·지우기가 없다
 				if session.capabilities.multipleDatabases {
 					AddRemovePill(addHelp: "새 데이터베이스", add: { session.creatingDatabase = true },
-					              removeHelp: session.currentSchema.map { "데이터베이스 \($0) 삭제…" } ?? "지울 데이터베이스의 탭을 고르세요",
+					              removeHelp: session.currentSchema.map { "데이터베이스 \($0) 삭제…" } ?? "삭제할 데이터베이스의 탭을 고르세요",
 					              remove: session.currentSchema.map { s in { session.requestDropDatabase(s) } })
 				}
 				Spacer(minLength: 0)
@@ -370,12 +370,12 @@ struct StructureBody: View {
 		HStack(spacing: 10) {
 			AddExportGroup(addHelp: table.isView ? "뷰에는 컬럼을 추가할 수 없습니다" : "컬럼 추가 (고른 줄 아래에)",
 			               add: table.isView ? nil : { editor.addColumn(after: selection.last) },
-			               showsRemove: !table.isView, removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction,
+			               showsRemove: !table.isView, removeHelp: "고른 컬럼 삭제 (저장할 때 반영)", remove: removeAction,
 			               exportHelp: "테이블 내보내기") {
 				session.requestExport(.table(table.schema, TableStat(table)))
 			}
 			if !table.isView {
-				Text("두 번 눌러 고치기 · 끌어서 순서 바꾸기 · ⌫ 지우기").foregroundStyle(.tertiary).lineLimit(1)
+				Text("두 번 눌러 고치기 · 끌어서 순서 바꾸기 · ⌫ 삭제").foregroundStyle(.tertiary).lineLimit(1)
 			}
 			Spacer()
 			Text("컬럼 \(editor.rowCount)개").foregroundStyle(.secondary).monospacedDigit()
@@ -411,7 +411,7 @@ struct StructureBody: View {
 			HStack(spacing: 10) {
 				// 저장 안 한 변경이 있으면 내보내기는 숨긴다 (서버의 구조와 화면이 달라서)
 				AddRemovePill(addHelp: "컬럼 추가 (고른 줄 아래에)", add: { editor.addColumn(after: selection.last) },
-				              removeHelp: "고른 컬럼 지우기 (저장할 때 반영)", remove: removeAction)
+				              removeHelp: "고른 컬럼 삭제 (저장할 때 반영)", remove: removeAction)
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
 				Text("저장 안 된 구조 변경 \(editor.changeCount)건").font(.headline)
 				Spacer()

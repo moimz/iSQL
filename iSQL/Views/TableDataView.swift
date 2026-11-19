@@ -137,7 +137,7 @@ struct TableDetailView: View {
 			HStack(spacing: 10) {
 				// 저장 바에서도 행 추가·지우기 (내보내기는 저장 안 한 변경이 있으니 숨긴다)
 				AddRemovePill(addHelp: "행 추가", add: { data.addRow() },
-				              removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				              removeHelp: "고른 행 삭제 (저장할 때 반영)",
 				              remove: selection.isEmpty ? nil : { data.toggleDelete(selection) })
 				Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
 				// 좁은 칸(분할)에서도 한 줄로: 종류(수정·추가·삭제)는 행 색으로 보이므로 개수만, 나눈 수는 마우스를 올리면
@@ -176,7 +176,7 @@ struct TableDetailView: View {
 			// [+ −] 알약(행 추가·고른 행 지우기) + [내보내기] 알약. 고칠 수 없는 표는 내보내기만
 			if data.canEdit {
 				AddExportGroup(addHelp: "행 추가", add: { data.addRow() },
-				               showsRemove: true, removeHelp: "고른 행 지우기 (저장할 때 반영)",
+				               showsRemove: true, removeHelp: "고른 행 삭제 (저장할 때 반영)",
 				               remove: selection.isEmpty ? nil : { data.toggleDelete(selection) },
 				               exportHelp: "내보내기", makeView: { creatingView = true }) { session.requestExport(.data(data)) }
 			} else {
@@ -327,7 +327,7 @@ struct FilterBar: View {
 								}
 							}
 							Divider()
-							Menu("최근 조건 지우기") {
+							Menu("최근 조건 삭제") {
 								ForEach(data.history, id: \.self) { h in Button(h) { data.forget(h) } }
 							}
 						}

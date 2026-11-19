@@ -312,7 +312,7 @@ struct TableInfoPanel: View {
 							Divider()
 							Button("삭제…") {
 								selectedIndex = ix.name
-								pending = ("인덱스 \(ix.name) 을(를) 지울까요?", inspector.dropIndexSQL(ix))
+								pending = ("인덱스 \(ix.name) 을(를) 삭제할까요?", inspector.dropIndexSQL(ix))
 							}
 						}
 						.disabled(inspector.table.isView)
@@ -326,7 +326,7 @@ struct TableInfoPanel: View {
 					Divider().frame(height: 14)
 					Button {
 						if let ix = inspector.indexes.first(where: { $0.name == selectedIndex }) {
-							pending = ("인덱스 \(ix.name) 을(를) 지울까요?", inspector.dropIndexSQL(ix))
+							pending = ("인덱스 \(ix.name) 을(를) 삭제할까요?", inspector.dropIndexSQL(ix))
 						}
 					} label: { Image(systemName: "minus").frame(width: 24, height: 16) }
 						.help("고른 인덱스 삭제")
@@ -397,7 +397,7 @@ struct TableInfoPanel: View {
 							Divider()
 							Button("삭제…") {
 								selectedFK = fk.id
-								pending = ("외래 키 \(fk.name) 을(를) 지울까요?", inspector.dropForeignKeySQL(fk))
+								pending = ("외래 키 \(fk.name) 을(를) 삭제할까요?", inspector.dropForeignKeySQL(fk))
 							}
 						}
 				}
@@ -408,7 +408,7 @@ struct TableInfoPanel: View {
 					Divider().frame(height: 14)
 					Button {
 						if let fk = inspector.foreignKeys.first(where: { $0.id == selectedFK }) {
-							pending = ("외래 키 \(fk.name) 을(를) 지울까요?", inspector.dropForeignKeySQL(fk))
+							pending = ("외래 키 \(fk.name) 을(를) 삭제할까요?", inspector.dropForeignKeySQL(fk))
 						}
 					} label: { Image(systemName: "minus").frame(width: 24, height: 16) }
 						.help("고른 외래 키 삭제")

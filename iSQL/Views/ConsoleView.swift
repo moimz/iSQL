@@ -37,7 +37,7 @@ struct ConsolePanel: View {
 				Text("\(source.rowCount.formatted())개").foregroundStyle(.secondary).monospacedDigit()
 				Spacer()
 				Button("저장…", action: save).disabled(log.entries.isEmpty)
-				Button("지우기") { log.clear() }.disabled(log.entries.isEmpty)
+				Button("삭제") { log.clear() }.disabled(log.entries.isEmpty)
 			}
 			.controlSize(.small)
 			.padding(.horizontal, 12)

@@ -146,9 +146,9 @@ enum RoutineDrop {
 	@MainActor
 	static func confirm(_ r: RoutineInfo, session: Session) {
 		Task {
-			guard await Confirm.ask("\(r.kind.label) ‘\(r.name)’ 을 지울까요?", "\(r.schema).\(r.name) — 되돌릴 수 없습니다.",
-			                        buttons: ["지우기"], destructive: true) == 0 else { return }
-			if let e = await session.dropRoutine(r) { await Confirm.inform("지우지 못했습니다", e) }
+			guard await Confirm.ask("\(r.kind.label) ‘\(r.name)’ 을 삭제할까요?", "\(r.schema).\(r.name) — 되돌릴 수 없습니다.",
+			                        buttons: ["삭제"], destructive: true) == 0 else { return }
+			if let e = await session.dropRoutine(r) { await Confirm.inform("삭제하지 못했습니다", e) }
 		}
 	}
 }
@@ -235,8 +235,8 @@ struct RoutineTabView: View {
 						.lineLimit(2).textSelection(.enabled)
 				} else {
 					Text(editor.isNew ? "CREATE 문을 고친 뒤 만들기 (⌘S). DELIMITER 는 쓰지 않습니다 — BEGIN … END 를 그대로"
-					     : editor.kind == .view ? "고친 뒤 저장(⌘S)하면 CREATE OR REPLACE 로 바꿉니다 (이름을 바꾸면 지우고 새로 만듭니다)"
-					     : "고친 뒤 저장(⌘S)하면 지우고 다시 만듭니다. 만들다 실패하면 원래 것으로 되돌립니다")
+					     : editor.kind == .view ? "고친 뒤 저장(⌘S)하면 CREATE OR REPLACE 로 바꿉니다 (이름을 바꾸면 삭제하고 새로 만듭니다)"
+					     : "고친 뒤 저장(⌘S)하면 삭제하고 다시 만듭니다. 만들다 실패하면 원래 것으로 되돌립니다")
 						.foregroundStyle(.secondary)
 				}
 				Spacer()

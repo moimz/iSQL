@@ -30,10 +30,10 @@ struct TableActionRequest: Identifiable {
 
 	var message: String {
 		if kind == .dropDatabase {
-			return "테이블·뷰 \(tables.count)개와 모든 데이터가 함께 지워지며 되돌릴 수 없습니다."
+			return "테이블·뷰 \(tables.count)개와 모든 데이터가 함께 삭제되며 되돌릴 수 없습니다."
 		}
 		let names = tables.prefix(10).map(\.name).joined(separator: ", ") + (tables.count > 10 ? " 외 \(tables.count - 10)개" : "")
-		let what = kind == .drop ? "데이터와 구조가 모두 지워지며" : "구조는 남고 모든 행이 지워지며(AUTO_INCREMENT 도 처음으로)"
+		let what = kind == .drop ? "데이터와 구조가 모두 삭제되며" : "구조는 남고 모든 행이 삭제되며(AUTO_INCREMENT 도 처음으로)"
 		return "\(schema): \(names)\n\(what) 되돌릴 수 없습니다."
 	}
 }

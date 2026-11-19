@@ -63,7 +63,7 @@ struct ServerSidebar: View {
 						}
 						.contextMenu {
 							if !g.group.isEmpty {
-								Button("그룹 지우기…", role: .destructive) { deletingGroup = g.group }
+								Button("그룹 삭제…", role: .destructive) { deletingGroup = g.group }
 							}
 						}
 				}
@@ -83,7 +83,7 @@ struct ServerSidebar: View {
 					NSPasteboard.general.setString(s.connectionString, forType: .string)
 				}
 				Divider()
-				Button("지우기…", role: .destructive) { deleting = s }
+				Button("삭제…", role: .destructive) { deleting = s }
 			}
 		} primaryAction: { ids in
 			// 두 번 누르면 접속 (접속한 서버면 그 서버로 옮긴다)
@@ -110,8 +110,8 @@ struct ServerSidebar: View {
 				.help("서버 추가 / 그룹 추가")
 			}
 		}
-		.confirmationDialog("‘\(deleting?.displayName ?? "")’ 서버를 지울까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-			Button("지우기", role: .destructive) {
+		.confirmationDialog("‘\(deleting?.displayName ?? "")’ 서버를 삭제할까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+			Button("삭제", role: .destructive) {
 				if let d = deleting {
 					if model.selectedServerID == d.id { model.selectedServerID = WindowModel.newConnectionID }
 					store.delete(d)
@@ -119,15 +119,15 @@ struct ServerSidebar: View {
 				deleting = nil
 			}
 		} message: {
-			Text("저장한 비밀번호도 키체인에서 지웁니다. 다른 맥에서도 사라집니다.")
+			Text("저장한 비밀번호도 키체인에서 삭제합니다. 다른 맥에서도 사라집니다.")
 		}
-		.confirmationDialog("‘\(deletingGroup ?? "")’ 그룹을 지울까요?", isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } })) {
-			Button("지우기", role: .destructive) {
+		.confirmationDialog("‘\(deletingGroup ?? "")’ 그룹을 삭제할까요?", isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } })) {
+			Button("삭제", role: .destructive) {
 				if let g = deletingGroup { store.deleteGroup(g) }
 				deletingGroup = nil
 			}
 		} message: {
-			Text("그룹 안 서버는 지우지 않고 그룹 없음으로 옮깁니다.")
+			Text("그룹 안 서버는 삭제하지 않고 그룹 없음으로 옮깁니다.")
 		}
 	}
 

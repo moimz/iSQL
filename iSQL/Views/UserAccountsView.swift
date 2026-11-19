@@ -85,7 +85,7 @@ struct UserAccountsView: View {
 				Task { if await manager.run([dialect.dropUser(a.sql(dialect))]) { selectedID = nil } }
 			}
 		} message: {
-			Text(selected?.id == currentID ? "지금 이 계정으로 접속해 있습니다. 지우면 다음 접속부터 들어올 수 없습니다." : "되돌릴 수 없습니다.")
+			Text(selected?.id == currentID ? "지금 이 계정으로 접속해 있습니다. 삭제하면 다음 접속부터 들어올 수 없습니다." : "되돌릴 수 없습니다.")
 		}
 		.confirmationDialog("\(confirmRevoke?.db ?? "")의 권한을 모두 제거할까요?", isPresented: Binding(get: { confirmRevoke != nil }, set: { if !$0 { confirmRevoke = nil } })) {
 			Button("제거", role: .destructive) {

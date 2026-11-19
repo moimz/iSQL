@@ -796,9 +796,9 @@ enum SQLSplitter {
 		func starts(_ w: String) -> Bool { s.hasPrefix(w + " ") || s.hasPrefix(w + "\n") || s.hasPrefix(w + "\t") }
 		let hasWhere = s.range(of: "\\bWHERE\\b", options: .regularExpression) != nil
 		if starts("UPDATE") && !hasWhere { return "WHERE 없는 UPDATE: 모든 행이 바뀝니다" }
-		if starts("DELETE") { return hasWhere ? "DELETE: 행을 지웁니다" : "WHERE 없는 DELETE: 모든 행이 지워집니다" }
+		if starts("DELETE") { return hasWhere ? "DELETE: 행을 삭제합니다" : "WHERE 없는 DELETE: 모든 행이 삭제됩니다" }
 		if starts("DROP") { return "DROP: 되돌릴 수 없습니다" }
-		if starts("TRUNCATE") { return "TRUNCATE: 모든 행이 지워집니다" }
+		if starts("TRUNCATE") { return "TRUNCATE: 모든 행이 삭제됩니다" }
 		if starts("ALTER") { return "ALTER: 테이블 구조를 바꿉니다" }
 		return nil
 	}

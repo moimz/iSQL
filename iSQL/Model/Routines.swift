@@ -103,7 +103,7 @@ final class RoutineEditor {
 		guard let session, let name else { return }
 		do {
 			guard let ddl = try await session.meta.createStatement(session.query, .routine(kind), schema: schema, name: name) else {
-				throw RoutineError.message("정의를 읽지 못했습니다 (권한이 없거나 지워졌습니다)")
+				throw RoutineError.message("정의를 읽지 못했습니다 (권한이 없거나 삭제되었습니다)")
 			}
 			original = ddl
 			text = ddl

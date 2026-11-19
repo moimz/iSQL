@@ -222,7 +222,7 @@ final class StructureEditor: GridSource {
 	/// 저장 전에 막을 문제
 	var problem: String? {
 		let final = rows.filter { !$0.deleted }
-		if final.isEmpty { return "컬럼을 모두 지울 수는 없습니다" }
+		if final.isEmpty { return "컬럼을 모두 삭제할 수는 없습니다" }
 		if final.contains(where: { $0.col.name.trimmingCharacters(in: .whitespaces).isEmpty }) { return "이름이 없는 컬럼이 있습니다" }
 		var seen = Set<String>()
 		for r in final where !seen.insert(r.col.name.lowercased()).inserted { return "컬럼 이름 \(r.col.name) 이(가) 겹칩니다" }

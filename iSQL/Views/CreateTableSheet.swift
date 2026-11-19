@@ -274,7 +274,7 @@ struct CreateTableSheet: View {
 				Button { addColumn() } label: { Image(systemName: "plus") }
 					.help("컬럼 추가 (고른 컬럼 다음에)")
 				Button { removeColumn() } label: { Image(systemName: "minus") }
-					.help("고른 컬럼 지우기")
+					.help("고른 컬럼 삭제")
 					.disabled(selectedIndex == nil)
 			}
 			.fixedSize()

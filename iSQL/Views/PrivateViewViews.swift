@@ -94,8 +94,8 @@ struct PrivateViewMenu: View {
 		}
 		Button("삭제…", role: .destructive) {
 			Task {
-				if await Confirm.ask("나만 보는 뷰 ‘\(view.name)’ 을 지울까요?", "서버에는 없는 뷰라 데이터는 그대로입니다. 다른 맥에서도 사라집니다.",
-				                     buttons: ["지우기"], destructive: true) == 0 { session.deletePrivateView(view) }
+				if await Confirm.ask("나만 보는 뷰 ‘\(view.name)’ 을 삭제할까요?", "서버에는 없는 뷰라 데이터는 그대로입니다. 다른 맥에서도 사라집니다.",
+				                     buttons: ["삭제"], destructive: true) == 0 { session.deletePrivateView(view) }
 			}
 		}
 	}

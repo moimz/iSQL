@@ -172,7 +172,7 @@ extension SQLiteDialect {
 		return quote(s)
 	}
 	func dropIndexClause(_ index: IndexInfo) -> String {
-		index.kind == .primary ? "-- SQLite 는 기본 키를 따로 지울 수 없습니다" : "DROP INDEX \(quote(index.name))"
+		index.kind == .primary ? "-- SQLite 는 기본 키를 따로 삭제할 수 없습니다" : "DROP INDEX \(quote(index.name))"
 	}
 	/// CREATE [UNIQUE] INDEX 이름 ON 테이블 (컬럼) — 테이블 자리는 alterTable 이 채운다
 	func addIndexClause(kind: IndexInfo.Kind, name: String, columns: [String], parser: String?) -> String {
@@ -185,7 +185,7 @@ extension SQLiteDialect {
 		}
 	}
 	func addForeignKeyClause(_ fk: ForeignKeyInfo, schema: String) -> String { "-- SQLite 는 외래 키를 나중에 더할 수 없습니다" }
-	func dropForeignKeyClause(_ name: String) -> String { "-- SQLite 는 외래 키를 따로 지울 수 없습니다" }
+	func dropForeignKeyClause(_ name: String) -> String { "-- SQLite 는 외래 키를 따로 삭제할 수 없습니다" }
 
 	/// "main"."이름" → "이름"
 	static func unqualified(_ s: String) -> String {

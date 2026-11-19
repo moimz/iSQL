@@ -97,7 +97,7 @@ final class DatabaseRenameJob {
 			let remain = ((try? await session.meta.tableCount(session.query, schema: source)) ?? nil) ?? 1
 			var dropped = false
 			if remain == 0 && routines == 0 && events == 0 {
-				step = "옛 데이터베이스 지우는 중…"
+				step = "옛 데이터베이스 삭제하는 중…"
 				_ = try await session.query(dialect.dropDatabase(source))
 				dropped = true
 			}
