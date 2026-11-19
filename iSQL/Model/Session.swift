@@ -164,7 +164,7 @@ final class Session {
 		guard let server, let e = sideEndpoint else { throw DBError.closed }
 		let c = try await DB.connect(kind, .init(host: e.host, port: e.port, user: server.user,
 		                                         password: sidePassword ?? "", database: server.database, path: server.sqliteFilePath ?? "",
-		                                         tls: server.tlsMode, tlsHost: server.host, tlsCA: server.tlsCA ?? ""))
+		                                         tls: server.tlsMode, tlsHost: server.host, tlsCA: server.tlsCA ?? "").oracle(server))
 		if log { attachLog(c, purpose: purpose) }
 		return c
 	}
@@ -707,7 +707,7 @@ final class Session {
 		do {
 			let c = try await DB.connect(server.sqlKind ?? .mysql, .init(host: host, port: port, user: server.user,
 			                                                             password: mysqlPassword ?? "", database: server.database,
-			                                                             tls: server.tlsMode, tlsHost: server.host, tlsCA: server.tlsCA ?? ""))
+			                                                             tls: server.tlsMode, tlsHost: server.host, tlsCA: server.tlsCA ?? "").oracle(server))
 			return (tunnel, c)
 		} catch {
 			tunnel?.close()

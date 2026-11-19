@@ -320,6 +320,68 @@ final class OracleReader {
 	}
 }
 
+/// Oracle 스크립트 나누기 (SQL*Plus 방식): ; 로 나누되 PL/SQL 블록 안의 ; 는 그대로, 줄에 / 하나만 있으면 문장 끝
+enum OracleScript {
+	/// PL/SQL 블록으로 시작하는 문장인지 (BEGIN · DECLARE · CREATE [OR REPLACE] PROCEDURE/FUNCTION/PACKAGE/TRIGGER/TYPE …)
+	static func startsBlock(_ s: String) -> Bool {
+		let t = s.replacingOccurrences(of: #"(?s)/\*.*?\*/|--[^\n]*"#, with: " ", options: .regularExpression)
+		let words = t.split(whereSeparator: { !($0.isLetter || $0 == "_") }).prefix(6).map { $0.uppercased() }
+		guard let first = words.first else { return false }
+		if first == "BEGIN" || first == "DECLARE" { return true }
+		guard first == "CREATE" else { return false }
+		let objects: Set<String> = ["PROCEDURE", "FUNCTION", "PACKAGE", "TRIGGER", "TYPE", "LIBRARY", "JAVA"]
+		for w in words.dropFirst() {
+			if objects.contains(w) { return true }
+			if !["OR", "REPLACE", "EDITIONABLE", "NONEDITIONABLE", "EDITIONING", "NONEDITIONING", "AND", "COMPILE", "RESOLVE", "SOURCE", "BODY"].contains(w) { return false }
+		}
+		return false
+	}
+
+	/// 문장들 (비거나 주석뿐인 것은 뺀다)
+	static func split(_ sql: String) -> [String] {
+		let u = Array(sql.utf16)
+		var parts: [String] = []
+		var start = 0, i = 0
+		var quote: UInt16 = 0
+		func text(_ a: Int, _ b: Int) -> String { String(utf16CodeUnits: Array(u[a..<b]), count: b - a) }
+		func cut(_ end: Int) {
+			let t = text(start, end).trimmingCharacters(in: .whitespacesAndNewlines)
+			let bare = t.replacingOccurrences(of: #"(?s)/\*.*?\*/|--[^\n]*"#, with: "", options: .regularExpression)
+			if !bare.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { parts.append(t) }
+		}
+		while i < u.count {
+			let c = u[i]
+			if quote != 0 { if c == quote { quote = 0 }; i += 1; continue }
+			switch c {
+			case 39, 34: quote = c                                        // ' "
+			case 45 where i + 1 < u.count && u[i + 1] == 45:              // -- 줄 주석
+				while i < u.count && u[i] != 10 { i += 1 }
+				continue
+			case 47 where i + 1 < u.count && u[i + 1] == 42:              // /* */
+				i += 2
+				while i + 1 < u.count && !(u[i] == 42 && u[i + 1] == 47) { i += 1 }
+				i += 2
+				continue
+			case 59:                                                      // ;
+				if !startsBlock(text(start, i)) { cut(i); start = i + 1 }
+			case 47:                                                      // 줄에 / 하나만
+				var b = i - 1
+				while b >= 0 && (u[b] == 32 || u[b] == 9) { b -= 1 }
+				var j = i + 1
+				while j < u.count && (u[j] == 32 || u[j] == 9 || u[j] == 13) { j += 1 }
+				if (b < 0 || u[b] == 10) && (j >= u.count || u[j] == 10) {
+					cut(i); start = j; i = j
+					continue
+				}
+			default: break
+			}
+			i += 1
+		}
+		if start < u.count { cut(u.count) }
+		return parts
+	}
+}
+
 /// Oracle 연결 오류
 enum OracleError: LocalizedError {
 	/// 서버가 돌려준 오류 (ORA-xxxxx)

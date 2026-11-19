@@ -73,6 +73,10 @@ struct ConnectForm: View {
 		TabView(selection: kindTab) {
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.mysql.familyLabel) }.tag("mysql")
 			fields(ssh: false).tabItem { Text(SQLKind.sqlite.label) }.tag("sqlite")
+			// Oracle 은 만드는 중 (디버그 빌드에서만)
+			if SQLKind.supported.contains(.oracle) {
+				fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.oracle.label) }.tag("oracle")
+			}
 		}
 		// TabView 는 세로로 남는 공간을 다 차지한다 → 내용 높이에 맞춘다 (박스가 화면 끝까지 늘어나 입력칸이 가운데 떠 있었다)
 		.fixedSize(horizontal: false, vertical: true)
@@ -82,9 +86,17 @@ struct ConnectForm: View {
 
 	/// 위 탭: MySQL · MariaDB / SQLite (고른 탭이 곧 서버 종류. MySQL·MariaDB 는 접속해 보고 가린다)
 	private var kindTab: Binding<String> {
-		Binding(get: { server.isFileDB ? "sqlite" : "mysql" }, set: { tab in
+		Binding(get: { server.isFileDB ? "sqlite" : server.sqlKind == .oracle ? "oracle" : "mysql" }, set: { tab in
+			let wasOracle = server.sqlKind == .oracle
 			if tab == "sqlite" { server.kind = SQLKind.sqlite.rawValue }
-			else if server.isFileDB { server.kind = SQLKind.mysql.rawValue }
+			else if tab == "oracle" {
+				server.kind = SQLKind.oracle.rawValue
+				if server.port == 3306 { server.port = 1521 }
+				if server.user == "root" { server.user = "" }
+			} else if server.isFileDB || wasOracle {
+				server.kind = SQLKind.mysql.rawValue
+				if wasOracle && server.port == 1521 { server.port = 3306 }
+			}
 		})
 	}
 
@@ -197,8 +209,31 @@ struct ConnectForm: View {
 				row("호스트") { field($server.host, ssh ? "127.0.0.1" : "db.example.com") }
 				row("사용자") { field($server.user, "root") }
 				row("비밀번호") { secret($mysqlPassword, show: $showPassword, "선택") }
-				row("DB") { field($server.database, "선택") }
+				if server.sqlKind == .oracle {
+					// Oracle: 서비스 이름(또는 SID)으로 붙고, "DB" 자리는 기본 스키마
+					row("서비스") {
+						HStack(spacing: 8) {
+							field(Binding(get: { server.service ?? "" }, set: { server.service = $0.isEmpty ? nil : $0 }), "서비스 이름 (예: ORCLPDB1)")
+							Picker("", selection: Binding(get: { server.oracleSID ?? false }, set: { server.oracleSID = $0 ? true : nil })) {
+								Text("서비스 이름").tag(false)
+								Text("SID").tag(true)
+							}
+							.pickerStyle(.segmented)
+							.labelsHidden()
+							.fixedSize()
+						}
+					}
+					row("스키마") { field($server.database, "선택 (비우면 사용자 스키마)") }
+				} else {
+					row("DB") { field($server.database, "선택") }
+				}
 				row("포트") { number($server.port) }
+				if server.sqlKind == .oracle {
+					row("권한") {
+						Toggle("SYSDBA 로 접속", isOn: Binding(get: { server.oracleSysDBA ?? false }, set: { server.oracleSysDBA = $0 ? true : nil }))
+							.frame(maxWidth: .infinity, alignment: .leading)
+					}
+				} else {
 				// TLS: SSH 없이 바로 붙는 서버(RDS 등)용. SSH 터널 안에서도 서버가 TLS 를 요구하면 켠다
 				row("TLS") {
 					Picker("", selection: Binding(get: { server.tlsMode }, set: { server.tls = $0 == .off ? nil : $0 })) {
@@ -220,6 +255,7 @@ struct ConnectForm: View {
 							}
 						}
 					}
+				}
 				}
 
 				if ssh {

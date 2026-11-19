@@ -36,6 +36,21 @@ struct DBConnectOptions {
 	var tls: TLSMode = .off
 	var tlsHost = ""
 	var tlsCA = ""
+	/// Oracle: 서비스 이름(또는 sid 가 true 면 SID), SYSDBA 로 접속. database 는 기본 스키마
+	var service = ""
+	var sid = false
+	var sysdba = false
+}
+
+extension DBConnectOptions {
+	/// 서버 설정의 Oracle 칸을 채운다
+	func oracle(_ server: Server) -> DBConnectOptions {
+		var o = self
+		o.service = server.service ?? ""
+		o.sid = server.oracleSID ?? false
+		o.sysdba = server.oracleSysDBA ?? false
+		return o
+	}
 }
 
 enum DB {
@@ -43,10 +58,14 @@ enum DB {
 	static func connect(_ kind: SQLKind, _ o: DBConnectOptions) async throws -> any DBConnection {
 		switch kind {
 		case .sqlite:
-			try await SQLiteConnection.open(path: o.path)
-		case .mysql, .mariadb, .postgres, .sqlserver, .oracle:
-			try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database,
-			                                        tls: o.tls, tlsHost: o.tlsHost, tlsCA: o.tlsCA))
+			return try await SQLiteConnection.open(path: o.path)
+		case .oracle:
+			guard !o.service.isEmpty else { throw DBError.message("서비스 이름(또는 SID)을 넣으세요.") }
+			return try await OracleConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password,
+			                                                service: o.service, sid: o.sid, sysdba: o.sysdba, schema: o.database))
+		case .mysql, .mariadb, .postgres, .sqlserver:
+			return try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database,
+			                                               tls: o.tls, tlsHost: o.tlsHost, tlsCA: o.tlsCA))
 		}
 	}
 }

@@ -8,7 +8,12 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 
 	/// 이 빌드가 접속할 수 있는 종류. 다른 종류의 서버 파일은 목록에서 숨기고 건드리지 않는다 (ServerStore).
 	/// 하나씩 만들 때마다 여기에 넣는다
+	/// Oracle 은 만드는 중이라 디버그(개발) 빌드에서만 (사용자 2026-11-20: main 에서 이어 만들고 배포판에는 숨김)
+	#if DEBUG
+	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite, .oracle]
+	#else
 	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite]
+	#endif
 
 	var label: String {
 		switch self {
@@ -73,6 +78,18 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.autoIncrementEdit = false; c.rowFormat = false; c.unsignedColumns = false; c.onUpdateTimestamp = false
 			c.fulltextIndex = false; c.spatialIndex = false; c.foreignKeys = false
 		}
+		if self == .oracle {
+			// "데이터베이스" = 스키마(사용자): 만들기·지우기·이름 바꾸기·복제는 없다. 서버 관리·계정·엔진·문자셋도 아직 없다
+			c.routineKinds = [.procedure, .function, .trigger]
+			c.routineDefiner = false
+			c.serverStatus = false; c.processKill = false; c.queryDigests = false; c.serverVariables = false
+			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false
+			c.createTableLike = false; c.multipleDatabases = false
+			c.engines = false; c.charsets = false; c.tableComment = false; c.columnComment = false
+			c.autoIncrementEdit = false; c.rowFormat = false; c.unsignedColumns = false; c.onUpdateTimestamp = false
+			c.fulltextIndex = false; c.spatialIndex = false
+			c.foreignKeyChecksToggle = false; c.jsonPathFilter = false
+		}
 		#if DEBUG
 		c = c.applyingDebugOverrides()
 		#endif
@@ -84,7 +101,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		switch self {
 		case .mariadb: MySQLMeta(mariadb: true)
 		case .sqlite: SQLiteMeta()
-		case .mysql, .postgres, .sqlserver, .oracle: MySQLMeta()
+		case .oracle: OracleMeta()
+		case .mysql, .postgres, .sqlserver: MySQLMeta()
 		}
 	}
 
@@ -93,7 +111,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		switch self {
 		case .mariadb: MySQLDialect(mariadb: true)
 		case .sqlite: SQLiteDialect()
-		case .mysql, .postgres, .sqlserver, .oracle: MySQLDialect()
+		case .oracle: OracleDialect()
+		case .mysql, .postgres, .sqlserver: MySQLDialect()
 		}
 	}
 }

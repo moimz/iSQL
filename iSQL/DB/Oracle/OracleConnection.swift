@@ -16,6 +16,8 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		var sid = false
 		/// SYSDBA 로 접속
 		var sysdba = false
+		/// 접속한 뒤 기본으로 쓸 스키마 (비면 로그인한 사용자)
+		var schema = ""
 	}
 
 	private(set) var serverVersion = ""
@@ -40,6 +42,9 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 	private var seq: UInt8 = 0
 	/// 다 쓴 커서: 다음 요청에 얹어(piggyback) 닫는다
 	private var cursorsToClose: [UInt32] = []
+
+	/// 문장마다 바로 커밋 (MySQL 처럼). START TRANSACTION 을 받으면 끄고 COMMIT · ROLLBACK 뒤 다시 켠다
+	private var autoCommit = true
 
 	/// 한 번에 받아 오는 행 수
 	private let fetchSize: UInt32 = 500
@@ -87,6 +92,9 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		do {
 			try negotiate(o)
 			try authenticate(o)
+			if !o.schema.isEmpty {
+				_ = try executeSync("ALTER SESSION SET CURRENT_SCHEMA = \"" + o.schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"")
+			}
 		} catch {
 			closeSocket()
 			throw error
@@ -223,25 +231,46 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		if !user.isEmpty { w.bytesWithLength(user) }
 	}
 
-	/// 세션 시간대를 이 맥의 시간대로 (끝에 NUL 이 있어야 서버가 받는다)
+	/// 세션 시간대를 이 맥의 시간대로, 날짜 글자 형식을 앱이 보여 주는 형식으로 (그래야 '2026-11-20 13:45:00' 같은 글자를 그대로 넣을 수 있다).
+	/// 끝에 NUL 이 있어야 서버가 받는다
 	private static func alterSessionStatement() -> String {
 		let off = TimeZone.current.secondsFromGMT()
 		let sign = off < 0 ? "-" : "+"
-		return String(format: "ALTER SESSION SET TIME_ZONE='%@%02d:%02d'", sign, abs(off) / 3600, abs(off) % 3600 / 60) + "\0"
+		return String(format: "ALTER SESSION SET TIME_ZONE='%@%02d:%02d'", sign, abs(off) / 3600, abs(off) % 3600 / 60)
+			+ " NLS_DATE_FORMAT='YYYY-MM-DD HH24:MI:SS' NLS_TIMESTAMP_FORMAT='YYYY-MM-DD HH24:MI:SS.FF'"
+			+ " NLS_TIMESTAMP_TZ_FORMAT='YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'\0"
 	}
 
 	// MARK: - 쿼리
 
+	/// 문장이 여럿이면 하나씩 실행한다 (Oracle 은 한 번에 한 문장). 하나가 실패하면 거기서 멈춘다
 	private func querySync(_ sql: String) throws -> [QueryResult] {
-		let started = Date()
-		do {
-			let result = try executeSync(sql)
-			onQuery?(sql, Date().timeIntervalSince(started), nil)
-			return [result]
-		} catch {
-			onQuery?(sql, Date().timeIntervalSince(started), error.localizedDescription)
-			throw error
+		let statements = OracleScript.split(sql)
+		var results: [QueryResult] = []
+		for st in statements.isEmpty ? [sql] : statements {
+			let started = Date()
+			do {
+				results.append(try runStatement(st))
+				onQuery?(st, Date().timeIntervalSince(started), nil)
+			} catch {
+				onQuery?(st, Date().timeIntervalSince(started), error.localizedDescription)
+				throw error
+			}
 		}
+		return results
+	}
+
+	/// 트랜잭션 시작은 서버에 보내지 않고 자동 커밋만 끈다 (Oracle 은 첫 변경 문장이 트랜잭션을 연다)
+	private func runStatement(_ st: String) throws -> QueryResult {
+		let word = st.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+			.trimmingCharacters(in: CharacterSet(charactersIn: ";")).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+		if word == "START TRANSACTION" || word == "BEGIN TRANSACTION" || word == "BEGIN WORK" {
+			autoCommit = false
+			return QueryResult()
+		}
+		let r = try executeSync(st)
+		if word.hasPrefix("COMMIT") || word.hasPrefix("ROLLBACK") { autoCommit = true }
+		return r
 	}
 
 	enum StatementKind { case query, plsql, ddl, other }
@@ -359,8 +388,8 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 		let iterations: UInt32 = isQuery ? fetchSize : 1
 		if isQuery { options |= TNS.execFetch }
 		if kind != .plsql { options |= TNS.execNotPLSQL }
-		// iSQL 은 MySQL 처럼 문장마다 바로 반영한다 (자동 커밋)
-		if !isQuery { options |= TNS.execCommit }
+		// iSQL 은 MySQL 처럼 문장마다 바로 반영한다 (자동 커밋, 트랜잭션 중이면 빼고)
+		if !isQuery && autoCommit { options |= TNS.execCommit }
 		if sqlBytes.isEmpty { dmlOptions = 0 }
 
 		var w = OracleWriter()
@@ -1174,7 +1203,12 @@ final class OracleConnection: DBConnection, @unchecked Sendable {
 
 	// MARK: - 기본값
 
-	private static var machineName: String { ProcessInfo.processInfo.hostName }
+	/// 이 맥 이름. ProcessInfo.hostName 은 앱 안에서 DNS 로 이름을 풀다가 오래 멈춘다 → gethostname (DNS 를 거치지 않는다)
+	private static let machineName: String = {
+		var b = [CChar](repeating: 0, count: 256)
+		gethostname(&b, b.count)
+		return String(cString: b)
+	}()
 
 	/// 접속 글자의 ( ) = 는 구조를 깨므로 바꾼다
 	private static func sanitize(_ s: String) -> String {

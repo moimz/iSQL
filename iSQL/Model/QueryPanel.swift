@@ -764,8 +764,22 @@ enum SQLSplitter {
 				i += 2
 				continue
 			case 59:                                           // ;
+				// PL/SQL 블록 안의 ; 는 문장 끝이 아니다 (블록은 / 줄이나 글 끝에서 끝난다)
+				if syntax.plsqlBlocks, SQLSyntax.startsPLSQLBlock((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
 				cut(i)
 				start = i + 1
+			case 47 where syntax.plsqlBlocks:                  // 줄에 / 하나만: 문장 끝
+				var b = i - 1
+				while b >= 0 && (u[b] == 32 || u[b] == 9) { b -= 1 }
+				let lineStart = b < 0 || u[b] == 10
+				var j = i + 1
+				while j < u.count && (u[j] == 32 || u[j] == 9 || u[j] == 13) { j += 1 }
+				if lineStart && (j >= u.count || u[j] == 10) {
+					cut(i)
+					start = j
+					i = j
+					continue
+				}
 			default: break
 			}
 			i += 1

@@ -31,7 +31,8 @@ struct Server: Codable, Identifiable, Hashable {
 	var connectionString: String {
 		let u = user.addingPercentEncoding(withAllowedCharacters: .urlUserAllowed) ?? user
 		let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
-		let db = database.isEmpty ? "" : "/" + (database.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? database)
+		let target = sqlKind == .oracle ? (service ?? "") : database
+		let db = target.isEmpty ? "" : "/" + (target.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? target)
 		return "\(sqlKind?.urlScheme ?? (kind ?? Self.mysqlKind))://\(u)@\(h):\(port)\(db)"
 	}
 
@@ -57,6 +58,12 @@ struct Server: Codable, Identifiable, Hashable {
 	/// 인증서 확인에 쓸 CA 파일 (비면 맥이 믿는 인증서)
 	var tlsCA: String?
 	var tlsMode: TLSMode { tls ?? .off }
+
+	/// Oracle: 서비스 이름 (oracleSID 가 true 면 SID). 예전 파일에는 없어서 옵셔널
+	var service: String?
+	var oracleSID: Bool?
+	/// Oracle: SYSDBA 로 접속
+	var oracleSysDBA: Bool?
 
 	var displayName: String { name.isEmpty ? (ssh.enabled ? "\(ssh.host) → \(host)" : host) : name }
 

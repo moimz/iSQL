@@ -20,6 +20,11 @@ struct SQLSyntax: Sendable {
 	var functions: [SQLFunction]
 	/// 자동 완성에서 그대로 쓰면 안 되는 이름 (키워드 + 이것들, 대문자)
 	var reservedWords: Set<String>
+	/// Oracle: BEGIN … END; 같은 PL/SQL 블록 안의 ; 로는 나누지 않고, 줄에 / 하나만 있으면 문장 끝 (SQL*Plus 방식)
+	var plsqlBlocks = false
+
+	/// PL/SQL 블록으로 시작하는 문장인지 (BEGIN · DECLARE · CREATE [OR REPLACE] PROCEDURE/FUNCTION/PACKAGE/TRIGGER/TYPE …)
+	static func startsPLSQLBlock(_ s: String) -> Bool { OracleScript.startsBlock(s) }
 
 	/// 이 종류·버전 서버에서 자동 완성에 보일 함수 이름
 	func completionFunctions(kind: SQLKind, version: ServerVersion?) -> [String] {
