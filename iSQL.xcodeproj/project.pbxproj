@@ -60,6 +60,7 @@
 				B10000000000000000000008 /* Sources */,
 				B10000000000000000000003 /* Frameworks */,
 				B10000000000000000000009 /* Resources */,
+				B10000000000000000000023 /* Thin Sparkle */,
 			);
 			buildRules = (
 			);
@@ -123,6 +124,24 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B10000000000000000000023 /* Thin Sparkle */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Thin Sparkle";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/Scripts/thin-sparkle.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		B10000000000000000000008 /* Sources */ = {
