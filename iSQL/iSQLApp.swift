@@ -47,7 +47,9 @@ struct iSQLApp: App {
 		// .isql 파일을 열 때 새 창을 만들지 않는다 (열린 창의 onOpenURL 이 받는다)
 		.handlesExternalEvents(matching: [])
 		.commands {
-			CommandGroup(after: .appInfo) {
+			// iSQL에 관하여: 기본 정보 창 대신 직접 만든 창 (AboutView), 그 아래 업데이트 확인
+			CommandGroup(replacing: .appInfo) {
+				AboutMenuButton()
 				UpdateMenuButton()
 			}
 			// 보기 · 파일 · 윈도우 메뉴의 탭 단축키 (AppMenus.swift)
@@ -59,6 +61,15 @@ struct iSQLApp: App {
 				Button("서버 정보 내보내기…") { AppState.shared.requestTransfer(.export) }
 			}
 		}
+
+		// iSQL 정보 창
+		Window("iSQL 정보", id: AboutView.windowID) {
+			AboutView()
+		}
+		.windowResizability(.contentSize)
+		.windowStyle(.hiddenTitleBar)
+		.restorationBehavior(.disabled)
+		.defaultPosition(.center)
 
 		// iSQL 앱 설정 (⌘,): 일반 · MCP. 서버별 설정은 제목바 톱니로 여는 따로 된 창(ServerSettingsWindow)
 		Settings {
