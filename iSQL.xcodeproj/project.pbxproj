@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B10000000000000000000020 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B10000000000000000000022 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		B10000000000000000000001 /* iSQL.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iSQL.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000000000000000000020 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -64,6 +69,9 @@
 				B10000000000000000000002 /* iSQL */,
 			);
 			name = iSQL;
+			packageProductDependencies = (
+				B10000000000000000000022 /* Sparkle */,
+			);
 			productName = iSQL;
 			productReference = B10000000000000000000001 /* iSQL.app */;
 			productType = "com.apple.product-type.application";
@@ -93,6 +101,9 @@
 			);
 			mainGroup = B10000000000000000000004;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B10000000000000000000021 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B10000000000000000000005 /* Products */;
 			projectDirPath = "";
@@ -185,7 +196,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iSQL;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				
@@ -215,7 +226,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moimz.iSQL;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				
@@ -246,6 +257,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B10000000000000000000021 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.10.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B10000000000000000000022 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B10000000000000000000021 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = B1000000000000000000000A /* Project object */;
 }

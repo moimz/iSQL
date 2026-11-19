@@ -25,6 +25,8 @@ struct iSQLApp: App {
 		// MCP: 서버 목록을 알려 주고, 켜 두었으면 띄운다
 		AppState.shared.store = s
 		MCPServer.shared.startIfEnabled()
+		// 자동 업데이트: 켜 두었으면 하루 한 번 새 버전을 확인한다
+		_ = Updater.shared
 		return s
 	}()
 
@@ -42,6 +44,9 @@ struct iSQLApp: App {
 		// .isql 파일을 열 때 새 창을 만들지 않는다 (열린 창의 onOpenURL 이 받는다)
 		.handlesExternalEvents(matching: [])
 		.commands {
+			CommandGroup(after: .appInfo) {
+				UpdateMenuButton()
+			}
 			CommandGroup(replacing: .importExport) {
 				Button("서버 설정 가져오기…") { AppState.shared.requestTransfer(.importFile(nil)) }
 				Button("서버 정보 내보내기…") { AppState.shared.requestTransfer(.export) }
@@ -53,5 +58,14 @@ struct iSQLApp: App {
 			AppSettingsView()
 				.environment(store)
 		}
+	}
+}
+
+/// 메뉴 iSQL > 업데이트 확인… (확인 중에는 흐리게)
+private struct UpdateMenuButton: View {
+	private var updater = Updater.shared
+	var body: some View {
+		Button("업데이트 확인…") { updater.checkForUpdates() }
+			.disabled(!updater.canCheck)
 	}
 }

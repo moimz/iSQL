@@ -10,7 +10,7 @@ struct AppSettingsView: View {
 	var body: some View {
 		TabView(selection: $tab) {
 			Tab("일반", systemImage: "gearshape", value: "general") {
-				AppGeneralPage().frame(width: Self.width, height: 390)
+				AppGeneralPage().frame(width: Self.width, height: 450)
 			}
 			Tab("MCP", systemImage: "point.3.connected.trianglepath.dotted", value: "mcp") {
 				MCPSettingsPage().frame(width: Self.width, height: 700)
@@ -37,11 +37,31 @@ private struct AppGeneralPage: View {
 				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)").foregroundStyle(.tertiary)
 			}
 			FileAssociationSection()
-			Section {
-				LabeledContent("버전", value: version)
-			}
+			UpdateSection(version: version)
 		}
 		.formStyle(.grouped)
+	}
+}
+
+/// 앱 설정 > 일반 > 업데이트: 지금 버전, 자동 확인 켜기/끄기, 지금 확인 (Updater · Sparkle)
+private struct UpdateSection: View {
+	let version: String
+	@Bindable private var updater = Updater.shared
+
+	var body: some View {
+		Section {
+			LabeledContent("버전") {
+				HStack(spacing: 8) {
+					Text(version).foregroundStyle(.secondary).monospacedDigit()
+					Button("업데이트 확인…") { updater.checkForUpdates() }.disabled(!updater.canCheck)
+				}
+			}
+			Toggle("자동으로 업데이트 확인", isOn: $updater.automaticallyChecks)
+		} header: {
+			Text("업데이트")
+		} footer: {
+			Text("하루에 한 번 새 버전이 있는지 확인하고, 있으면 설치할지 묻습니다.").foregroundStyle(.tertiary)
+		}
 	}
 }
 
