@@ -72,8 +72,8 @@ struct ConnectForm: View {
 	private var card: some View {
 		TabView(selection: kindTab) {
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.mysql.familyLabel) }.tag("mysql")
-			fields(ssh: false).tabItem { Text(SQLKind.sqlite.label) }.tag("sqlite")
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.oracle.label) }.tag("oracle")
+			fields(ssh: false).tabItem { Text(SQLKind.sqlite.label) }.tag("sqlite")
 		}
 		// TabView 는 세로로 남는 공간을 다 차지한다 → 내용 높이에 맞춘다 (박스가 화면 끝까지 늘어나 입력칸이 가운데 떠 있었다)
 		.fixedSize(horizontal: false, vertical: true)
