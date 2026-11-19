@@ -1,6 +1,6 @@
 # iSQL
 
-맥에서 쓰는 **MySQL / MariaDB / SQLite 클라이언트**입니다.
+맥에서 쓰는 **MySQL / MariaDB / Oracle(베타) / SQLite 클라이언트**입니다.
 서버의 모든 데이터베이스와 테이블을 사이드바 하나에 코멘트와 함께 보여 주고, 탭·쿼리 패널·구조 편집을 한 창에서 다룹니다.
 원격 DB 는 SSH 터널로 접속하고, 비밀번호는 키체인에만 둡니다.
 
@@ -31,6 +31,7 @@
 - 엑셀처럼 지금 칸을 ← → 로 옮기고 엔터로 고치기, 컬럼 고정, 컬럼 순서 바꾸기·복원
 - 복사: 값 · 행 · 컬럼 이름 포함 · INSERT 문 · JSON · IN 목록. 엑셀에 붙이면 칸 안 줄바꿈과 앞자리 0 유지
 - JSON 편집기: JSON 컬럼, 또는 JSON 처럼 보이는 글자 칸(우클릭 "JSON 으로 편집…"). 펼쳐서 색칠, 틀린 줄 · 칸 짚기. 안 고쳤으면 원본 그대로, 고쳤으면 원래 모양(한 줄 · 공백 · 들여쓰기)대로 저장
+- 숫자 컬럼을 날짜로 보기 (유닉스 시간 초 · 밀리초 · 마이크로초, 제목 우클릭). 날짜를 넣으면 숫자로 저장. 보여 줄 시간대는 앱 설정 > 일반 > 시간 표시
 - BLOB: 파일 형식 표시(PNG 이미지 · 24KB), 훑어보기, 파일로 저장 · 파일에서 불러오기. 64KB 넘는 값은 앞부분과 크기만 읽고, 복사 · 훑어보기 · 저장할 때 그 칸만 다시 읽음 (기본 키가 있는 테이블)
 
 **쿼리 패널** (⌘J)
@@ -38,6 +39,7 @@
 - 테이블 · 컬럼 · DB · 키워드 자동완성 (코멘트로도 찾음)
 - 글자 색칠: 키워드 · 글자 · 숫자 · 주석 (쿼리 패널과 루틴 · 뷰 정의 탭)
 - 여러 문장 실행, 결과 탭, `LIMIT` 없는 SELECT 는 자동으로 나눠 받기
+- 실행 중에는 누른 버튼이 취소 버튼(⌘.)으로 바뀌어 서버에서 쿼리를 멈춤. 데이터 탭도 읽는 중에는 새로고침 자리의 빨간 ■ 로 멈춤
 - 한 테이블에서 온 결과는 바로 고쳐 저장, 결과로 뷰 만들기
 - WHERE 없는 UPDATE, DELETE, DROP, TRUNCATE, ALTER 는 실행 전에 확인
 - 실행계획 (⌥⌘↩): EXPLAIN 나무(MySQL 8) + 표, 전체 훑기·filesort·임시 테이블·안 쓴 인덱스는 색칠과 경고
@@ -82,10 +84,32 @@
 
 - macOS 26 이상, Apple silicon(arm64)
 - 빌드: Xcode 26 이상
-- 서버: MySQL 5.7 / 8.x (`mysql_native_password`, `caching_sha2_password` 인증). MariaDB 는 같은 인증 방식이면 접속됩니다
+- 서버: MySQL 5.7 / 8.x (`mysql_native_password`, `caching_sha2_password` 인증). MariaDB 는 같은 인증 방식이면 접속됩니다. Oracle 12.1 이상 (Oracle Client 없이 바로)
 
-외부 패키지는 없습니다. Apple 기본 프레임워크(SwiftUI, AppKit, CryptoKit, Security)만 씁니다.
-MySQL 프로토콜은 직접 구현했고, SSH 터널은 macOS 에 들어 있는 `/usr/bin/ssh` 를 씁니다.
+외부 패키지는 자동 업데이트용 [Sparkle](https://sparkle-project.org) 하나입니다. 나머지는 Apple 기본 프레임워크(SwiftUI, AppKit, CryptoKit, CommonCrypto, Security)만 씁니다.
+MySQL · Oracle 접속 프로토콜은 직접 구현했고(Oracle 은 python-oracledb · oracle-nio 를 참고), SSH 터널은 macOS 에 들어 있는 `/usr/bin/ssh` 를 씁니다.
+
+## DB 별 지원 범위와 아직 안 되는 것
+
+모든 DB 공통으로, 기본 키가 없는 테이블은 데이터 탭에서 고칠 수 없습니다 (쿼리 패널에서 UPDATE 로).
+
+**MySQL · MariaDB**
+- 시험한 서버: MySQL 8.4, MariaDB 11.4
+- TLS 직접 접속은 들어 있지만 실제 클라우드 서버(AWS RDS 등)와 MariaDB 에서는 아직 확인하지 못했습니다. 클라이언트 인증서 접속(REQUIRE X509)은 아직 없습니다
+- MariaDB 의 ed25519 인증 계정은 아직 접속할 수 없습니다
+
+**SQLite**
+- 파일 하나가 DB 하나라 DB 만들기 · 이름 바꾸기 · 복제, 서버 상태 · 계정, 엔진 · 문자셋 기능이 없습니다
+- 컬럼 이름 바꾸기 · 추가 · 삭제만 됩니다 (타입 바꾸기는 SQLite 가 지원하지 않음)
+
+**Oracle (베타)**
+- 비밀번호 인증(12c · 11g 방식), 서비스 이름 · SID, SYSDBA, SSH 터널. "데이터베이스" 자리에는 스키마(사용자)가 보입니다
+- 시험한 서버: Oracle Database 26ai Free 하나뿐입니다. 19c 같은 운영 서버나 KO16MSWIN949 등 다른 문자셋 DB 는 아직 확인하지 못했습니다
+- 아직 없는 것: TLS(TCPS) 접속, Oracle 고유 암호화(NNE)를 강제하는 서버, 스키마 만들기 · 이름 바꾸기 · 복제, 서버 상태 · 계정 관리, 패키지 고치기 (패키지는 명세 · 본문 보기만)
+- 데이터 탭에서 저장할 때 말고는 문장마다 바로 커밋합니다 (MySQL 과 같게)
+- 정렬: CLOB 은 앞 4000자로, BLOB · JSON · LONG 은 정렬하지 않습니다. 내림차순이면 NULL 이 맨 위에 옵니다 (Oracle 기본)
+- 권한이 적은 계정은 남의 스키마 테이블의 CREATE 문이 비어 보일 수 있습니다
+- 문제가 생기면 콘솔(⇧⌘L)의 오류 메시지와 서버 버전을 알려 주세요
 
 ## 빌드
 
@@ -115,7 +139,7 @@ iCloud 를 쓸 수 없으면 서버 목록은 이 맥에만, 비밀번호는 이
 
 ## 상표
 
-MySQL 은 Oracle 및 그 계열사의 상표이고, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
+MySQL · Oracle 은 Oracle 및 그 계열사의 상표이고, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
 
 ## 라이선스
 
