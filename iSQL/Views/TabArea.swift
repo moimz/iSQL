@@ -403,6 +403,7 @@ struct TabBar: View {
 				            ?? Session.databaseOf(tab: id).map { session.overview($0).loading } ?? false,
 				        stale: session.data(tab: id)?.stale ?? false,
 				        unsaved: session.unsavedTables.contains(id),
+				        customized: session.table(id).map { session.columnLayout($0.id) != nil } ?? false,
 				        showSchema: needsSchema(id),
 				        focused: paneFocused,
 				        structure: session.data(tab: id)?.mode == .structure,
@@ -432,10 +433,13 @@ struct TabBar: View {
 		.background(Color(nsColor: .underPageBackgroundColor).opacity(0.5), ignoresSafeAreaEdges: [])
 	}
 
-	/// 컬럼을 끌어 순서를 바꿨거나 숨긴 탭이면 "컬럼 복원" (순서·숨김을 원래 테이블대로)
+	/// 컬럼 순서·숨김·너비·고정을 바꾼 탭이면 "컬럼 설정 초기화" (표가 지금 없으면 기억한 설정만 지운다)
 	static func orderMenu(_ d: TableData?) -> [TabMenuAction] {
-		guard let d, d.columnsMoved else { return [] }
-		return [TabMenuAction(title: "컬럼 복원") { d.restoreColumns?() }]
+		guard let d, d.columnLayout != nil || d.columnsMoved else { return [] }
+		return [TabMenuAction(title: "컬럼 설정 초기화") {
+			if let r = d.restoreColumns { r() }
+			d.columnLayout = nil
+		}]
 	}
 
 	/// 이 탭바에 서로 다른 DB 의 테이블이 섞여 있으면 모든 테이블 탭에 DB 이름을 붙인다
@@ -465,6 +469,7 @@ struct ParkedTabBar: View {
 				            ?? Session.databaseOf(tab: p.tab).flatMap { db in s.map { $0.overview(db).loading } } ?? false,
 				        stale: s?.data(tab: p.tab)?.stale ?? false,
 				        unsaved: s?.unsavedTables.contains(p.tab) ?? false,
+				        customized: t.map { s?.columnLayout($0.id) != nil } ?? false,
 				        showSchema: needsSchema(p, t),
 				        focused: model.splitFocus == .right,
 				        server: s?.server.map { srv in
@@ -712,6 +717,8 @@ struct TabItem: View {
 	/// 쿼리 패널에서 이 테이블을 바꿔서 다시 읽어야 함
 	var stale = false
 	let unsaved: Bool
+	/// 컬럼 순서·숨김·너비·고정을 바꿔 둔 테이블 (아이콘에 강조색 점, 우클릭 "컬럼 설정 초기화")
+	var customized = false
 	let showSchema: Bool
 	/// 이 탭이 있는 칸에 초점이 있는지 (고른 탭 강조색 윗줄은 초점 칸에만: 활성 탭은 양쪽 통틀어 하나)
 	var focused = true
@@ -741,6 +748,16 @@ struct TabItem: View {
 					      : (structure ? "square.stack.3d.up" : (table?.isView == true ? "eye" : "tablecells"))))
 						.font(.system(size: 11))
 						.foregroundStyle(active && focused ? Color.accentColor : .secondary)
+						// 컬럼 설정을 바꿔 둔 표: 아이콘 오른쪽 아래 강조색 점 (노란 점 = 저장 안 된 변경과 헷갈리지 않게 색을 다르게)
+						.overlay(alignment: .bottomTrailing) {
+							if customized {
+								Circle().fill(Color.accentColor)
+									.frame(width: 5, height: 5)
+									.overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+									.offset(x: 2, y: 2)
+									.help("컬럼 순서·숨김·너비·고정을 바꿔 둔 표 (우클릭 → 컬럼 설정 초기화)")
+							}
+						}
 				}
 			}
 			.frame(width: 14, height: 14)

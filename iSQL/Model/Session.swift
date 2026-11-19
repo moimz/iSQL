@@ -86,6 +86,11 @@ final class Session {
 	/// 나만 보는 뷰 (iCloud)
 	private(set) var privateViews: [PrivateView] = []
 	@ObservationIgnored private var privateViewsWatching = false
+	/// 테이블별 표 컬럼 설정 (테이블 id → 순서·숨김·너비·고정). 저장한 서버면 iCloud Data/Layouts (사용자 2026-11-19)
+	private(set) var columnLayouts: [String: TableColumnLayout] = [:]
+	/// 이 맥에서 바꿔 아직 파일에 안 쓴 것 (nil = 지움)
+	@ObservationIgnored private var layoutChanges: [String: TableColumnLayout?] = [:]
+	@ObservationIgnored private var layoutSave: DispatchWorkItem?
 	@ObservationIgnored private var privateOutputs: [String: QueryOutput] = [:]
 	/// 사이드바에서 펼친 루틴 묶음 ("DB|종류")
 	var expandedRoutineGroups: Set<String> = []
@@ -723,6 +728,39 @@ final class Session {
 		columns = snap.columns
 		await loadRoutines()
 		loadPrivateViews()
+		loadColumnLayouts()
+	}
+
+	// MARK: 표 컬럼 설정
+
+	func loadColumnLayouts() {
+		guard let id = server?.id, privateViewsSynced else { return }
+		var all = ColumnLayoutStore.load(id)
+		// 아직 파일에 안 쓴 이 맥 것은 남긴다
+		for (k, l) in layoutChanges { all[k] = l }
+		if all != columnLayouts { columnLayouts = all }
+	}
+
+	func columnLayout(_ tableID: String) -> TableColumnLayout? { columnLayouts[tableID] }
+
+	/// 표가 알려 준 새 설정 (nil = 처음 그대로·지움). 끄는 동안 여러 번 와도 파일은 잠깐 뒤 한 번만 쓴다
+	func setColumnLayout(_ tableID: String, _ l: TableColumnLayout?) {
+		if l == nil ? columnLayouts[tableID] == nil : l!.same(as: columnLayouts[tableID]) { return }
+		columnLayouts[tableID] = l
+		guard let id = server?.id, privateViewsSynced else { return }
+		layoutChanges[tableID] = .some(l)
+		layoutSave?.cancel()
+		let w = DispatchWorkItem { [weak self] in
+			MainActor.assumeIsolated {
+				guard let self else { return }
+				let changes = self.layoutChanges
+				self.layoutChanges = [:]
+				let merged = ColumnLayoutStore.save(id, changes: changes)
+				if merged != self.columnLayouts { self.columnLayouts = merged }
+			}
+		}
+		layoutSave = w
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: w)
 	}
 
 	// MARK: 나만 보는 뷰
@@ -740,7 +778,7 @@ final class Session {
 			privateViewsWatching = true
 			// 다른 맥에서 바뀌면 다시 읽는다
 			NotificationCenter.default.addObserver(forName: CloudWatcher.didChange, object: nil, queue: .main) { [weak self] _ in
-				MainActor.assumeIsolated { self?.loadPrivateViews() }
+				MainActor.assumeIsolated { self?.loadPrivateViews(); self?.loadColumnLayouts() }
 			}
 		}
 	}

@@ -55,7 +55,16 @@ final class TableData: ColumnOrderTracking {
 	/// 표가 걸어 두는 순서 되돌리기
 	@ObservationIgnored var restoreColumns: (() -> Void)?
 	@ObservationIgnored var visibleColumns: [Int]?
-	@ObservationIgnored var columnLayout: GridColumnLayout?
+	/// 표 컬럼 설정 (순서·숨김·너비·고정): 세션이 테이블별로 들고 저장한 서버면 iCloud 에
+	var columnLayout: TableColumnLayout? {
+		get { session.columnLayout(table.id) }
+		set { session.setColumnLayout(table.id, newValue) }
+	}
+	/// 테이블 구조 (컬럼 이름·타입 차례). 구조를 아직 못 읽었으면 nil
+	var layoutStructure: String? {
+		guard let cols = session.columns[table.id], !cols.isEmpty else { return nil }
+		return cols.map { $0.name + " " + $0.type }.joined(separator: ",")
+	}
 
 	/// 구조 편집 (구조 화면을 처음 볼 때 만든다)
 	@ObservationIgnored private var structureStore: StructureEditor?

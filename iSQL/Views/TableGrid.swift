@@ -182,15 +182,10 @@ protocol ColumnOrderTracking: AnyObject {
 	var restoreColumns: (() -> Void)? { get set }
 	/// 보이는 컬럼(공급자 번호)을 보이는 순서로. 처음 그대로면 nil (뷰 만들기가 이 순서·숨김을 따른다)
 	var visibleColumns: [Int]? { get set }
-	/// 옮기거나 숨긴 컬럼 모양. 표가 없어졌다 다시 생겨도(다른 종류 탭에 다녀오면) 되살린다 (사용자 2026-11-19: 나만 보는 뷰를 만들면 풀렸다)
-	var columnLayout: GridColumnLayout? { get set }
-}
-
-/// 표 컬럼 순서·숨김 (식별자 = 공급자 컬럼 번호 글자). signature 가 다르면(컬럼이 바뀌면) 쓰지 않는다
-struct GridColumnLayout: Equatable {
-	var signature: String
-	var order: [String]
-	var hidden: Set<String>
+	/// 컬럼 순서·숨김·너비·고정 (늘 기억, 저장한 서버면 iCloud). 표가 다시 생기면(앱을 다시 열거나 다른 종류 탭에 다녀오면) 되살린다
+	var columnLayout: TableColumnLayout? { get set }
+	/// 지금 테이블 구조 (컬럼 이름·타입). 기억한 것과 다르면 그 설정은 지운다. 아직 모르면 nil (되살리지도 적지도 않음)
+	var layoutStructure: String? { get }
 }
 
 // MARK: - 공용 표
@@ -370,7 +365,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				refresh()
 				scroll.contentView.scroll(to: new.scrollOrigin)
 				scroll.reflectScrolledClipView(scroll.contentView)
-				setFrozen(frozenBySource[new.gridID] ?? 0)
+				setFrozen((new as? ColumnOrderTracking)?.columnLayout?.frozen ?? frozenBySource[new.gridID] ?? 0)
 			} else {
 				refresh()
 			}
@@ -434,6 +429,9 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		/// 컬럼을 바꾸는 동안 행 수를 0 으로 둔다
 		private var rebuilding = false
 
+		/// 컬럼을 만들 때의 너비 (이와 다른 너비만 설정으로 기억)
+		private var defaultWidths: [String: CGFloat] = [:]
+
 		private func rebuildColumns() {
 			// 행이 떠 있는 채로 컬럼을 하나씩 빼고 넣으면 그때마다 보이는 행을 전부 다시 정리해서 느리다 (탭 전환 때 Time Profiler 로 확인)
 			// → 행을 먼저 비우고 컬럼을 바꾼 뒤 한 번만 다시 그린다
@@ -452,29 +450,65 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				tc.sortDescriptorPrototype = source.sortable ? NSSortDescriptor(key: col.key, ascending: true) : nil
 				tc.width = col.width ?? Self.initialWidth(col)
 				tc.minWidth = 40
+				defaultWidths[String(i)] = tc.width
 				table.addTableColumn(tc)
 			}
 			applySortIndicator()
-			applySavedLayout()
+			let savedFrozen = applySavedLayout()
 			table.reloadData()
 			refreshGridLines()
 			noteColumnOrder()
-			if frozenCount > 0 { setFrozen(min(frozenCount, columns.count)) }
+			if let savedFrozen { setFrozen(min(savedFrozen, columns.count)) }
+			else if frozenCount > 0 { setFrozen(min(frozenCount, columns.count)) }
 		}
 
 		/// 되살리는 동안은 바뀐 모양을 다시 적지 않는다
 		private var applyingLayout = false
 
-		/// 공급자가 기억한 순서·숨김을 새로 만든 컬럼에 입힌다
-		private func applySavedLayout() {
-			guard let l = (source as? ColumnOrderTracking)?.columnLayout, l.signature == columnSignature else { return }
+		/// 공급자가 기억한 순서·숨김·너비를 새로 만든 컬럼에 입힌다. 고정 수를 돌려준다 (기억한 게 없으면 nil).
+		/// 테이블 구조가 바뀌었으면 그 설정을 지운다
+		private func applySavedLayout() -> Int? {
+			guard let t = source as? ColumnOrderTracking, let l = t.columnLayout, let structure = t.layoutStructure else { return nil }
+			guard l.structure == structure else { t.columnLayout = nil; return nil }
 			applyingLayout = true
 			defer { applyingLayout = false }
-			for (target, id) in l.order.enumerated() where target < table.numberOfColumns {
+			// 이름 → 식별자 (공급자 컬럼 번호)
+			var idOf: [String: String] = [:]
+			for (i, c) in columns.enumerated() { idOf[c.key] = String(i) }
+			for (target, key) in l.order.enumerated() where target < table.numberOfColumns {
+				guard let id = idOf[key] else { continue }
 				if let cur = table.tableColumns.firstIndex(where: { $0.identifier.rawValue == id }), cur != target { table.moveColumn(cur, toColumn: target) }
 			}
-			for tc in table.tableColumns where l.hidden.contains(tc.identifier.rawValue) { tc.isHidden = true }
-			if !l.hidden.isEmpty { hiddenChanged() }
+			for (key, w) in l.widths { if let id = idOf[key] { table.tableColumns.first { $0.identifier.rawValue == id }?.width = CGFloat(w) } }
+			let hidden = Set(l.hidden.compactMap { idOf[$0] })
+			for tc in table.tableColumns where hidden.contains(tc.identifier.rawValue) { tc.isHidden = true }
+			if !hidden.isEmpty { hiddenChanged() }
+			return l.frozen
+		}
+
+		/// 지금 표 모양을 공급자에 적는다 (처음 그대로면 nil)
+		private func noteLayout() {
+			guard let t = source as? ColumnOrderTracking, !applyingLayout, !rebuilding, let structure = t.layoutStructure else { return }
+			let real = table.tableColumns.filter { $0.identifier != Self.hiddenInfoID }
+			func key(_ tc: NSTableColumn) -> String? { Int(tc.identifier.rawValue).flatMap { columns.indices.contains($0) ? columns[$0].key : nil } }
+			var widths: [String: Double] = [:]
+			for tc in real {
+				if let k = key(tc), let d = defaultWidths[tc.identifier.rawValue], abs(tc.width - d) >= 1 { widths[k] = Double(tc.width) }
+			}
+			let order = real.compactMap(key)
+			let hidden = real.filter(\.isHidden).compactMap(key)
+			let custom = columnsOutOfOrder || !widths.isEmpty || frozenCount > 0
+			let l = custom ? TableColumnLayout(structure: structure, order: order, hidden: hidden, widths: widths, frozen: frozenCount) : nil
+			if l == nil ? t.columnLayout != nil : !l!.same(as: t.columnLayout) { t.columnLayout = l }
+		}
+
+		/// 너비를 끄는 동안 여러 번 오므로 멈춘 뒤에 한 번
+		private var layoutNote: DispatchWorkItem?
+		private func noteLayoutSoon() {
+			layoutNote?.cancel()
+			let w = DispatchWorkItem { [weak self] in self?.noteLayout() }
+			layoutNote = w
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
 		}
 
 		private func refreshHeaders() {
@@ -797,7 +831,12 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		// MARK: 컬럼 순서
 
 		private func bindOrderTracking() {
-			(source as? ColumnOrderTracking)?.restoreColumns = { [weak self] in self?.restoreColumnOrder() }
+			// 표 하나를 여러 탭이 돌려 쓰므로, 그 공급자를 보이고 있을 때만 (다른 탭 메뉴에서 불러도 엉뚱한 표를 건드리지 않게)
+			let mine = ObjectIdentifier(source)
+			(source as? ColumnOrderTracking)?.restoreColumns = { [weak self] in
+				guard let self, ObjectIdentifier(self.source) == mine else { return }
+				self.restoreColumnOrder()
+			}
 		}
 
 		/// 처음 순서와 다른지 (식별자가 공급자 컬럼 번호) 또는 숨긴 컬럼이 있는지
@@ -812,10 +851,7 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 			if t.columnsMoved != moved { t.columnsMoved = moved }
 			let visible = moved ? table.tableColumns.filter { !$0.isHidden }.compactMap { colIndex($0) } : nil
 			if t.visibleColumns != visible { t.visibleColumns = visible }
-			let real = table.tableColumns.filter { $0.identifier != Self.hiddenInfoID }
-			let layout = moved ? GridColumnLayout(signature: columnSignature, order: real.map(\.identifier.rawValue),
-			                                      hidden: Set(real.filter(\.isHidden).map(\.identifier.rawValue))) : nil
-			if t.columnLayout != layout { t.columnLayout = layout }
+			noteLayout()
 		}
 
 		// MARK: 컬럼 숨기기 (끝에 "(N개 컬럼 숨겨짐)" 칸, 오른쪽 클릭으로 하나씩 다시 보이기)
@@ -870,21 +906,25 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		/// 컬럼을 처음 순서로 + 숨긴 컬럼 다시 보이기 (고정은 잠깐 풀었다가 같은 수로 다시)
+		/// 컬럼 설정 초기화: 처음 순서 + 숨긴 컬럼 다시 보이기 + 처음 너비 + 고정 해제 (사용자 2026-11-19, 예전엔 순서·숨김만)
 		func restoreColumnOrder() {
+			applyingLayout = true
 			if !hiddenCols.isEmpty { showAllColumns() }
-			let f = frozenCount
-			if f > 0 { setFrozen(0) }
+			if frozenCount > 0 { setFrozen(0) }
 			for i in 0..<table.numberOfColumns {
 				if let cur = table.tableColumns.firstIndex(where: { $0.identifier.rawValue == String(i) }), cur != i {
 					table.moveColumn(cur, toColumn: i)
 				}
 			}
-			if f > 0 { setFrozen(f) }
+			for tc in table.tableColumns { if let d = defaultWidths[tc.identifier.rawValue] { tc.width = d } }
+			applyingLayout = false
+			layoutNote?.cancel()
 			noteColumnOrder()
 		}
 
 		@objc private func mainColumnsChanged(_ n: Notification) {
 			if n.name == NSTableView.columnDidMoveNotification { noteColumnOrder() }
+			if n.name == NSTableView.columnDidResizeNotification, !rebuilding, !applyingLayout { noteLayoutSoon() }
 			// 너비·순서가 바뀌면 표 전체를 다시 그린다: 바뀐 곳만 다시 그려서 예전 자리 세로선이 남았다
 			if n.name != NSView.frameDidChangeNotification { refreshGridLines() }
 			guard frozenCount > 0 else { return }
@@ -1353,8 +1393,8 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				// 컬럼 고정: 본 표 보이는 순서로 이 컬럼까지
 				let display = self.table.tableColumns.firstIndex { colIndex($0) == col } ?? 0
 				var freezeItems: [GridMenuItem] = [.separator]
-				if frozenCount != display + 1 { freezeItems.append(.action("‘\(columns[col].title)’ 까지 고정") { self.setFrozen(display + 1) }) }
-				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 해제") { self.setFrozen(0) }) }
+				if frozenCount != display + 1 { freezeItems.append(.action("‘\(columns[col].title)’ 까지 고정") { self.setFrozen(display + 1); self.noteLayout() }) }
+				if frozenCount > 0 { freezeItems.append(.action("컬럼 고정 해제") { self.setFrozen(0); self.noteLayout() }) }
 				let name = columns[col].key
 				let copyItems: [GridMenuItem] = [.action("컬럼 이름 복사") {
 					NSPasteboard.general.clearContents()
