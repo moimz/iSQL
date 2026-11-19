@@ -99,10 +99,10 @@ struct PagerBar: View {
 						Image(systemName: "stop.fill").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
 							.frame(width: 30, height: 28).contentShape(Rectangle())
 					}
-					// 유리 효과는 안의 아이콘 색을 지운다(흰 ■) → 유리 대신 빨간 알약을 칠한다
+					// 유리 효과는 안의 아이콘 색을 지운다(흰 ■) → 유리 알약 자체를 빨갛게 물들인다
 					.buttonStyle(.plain)
 					.padding(.horizontal, 4)
-					.background(Capsule().fill(Color.red))
+					.glassEffect(.regular.tint(.red).interactive(), in: Capsule())
 					.help("읽기 멈추기")
 				} else {
 					Button(action: reload) {
