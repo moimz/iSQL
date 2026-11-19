@@ -182,6 +182,15 @@ protocol ColumnOrderTracking: AnyObject {
 	var restoreColumns: (() -> Void)? { get set }
 	/// 보이는 컬럼(공급자 번호)을 보이는 순서로. 처음 그대로면 nil (뷰 만들기가 이 순서·숨김을 따른다)
 	var visibleColumns: [Int]? { get set }
+	/// 옮기거나 숨긴 컬럼 모양. 표가 없어졌다 다시 생겨도(다른 종류 탭에 다녀오면) 되살린다 (사용자 2026-11-19: 나만 보는 뷰를 만들면 풀렸다)
+	var columnLayout: GridColumnLayout? { get set }
+}
+
+/// 표 컬럼 순서·숨김 (식별자 = 공급자 컬럼 번호 글자). signature 가 다르면(컬럼이 바뀌면) 쓰지 않는다
+struct GridColumnLayout: Equatable {
+	var signature: String
+	var order: [String]
+	var hidden: Set<String>
 }
 
 // MARK: - 공용 표
@@ -446,10 +455,26 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 				table.addTableColumn(tc)
 			}
 			applySortIndicator()
+			applySavedLayout()
 			table.reloadData()
 			refreshGridLines()
 			noteColumnOrder()
 			if frozenCount > 0 { setFrozen(min(frozenCount, columns.count)) }
+		}
+
+		/// 되살리는 동안은 바뀐 모양을 다시 적지 않는다
+		private var applyingLayout = false
+
+		/// 공급자가 기억한 순서·숨김을 새로 만든 컬럼에 입힌다
+		private func applySavedLayout() {
+			guard let l = (source as? ColumnOrderTracking)?.columnLayout, l.signature == columnSignature else { return }
+			applyingLayout = true
+			defer { applyingLayout = false }
+			for (target, id) in l.order.enumerated() where target < table.numberOfColumns {
+				if let cur = table.tableColumns.firstIndex(where: { $0.identifier.rawValue == id }), cur != target { table.moveColumn(cur, toColumn: target) }
+			}
+			for tc in table.tableColumns where l.hidden.contains(tc.identifier.rawValue) { tc.isHidden = true }
+			if !l.hidden.isEmpty { hiddenChanged() }
 		}
 
 		private func refreshHeaders() {
@@ -782,11 +807,15 @@ final class GridController: NSObject, NSTableViewDelegate, NSTableViewDataSource
 		}
 
 		private func noteColumnOrder() {
-			guard let t = source as? ColumnOrderTracking else { return }
+			guard let t = source as? ColumnOrderTracking, !applyingLayout else { return }
 			let moved = columnsOutOfOrder
 			if t.columnsMoved != moved { t.columnsMoved = moved }
 			let visible = moved ? table.tableColumns.filter { !$0.isHidden }.compactMap { colIndex($0) } : nil
 			if t.visibleColumns != visible { t.visibleColumns = visible }
+			let real = table.tableColumns.filter { $0.identifier != Self.hiddenInfoID }
+			let layout = moved ? GridColumnLayout(signature: columnSignature, order: real.map(\.identifier.rawValue),
+			                                      hidden: Set(real.filter(\.isHidden).map(\.identifier.rawValue))) : nil
+			if t.columnLayout != layout { t.columnLayout = layout }
 		}
 
 		// MARK: 컬럼 숨기기 (끝에 "(N개 컬럼 숨겨짐)" 칸, 오른쪽 클릭으로 하나씩 다시 보이기)

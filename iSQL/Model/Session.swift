@@ -74,6 +74,8 @@ final class Session {
 	private(set) var server: Server?
 	private(set) var state: State = .idle
 	private(set) var serverVersion = ""
+	/// TLS 로 붙었으면 그 버전 ("TLS 1.2") — 제목바 자물쇠
+	private(set) var tlsSummary: String?
 	/// 서버 버전 숫자 (버전마다 다른 함수·기능을 가를 때)
 	var version: ServerVersion? { ServerVersion(serverVersion) }
 	/// 시스템 DB 를 뺀 DB 이름 (테이블이 없는 DB 도 있다)
@@ -198,6 +200,7 @@ final class Session {
 			sideEndpoint = t.map { ("127.0.0.1", Int($0.localPort)) } ?? (server.host, server.port)
 			sidePassword = mysqlPassword
 			serverVersion = c.serverVersion
+			tlsSummary = c.tlsSummary
 			// MySQL·MariaDB 는 접속해 봐야 안다: 서버가 알려 준 버전으로 종류를 맞추고, 저장한 서버면 파일에도 (사용자 2026-11-18)
 			if let k = server.sqlKind?.detected(fromVersion: c.serverVersion), k != server.sqlKind {
 				var s = server
@@ -228,6 +231,7 @@ final class Session {
 	func disconnect() {
 		conn?.close()
 		conn = nil
+		tlsSummary = nil
 		tunnel?.close()
 		tunnel = nil
 		sideEndpoint = nil

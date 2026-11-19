@@ -147,6 +147,11 @@ struct ServerSwitcher: View {
 					if let v = model.current?.serverVersion, !v.isEmpty {
 						Text(v).font(.caption).foregroundStyle(.secondary)
 					}
+					// TLS 로 붙었으면 자물쇠 (사용자 2026-11-19)
+					if let t = model.current?.tlsSummary {
+						Image(systemName: "lock.fill").font(.system(size: 10)).foregroundStyle(.secondary)
+							.help("\(t) 로 암호화된 연결")
+					}
 				} else {
 					Text("서버 선택").font(.system(size: 15, weight: .semibold))
 				}

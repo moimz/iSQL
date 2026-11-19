@@ -468,7 +468,7 @@ struct ConnectForm: View {
 				if let detected, detected != server.sqlKind { server.kind = detected.rawValue }
 				let info = try await (detected ?? .mysql).meta.connectionInfo { try await conn.query($0) }
 				guard run == testRun else { conn.close(); tunnel?.close(); return }
-				testSteps[testSteps.count - 1] = .init(ok: true, text: "\(detected?.label ?? s.kindLabel) 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개")
+				testSteps[testSteps.count - 1] = .init(ok: true, text: "\(detected?.label ?? s.kindLabel) 로그인 성공: \(info.user ?? s.user), 서버 \(info.version ?? conn.serverVersion), DB \(info.databases ?? "?")개" + (conn.tlsSummary.map { ", \($0)" } ?? ""))
 				conn.close()
 				tunnel?.close()
 			} catch {

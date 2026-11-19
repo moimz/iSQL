@@ -55,6 +55,7 @@ final class TableData: ColumnOrderTracking {
 	/// 표가 걸어 두는 순서 되돌리기
 	@ObservationIgnored var restoreColumns: (() -> Void)?
 	@ObservationIgnored var visibleColumns: [Int]?
+	@ObservationIgnored var columnLayout: GridColumnLayout?
 
 	/// 구조 편집 (구조 화면을 처음 볼 때 만든다)
 	@ObservationIgnored private var structureStore: StructureEditor?

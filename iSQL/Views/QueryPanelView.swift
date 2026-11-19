@@ -55,7 +55,8 @@ struct QueryPanelView: View {
 				.contentShape(Rectangle())
 				.offset(y: 4)
 				.onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
-				.gesture(DragGesture(minimumDistance: 1)
+				// 손잡이가 함께 움직이므로 창 좌표로 잰다 (콘솔·분할 경계와 같은 이유)
+				.gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
 					.onChanged { v in
 						if dragStart == nil { dragStart = panel.height }
 						panel.height = min(600, max(80, (dragStart ?? panel.height) + v.translation.height))

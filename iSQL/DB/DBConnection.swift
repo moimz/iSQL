@@ -5,6 +5,8 @@ protocol DBConnection: AnyObject, Sendable {
 	/// 서버가 알려 준 버전 글자
 	var serverVersion: String { get }
 	var isOpen: Bool { get }
+	/// TLS 로 붙었으면 그 버전 ("TLS 1.2"), 아니면 nil
+	var tlsSummary: String? { get }
 	/// 쿼리를 보낸 뒤 알린다 (콘솔): SQL, 걸린 시간(초), 오류
 	var onQuery: (@Sendable (String, Double, String?) -> Void)? { get set }
 
@@ -15,6 +17,10 @@ protocol DBConnection: AnyObject, Sendable {
 	/// 결과 하나만 필요할 때 (마지막 결과)
 	func rows(_ sql: String) async throws -> QueryResult
 	func close()
+}
+
+extension DBConnection {
+	var tlsSummary: String? { nil }
 }
 
 /// 접속에 필요한 것 (비밀번호는 메모리에만)

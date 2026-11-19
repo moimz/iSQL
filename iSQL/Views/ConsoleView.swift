@@ -24,7 +24,8 @@ struct ConsolePanel: View {
 				.padding(.vertical, 2)
 				.contentShape(Rectangle())
 				.onHover { $0 ? NSCursor.resizeUpDown.push() : NSCursor.pop() }
-				.gesture(DragGesture(minimumDistance: 1).onChanged { v in
+				// 손잡이가 끄는 동안 함께 움직이므로 제 좌표로 재면 이동량이 되먹여 떨린다 → 창 좌표로 잰다 (분할 경계와 같은 문제, 사용자 2026-11-19)
+				.gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { v in
 					if dragStart == nil { dragStart = height }
 					height = min(max((dragStart ?? height) - v.translation.height, 100), 600)
 				}.onEnded { _ in dragStart = nil })
