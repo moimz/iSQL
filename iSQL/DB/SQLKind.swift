@@ -8,12 +8,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 
 	/// 이 빌드가 접속할 수 있는 종류. 다른 종류의 서버 파일은 목록에서 숨기고 건드리지 않는다 (ServerStore).
 	/// 하나씩 만들 때마다 여기에 넣는다
-	/// Oracle 은 만드는 중이라 디버그(개발) 빌드에서만 (사용자 2026-11-20: main 에서 이어 만들고 배포판에는 숨김)
-	#if DEBUG
+	/// Oracle 은 2026-11-20 부터 모든 빌드에서 (그 전에는 디버그 빌드에서만)
 	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite, .oracle]
-	#else
-	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite]
-	#endif
 
 	var label: String {
 		switch self {
