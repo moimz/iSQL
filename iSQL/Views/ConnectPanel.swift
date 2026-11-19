@@ -65,7 +65,6 @@ struct ConnectForm: View {
 		}
 		// 새 접속 내용은 다른 화면에 다녀와도 남게
 		.onChange(of: server) { _, s in if !saved { model.draft = s } }
-
 	}
 
 	/// 상자: 위 가장자리에 걸친 DB 종류 탭 + 라벨 오른쪽 정렬 입력칸. 접속 방식(TCP/IP · SSH)은 그룹 아래 구분선 가운데 (사용자 2026-11-18)
@@ -386,11 +385,42 @@ struct ConnectForm: View {
 		model.open(server, mysqlPassword: mysqlPassword, sshSecret: server.ssh.enabled ? sshSecret : nil, given: true)
 	}
 
+	/// 저장. 목록의 서버인데 이름을 바꿨으면 먼저 묻는다 (사용자 2026-11-19):
+	/// [예] = 바꾼 내용으로 새 서버 등록(원래 서버는 그대로), [아니오] = 그 서버 이름 바꾸기, [취소] = 저장 안 함
 	private func save() {
+		guard saved, let original = store.servers.first(where: { $0.id == server.id }),
+		      original.name.trimmingCharacters(in: .whitespaces) != server.name.trimmingCharacters(in: .whitespaces) else {
+			persist(server)
+			return
+		}
+		let alert = NSAlert()
+		alert.messageText = "이름이 변경되었습니다.\n새로운 서버로 등록하시겠습니까?"
+		alert.informativeText = "[아니오] 를 누르면 ‘\(original.displayName)’ 의 이름을 바꿉니다."
+		alert.addButton(withTitle: "예")
+		alert.addButton(withTitle: "아니오")
+		alert.addButton(withTitle: "취소").keyEquivalent = "\u{1b}"
+		let finish: (NSApplication.ModalResponse) -> Void = { r in
+			switch r {
+			case .alertFirstButtonReturn:
+				var copy = server
+				copy.id = UUID()
+				copy.order = nil
+				persist(copy, asNew: true)
+			case .alertSecondButtonReturn:
+				persist(server)
+			default:
+				break
+			}
+		}
+		if let w = NSApp.keyWindow { alert.beginSheetModal(for: w, completionHandler: finish) } else { finish(alert.runModal()) }
+	}
+
+	/// 서버 파일·키체인에 저장. asNew: 목록 서버를 고치다 새 서버로 등록 → 새 서버를 고른다 (원래 서버는 그대로)
+	private func persist(_ server: Server, asNew: Bool = false) {
 		Keychain.set(mysqlPassword, for: server.mysqlPasswordKey)
 		Keychain.set(server.ssh.enabled ? sshSecret : nil, for: server.sshSecretKey)
 		store.save(server)
-		if !saved {
+		if !saved || asNew {
 			// 저장하면 목록에서 고른 상태가 되고, 새 접속 칸은 비운다
 			model.draft = Server()
 			model.selectedServerID = server.id
