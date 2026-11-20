@@ -774,7 +774,18 @@ final class TDSTLS {
 		return p == .tlsProtocol12 ? "TLS 1.2" : "TLS"
 	}
 
+	/// SSLContext 는 두 스레드가 같이 쓰면 안 된다 (취소 ATTENTION 은 다른 스레드에서 SSLWrite — 읽는 중에 겹치면 힙이 깨져 앱이 죽는다).
+	/// 읽기·쓰기·닫기를 이 자물쇠로 하나씩. 읽기는 받을 것이 생길 때까지 자물쇠 없이 기다린다 (그동안 취소를 보낼 수 있게)
+	private let sslLock = NSLock()
+
 	func read(_ buf: UnsafeMutableRawPointer, _ len: Int) throws -> Int {
+		var buffered = 0
+		sslLock.lock(); SSLGetBufferedReadSize(ctx, &buffered); sslLock.unlock()
+		if buffered == 0 {
+			var p = pollfd(fd: io.fd, events: Int16(POLLIN), revents: 0)
+			while Darwin.poll(&p, 1, -1) < 0 && errno == EINTR {}
+		}
+		sslLock.lock(); defer { sslLock.unlock() }
 		var got = 0
 		let st = SSLRead(ctx, buf, len, &got)
 		if got > 0 { return got }
@@ -784,13 +795,14 @@ final class TDSTLS {
 	}
 
 	func write(_ buf: UnsafeRawPointer, _ len: Int) throws -> Int {
+		sslLock.lock(); defer { sslLock.unlock() }
 		var done = 0
 		let st = SSLWrite(ctx, buf, len, &done)
 		if st != noErr && done == 0 { throw TDSError.protocolError(MySQLTLS.describe(st)) }
 		return done
 	}
 
-	func close() { SSLClose(ctx) }
+	func close() { sslLock.lock(); SSLClose(ctx); sslLock.unlock() }
 }
 
 private func tdsTLSRead(_ conn: SSLConnectionRef, _ data: UnsafeMutableRawPointer, _ len: UnsafeMutablePointer<Int>) -> OSStatus {
