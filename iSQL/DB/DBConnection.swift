@@ -67,7 +67,10 @@ enum DB {
 			guard !o.service.isEmpty else { throw DBError.message("서비스 이름(또는 SID)을 넣으세요.") }
 			return try await OracleConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password,
 			                                                service: o.service, sid: o.sid, sysdba: o.sysdba, schema: o.database))
-		case .mysql, .mariadb, .postgres, .sqlserver:
+		case .sqlserver:
+			return try await SQLServerConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database,
+			                                                   tls: o.tls, tlsHost: o.tlsHost, tlsCA: o.tlsCA))
+		case .mysql, .mariadb, .postgres:
 			return try await MySQLConnection.connect(.init(host: o.host, port: o.port, user: o.user, password: o.password, database: o.database,
 			                                               tls: o.tls, tlsHost: o.tlsHost, tlsCA: o.tlsCA))
 		}

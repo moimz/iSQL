@@ -23,7 +23,7 @@ struct AboutView: View {
 
 			VStack(alignment: .leading, spacing: 12) {
 					section("상표") {
-						Text("MySQL · Oracle 은 Oracle, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표이며, 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 씁니다. iSQL 은 이 회사들과 관계가 없습니다.")
+						Text("MySQL · Oracle 은 Oracle, MariaDB 는 MariaDB Corporation Ab, SQL Server 는 Microsoft, SQLite 는 Hipp, Wyrick & Company 의 상표이며, 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 씁니다. iSQL 은 이 회사들과 관계가 없습니다.")
 					}
 					section("오픈소스") {
 						item("Simple Icons (CC0)", "로고 그림")

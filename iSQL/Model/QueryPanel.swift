@@ -811,6 +811,16 @@ enum SQLSplitter {
 				i += 1; continue
 			}
 			if syntax.opensQuote(c) { quote = c; i += 1; continue }   // ' " `
+			// T-SQL [이름]: ] 까지 건너뛴다 (]] 는 ] 글자)
+			if syntax.tsqlBatches && c == 91 {
+				i += 1
+				while i < u.count { if u[i] == 93 { if i + 1 < u.count && u[i + 1] == 93 { i += 2; continue }; break }; i += 1 }
+				i += 1; continue
+			}
+			// T-SQL GO 줄: 배치 끝
+			if syntax.tsqlBatches && (c == 71 || c == 103), let end = TSQLScript.goLineEnd(u, at: i) {
+				cut(i); start = end; i = end; continue
+			}
 			switch c {
 			case 35 where syntax.hashComments:                 // # 줄 주석
 				while i < u.count && u[i] != 10 { i += 1 }
@@ -826,6 +836,8 @@ enum SQLSplitter {
 			case 59:                                           // ;
 				// PL/SQL 블록 안의 ; 는 문장 끝이 아니다 (블록은 / 줄이나 글 끝에서 끝난다)
 				if syntax.plsqlBlocks, SQLSyntax.startsPLSQLBlock((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
+				// T-SQL 프로시저 정의·DECLARE 글 안의 ; 도 (GO 줄이나 글 끝에서 끝난다)
+				if syntax.tsqlBatches, TSQLScript.startsBlock((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
 				cut(i)
 				start = i + 1
 			case 47 where syntax.plsqlBlocks:                  // 줄에 / 하나만: 문장 끝
@@ -904,6 +916,8 @@ enum SQLSplitter {
 		for w in ["\\bLIMIT\\b", "\\bFETCH\\s+(FIRST|NEXT)\\b", "\\bOFFSET\\s+\\S+\\s+ROWS?\\b", "\\bINTO\\b", "\\bFOR\\s+UPDATE\\b", "\\bLOCK\\s+IN\\s+SHARE\\s+MODE\\b", "\\bFOR\\s+SHARE\\b"] {
 			if bare.range(of: w, options: .regularExpression) != nil { return false }
 		}
+		// T-SQL: SELECT TOP … 은 OFFSET … FETCH 와 같이 못 쓴다
+		if syntax.tsqlBatches, bare.range(of: #"^\(?SELECT\s+(ALL\s+|DISTINCT\s+)?TOP\b"#, options: .regularExpression) != nil { return false }
 		return true
 	}
 

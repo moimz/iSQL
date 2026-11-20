@@ -46,7 +46,8 @@ struct TableInfo: Identifiable, Hashable {
 	var rows: Int64?
 	/// 저장 엔진. InnoDB 의 TABLE_ROWS 는 어림값, MyISAM 은 정확하다
 	var engine = ""
-	var rowsExact: Bool { engine.uppercased() == "MYISAM" || engine.uppercased() == "ARIA" }
+	/// SQL Server 의 행 수는 파티션 메타데이터라 정확하다 (SQLServerMeta 가 engine 을 SQLSERVER 로)
+	var rowsExact: Bool { ["MYISAM", "ARIA", "SQLSERVER"].contains(engine.uppercased()) }
 	var id: String { schema + "." + name }
 }
 

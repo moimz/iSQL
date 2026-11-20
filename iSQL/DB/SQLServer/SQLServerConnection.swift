@@ -184,7 +184,16 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 
 	// MARK: - 쿼리
 
+	/// GO 줄이 있으면 배치마다 따로 보내고 결과를 이어 붙인다 (SET SHOWPLAN_TEXT 처럼 배치에 혼자 있어야 하는 문장)
 	private func querySync(_ sql: String) throws -> [QueryResult] {
+		let batches = TSQLScript.batches(sql)
+		guard batches.count > 1 else { return try batchSync(sql) }
+		var out: [QueryResult] = []
+		for b in batches { out += try batchSync(b) }
+		return out
+	}
+
+	private func batchSync(_ sql: String) throws -> [QueryResult] {
 		let start = Date()
 		do {
 			// ALL_HEADERS: 트랜잭션 머리 (길이 4 + [길이 4, 종류 2, 트랜잭션 8, 대기 요청 수 4])

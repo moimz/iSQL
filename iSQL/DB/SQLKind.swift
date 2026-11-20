@@ -8,8 +8,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 
 	/// 이 빌드가 접속할 수 있는 종류. 다른 종류의 서버 파일은 목록에서 숨기고 건드리지 않는다 (ServerStore).
 	/// 하나씩 만들 때마다 여기에 넣는다
-	/// Oracle 은 2026-11-20 부터 모든 빌드에서 (그 전에는 디버그 빌드에서만)
-	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlite, .oracle]
+	/// Oracle 은 2026-11-20 부터 모든 빌드에서 (그 전에는 디버그 빌드에서만), SQL Server 는 2026-11-20 부터
+	static let supported: Set<SQLKind> = [.mysql, .mariadb, .sqlserver, .sqlite, .oracle]
 
 	var label: String {
 		switch self {
@@ -29,7 +29,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		case .mariadb: "DBLogoMariaDB"
 		case .sqlite: "DBLogoSQLite"
 		case .oracle: "DBLogoOracle"
-		case .postgres, .sqlserver: nil
+		case .sqlserver: "DBLogoSQLServer"
+		case .postgres: nil
 		}
 	}
 
@@ -87,6 +88,18 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.fulltextIndex = false; c.spatialIndex = false
 			c.foreignKeyChecksToggle = false; c.jsonPathFilter = false
 		}
+		if self == .sqlserver {
+			// 데이터베이스 > 스키마 > 테이블 (사이드바는 DB 아래 "스키마.테이블", dbo 는 이름만). 서버 관리·계정·엔진·문자셋은 아직 없다
+			c.routineKinds = [.procedure, .function, .trigger]
+			c.routineDefiner = false
+			c.serverStatus = false; c.processKill = false; c.queryDigests = false; c.serverVariables = false
+			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false
+			c.createTableLike = false
+			c.engines = false; c.charsets = false; c.tableComment = false; c.columnComment = false
+			c.autoIncrementEdit = false; c.rowFormat = false; c.unsignedColumns = false; c.onUpdateTimestamp = false
+			c.fulltextIndex = false; c.spatialIndex = false
+			c.foreignKeyChecksToggle = false; c.jsonPathFilter = false
+		}
 		#if DEBUG
 		c = c.applyingDebugOverrides()
 		#endif
@@ -99,7 +112,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		case .mariadb: MySQLMeta(mariadb: true)
 		case .sqlite: SQLiteMeta()
 		case .oracle: OracleMeta()
-		case .mysql, .postgres, .sqlserver: MySQLMeta()
+		case .sqlserver: SQLServerMeta()
+		case .mysql, .postgres: MySQLMeta()
 		}
 	}
 
@@ -109,7 +123,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 		case .mariadb: MySQLDialect(mariadb: true)
 		case .sqlite: SQLiteDialect()
 		case .oracle: OracleDialect()
-		case .mysql, .postgres, .sqlserver: MySQLDialect()
+		case .sqlserver: SQLServerDialect()
+		case .mysql, .postgres: MySQLDialect()
 		}
 	}
 }

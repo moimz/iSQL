@@ -22,11 +22,20 @@ struct NewColumn: Identifiable, Hashable {
 	var comment = ""
 
 	static let numericTypes: Set<String> = ["TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "DECIMAL", "FLOAT", "DOUBLE", "INTEGER", "REAL", "NUMERIC",  // 뒤 셋은 SQLite
-	                                        "NUMBER", "BINARY_FLOAT", "BINARY_DOUBLE"]  // Oracle
+	                                        "NUMBER", "BINARY_FLOAT", "BINARY_DOUBLE",  // Oracle
+	                                        "MONEY", "SMALLMONEY", "BIT"]  // SQL Server
 	/// 이 DB 종류의 종류 고르기 목록 (nil = 구분선)
-	static func typeOptions(_ kind: SQLKind) -> [String?] { kind == .oracle ? oracleTypeOptions : typeOptions }
+	static func typeOptions(_ kind: SQLKind) -> [String?] { kind == .oracle ? oracleTypeOptions : kind == .sqlserver ? sqlServerTypeOptions : typeOptions }
 	/// 새 컬럼의 기본 종류 · 자동 증가 기본 키(id)의 종류
-	static func defaultType(_ kind: SQLKind) -> String { kind == .oracle ? "VARCHAR2" : "VARCHAR" }
+	static func defaultType(_ kind: SQLKind) -> String { kind == .oracle ? "VARCHAR2" : kind == .sqlserver ? "NVARCHAR" : "VARCHAR" }
+	/// SQL Server 종류 고르기 목록
+	static let sqlServerTypeOptions: [String?] = [
+		"INT", "BIGINT", "SMALLINT", "TINYINT", "BIT", "DECIMAL", "NUMERIC", "MONEY", "FLOAT", "REAL", nil,
+		"NVARCHAR", "VARCHAR", "NCHAR", "CHAR", nil,
+		"DATETIME2", "DATE", "TIME", "DATETIMEOFFSET", "DATETIME", nil,
+		"UNIQUEIDENTIFIER", "XML", nil,
+		"VARBINARY", "BINARY",
+	]
 	static func idType(_ kind: SQLKind) -> String { kind == .oracle ? "NUMBER" : "INT" }
 	/// Oracle 종류 고르기 목록
 	static let oracleTypeOptions: [String?] = [
@@ -47,21 +56,22 @@ struct NewColumn: Identifiable, Hashable {
 	/// 종류를 고르면 채우는 길이 (없으면 비움)
 	static func defaultLength(_ type: String) -> String {
 		switch type {
-		case "VARCHAR", "VARBINARY", "VARCHAR2": "255"
+		case "VARCHAR", "VARBINARY", "VARCHAR2", "NVARCHAR": "255"
 		case "NVARCHAR2": "100"
 		case "RAW": "16"
 		case "CHAR", "BINARY", "NCHAR": "1"
-		case "DECIMAL": "10,2"
+		case "DECIMAL", "NUMERIC": "10,2"
 		default: ""
 		}
 	}
 	/// 길이·값이 꼭 있어야 하는 종류
-	static let needsLength: Set<String> = ["VARCHAR", "VARBINARY", "ENUM", "SET", "VARCHAR2", "NVARCHAR2", "RAW"]
+	static let needsLength: Set<String> = ["VARCHAR", "VARBINARY", "ENUM", "SET", "VARCHAR2", "NVARCHAR2", "RAW", "NVARCHAR"]
 	/// 길이·값을 받는 종류 (나머지는 칸을 끈다)
 	static let takesLength: Set<String> = ["VARCHAR", "CHAR", "VARBINARY", "BINARY", "DECIMAL", "FLOAT", "DOUBLE",
 	                                       "TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT", "ENUM", "SET",
 	                                       "DATETIME", "TIMESTAMP", "TIME",
-	                                       "VARCHAR2", "NVARCHAR2", "NCHAR", "NUMBER", "RAW"]  // Oracle
+	                                       "VARCHAR2", "NVARCHAR2", "NCHAR", "NUMBER", "RAW",  // Oracle
+	                                       "NVARCHAR", "NUMERIC", "DATETIME2", "DATETIMEOFFSET"]  // SQL Server
 
 	var isNumeric: Bool { Self.numericTypes.contains(type) }
 

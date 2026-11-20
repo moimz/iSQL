@@ -22,6 +22,8 @@ struct SQLSyntax: Sendable {
 	var reservedWords: Set<String>
 	/// Oracle: BEGIN … END; 같은 PL/SQL 블록 안의 ; 로는 나누지 않고, 줄에 / 하나만 있으면 문장 끝 (SQL*Plus 방식)
 	var plsqlBlocks = false
+	/// SQL Server (T-SQL): GO 줄이 배치 끝, 프로시저·함수·트리거·뷰 정의와 DECLARE 글은 ; 로 나누지 않음, [이름] 안은 건너뜀
+	var tsqlBatches = false
 
 	/// PL/SQL 블록으로 시작하는 문장인지 (BEGIN · DECLARE · CREATE [OR REPLACE] PROCEDURE/FUNCTION/PACKAGE/TRIGGER/TYPE …)
 	static func startsPLSQLBlock(_ s: String) -> Bool { OracleScript.startsBlock(s) }

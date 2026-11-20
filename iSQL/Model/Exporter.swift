@@ -126,7 +126,7 @@ struct ExcelSheetSpec {
 		let info = session.columns[schema + "." + t.name] ?? []
 		let pk = info.filter { $0.key == "PRI" }.map { dialect.quote($0.name) }
 		let order = pk.isEmpty ? "" : " ORDER BY " + pk.joined(separator: ", ")
-		let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
+		let q = dialect.quote(schema: schema, table: t.name)
 		return ExcelSheetSpec(name: t.name, comments: Dictionary(info.map { ($0.name, $0.comment) }, uniquingKeysWith: { a, _ in a }),
 		                      total: t.rows.map { Int($0) }) { offset, limit in
 			let r = try await session.query(dialect.paged("SELECT * FROM \(q)\(order)", limit: limit, offset: offset)).last ?? QueryResult()
@@ -341,10 +341,10 @@ final class ExportJob {
 			""")
 		do {
 			for t in tables where !cancelled {
-				let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
+				let q = dialect.quote(schema: schema, table: t.name)
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
 				if o.includeStructure {
-					if o.includeDrop { write(dialect.dropIfExists(dialect.quote(t.name), view: t.isView) + ";\n") }
+					if o.includeDrop { write(dialect.dropIfExists(dialect.quoteLocal(t.name), view: t.isView) + ";\n") }
 					if let create = try await session.meta.dumpCreate(session.query, schema: schema, name: t.name) { write(create + ";\n\n") }
 				}
 				guard o.includeData, !t.isView else { continue }
@@ -364,7 +364,7 @@ final class ExportJob {
 							if e.offset < numeric.count, numeric[e.offset], case .text(let v) = e.element, Double(v) != nil { return v }
 							return dialect.literal(e.element)
 						}.joined(separator: ", ") + ")" }
-						write(dialect.insertRows(dialect.quote(t.name), columns: names, rows: values) + ";\n")
+						write(dialect.insertRows(dialect.quoteLocal(t.name), columns: names, rows: values) + ";\n")
 						i += 100
 					}
 					written += res.rows.count
@@ -607,7 +607,7 @@ extension ExportJob {
 			w("{\n")
 			for (ti, t) in list.enumerated() where !cancelledFlag {
 				let name = o.prefix.isEmpty || !t.name.hasPrefix(o.prefix) ? t.name : String(t.name.dropFirst(o.prefix.count))
-				let q = "\(dialect.quote(schema)).\(dialect.quote(t.name))"
+				let q = dialect.quote(schema: schema, table: t.name)
 				let cols = try await session.query("SHOW FULL COLUMNS FROM \(q)").last ?? QueryResult()
 				let idx = try await session.query("SHOW INDEX FROM \(q)").last ?? QueryResult()
 				w("    \(Self.json(name)): {\n        \"columns\": {\n")

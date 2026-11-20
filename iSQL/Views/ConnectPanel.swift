@@ -72,6 +72,7 @@ struct ConnectForm: View {
 	private var card: some View {
 		TabView(selection: kindTab) {
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.mysql.familyLabel) }.tag("mysql")
+			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.sqlserver.label) }.tag("sqlserver")
 			fields(ssh: server.ssh.enabled).tabItem { Text(SQLKind.oracle.label) }.tag("oracle")
 			fields(ssh: false).tabItem { Text(SQLKind.sqlite.label) }.tag("sqlite")
 		}
@@ -81,19 +82,30 @@ struct ConnectForm: View {
 
 	private var groupNames: [String] { store.grouped.map(\.group).filter { !$0.isEmpty } }
 
-	/// 위 탭: MySQL · MariaDB / SQLite (고른 탭이 곧 서버 종류. MySQL·MariaDB 는 접속해 보고 가린다)
+	/// 위 탭: MySQL · MariaDB / SQL Server / Oracle / SQLite (고른 탭이 곧 서버 종류. MySQL·MariaDB 는 접속해 보고 가린다).
+	/// 탭을 바꾸면 포트가 그 종류의 기본값이었으면 새 종류의 기본값으로, 사용자 root 는 비운다
 	private var kindTab: Binding<String> {
-		Binding(get: { server.isFileDB ? "sqlite" : server.sqlKind == .oracle ? "oracle" : "mysql" }, set: { tab in
-			let wasOracle = server.sqlKind == .oracle
-			if tab == "sqlite" { server.kind = SQLKind.sqlite.rawValue }
-			else if tab == "oracle" {
-				server.kind = SQLKind.oracle.rawValue
-				if server.port == 3306 { server.port = 1521 }
-				if server.user == "root" { server.user = "" }
-			} else if server.isFileDB || wasOracle {
-				server.kind = SQLKind.mysql.rawValue
-				if wasOracle && server.port == 1521 { server.port = 3306 }
+		Binding(get: {
+			switch server.sqlKind {
+			case .sqlite: "sqlite"
+			case .oracle: "oracle"
+			case .sqlserver: "sqlserver"
+			default: "mysql"
 			}
+		}, set: { tab in
+			let old = server.sqlKind ?? .mysql
+			let new: SQLKind = switch tab {
+			case "sqlite": .sqlite
+			case "oracle": .oracle
+			case "sqlserver": .sqlserver
+			default: old == .mariadb ? .mariadb : .mysql
+			}
+			guard new != old else { return }
+			server.kind = new.rawValue
+			if let p = old.defaultPort, server.port == p, let np = new.defaultPort { server.port = np }
+			if new == .oracle || new == .sqlserver, server.user == "root" { server.user = "" }
+			// SQL Server 는 자체 서명 인증서가 기본이라 "필수"(인증서 확인 안 함)로 시작
+			if new == .sqlserver, server.tls == nil { server.tls = .required }
 		})
 	}
 
