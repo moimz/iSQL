@@ -73,7 +73,7 @@ final class MySQLTLS {
 
 	// MARK: 인증서 확인
 
-	private static func checkTrust(_ ctx: SSLContext, host: String, caPath: String) throws {
+	static func checkTrust(_ ctx: SSLContext, host: String, caPath: String) throws {
 		var trustRef: SecTrust?
 		guard SSLCopyPeerTrust(ctx, &trustRef) == noErr, let trust = trustRef else { throw MySQLError.tls("서버 인증서를 받지 못했습니다.") }
 		SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, host as CFString))
@@ -108,12 +108,12 @@ final class MySQLTLS {
 		return out
 	}
 
-	private static func isIPAddress(_ s: String) -> Bool {
+	static func isIPAddress(_ s: String) -> Bool {
 		var v4 = in_addr(), v6 = in6_addr()
 		return inet_pton(AF_INET, s, &v4) == 1 || inet_pton(AF_INET6, s, &v6) == 1
 	}
 
-	private static func describe(_ st: OSStatus) -> String {
+	static func describe(_ st: OSStatus) -> String {
 		switch st {
 		case errSSLClosedAbort, errSSLClosedGraceful: "TLS 연결 중에 서버가 끊었습니다."
 		case errSSLProtocol, errSSLNegotiation, errSSLPeerProtocolVersion: "서버와 TLS 방식을 맞추지 못했습니다 (\(st))."
