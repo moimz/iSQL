@@ -419,8 +419,14 @@ final class MCPServer {
 				"long_query_time": ServerDiagnostics.trimNumber(s.longQueryTime),
 				"innodb_buffer_pool": ["used": ServerDiagnostics.bytes(s.bufferUsed), "size": ServerDiagnostics.bytes(s.bufferSize),
 				                       "hit_rate_percent": s.bufferHit.map { ServerDiagnostics.decimal($0 * 100, 2) } ?? NSNull(), "low": s.bufferLow],
-				"bytes_received": s.received, "bytes_sent": s.sent,
 			]
+			if t.capabilities.packetAndPageCounts {
+				// SQL Server: 바이트가 아니라 패킷 수, 느린 쿼리는 계획 캐시에서 평균 1초 넘는 쿼리의 실행 횟수
+				d["packets_received"] = s.received; d["packets_sent"] = s.sent
+				d["buffer_pool"] = d.removeValue(forKey: "innodb_buffer_pool")
+			} else {
+				d["bytes_received"] = s.received; d["bytes_sent"] = s.sent
+			}
 			d["processes"] = procs.prefix(100).map { p -> [String: Any] in
 				["id": p.id, "user": p.user, "host": p.host, "db": p.db, "command": p.command, "time_seconds": p.time,
 				 "state": p.state, "query": String(p.info.prefix(500)), "long_running": p.long, "waiting_lock": p.waitingLock]
@@ -432,10 +438,11 @@ final class MCPServer {
 			let limit = min(max((a["limit"] as? Int) ?? 20, 1), 200)
 			let list = try await t.meta.topQueries({ sql in [try await self.run(t, sql)] }, limit: limit)
 			note("top_queries · \(t.server.displayName)")
+			let pages = t.capabilities.packetAndPageCounts
 			return json(list.map { q -> [String: Any] in
-				["query": String(q.sql.prefix(1000)), "database": q.schema, "count": q.count,
+				[pages ? "query_sample" : "query": String(q.sql.prefix(1000)), "database": q.schema, "count": q.count,
 				 "total_seconds": ServerDiagnostics.decimal(q.totalSeconds, 3), "avg_seconds": ServerDiagnostics.decimal(q.avgSeconds, 4),
-				 "rows_examined": q.rowsExamined, "rows_sent": q.rowsSent]
+				 pages ? "logical_reads" : "rows_examined": q.rowsExamined, pages ? "rows_returned" : "rows_sent": q.rowsSent]
 			})
 		default:
 			throw MCPFailure("모르는 도구: \(name)")

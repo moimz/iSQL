@@ -1,6 +1,6 @@
 # iSQL
 
-맥에서 쓰는 **MySQL / MariaDB / Oracle(베타) / SQLite 클라이언트**입니다.
+맥에서 쓰는 **MySQL / MariaDB / SQL Server(베타) / Oracle(베타) / SQLite 클라이언트**입니다.
 서버의 모든 데이터베이스와 테이블을 사이드바 하나에 코멘트와 함께 보여 주고, 탭·쿼리 패널·구조 편집을 한 창에서 다룹니다.
 원격 DB 는 SSH 터널로 접속하고, 비밀번호는 키체인에만 둡니다.
 
@@ -21,8 +21,8 @@
 
 **접속**
 - 접속 정보와 SSH 터널(비밀번호 또는 키 파일)을 한 화면에서 입력, 접속 시험
-- DB 종류 탭: MySQL · MariaDB (접속하면 서버 버전으로 둘을 가림) / Oracle (서비스 이름 · SID, SYSDBA) / SQLite (파일 고르기 · 새로 만들기)
-- MySQL · MariaDB 는 TLS 직접 접속 (지원하면 사용 · 필수 · 인증서 확인, CA 파일 지정)
+- DB 종류 탭: MySQL · MariaDB (접속하면 서버 버전으로 둘을 가림) / SQL Server / Oracle (서비스 이름 · SID, SYSDBA) / SQLite (파일 고르기 · 새로 만들기)
+- MySQL · MariaDB · SQL Server 는 TLS 직접 접속 (지원하면 사용 · 필수 · 인증서 확인, CA 파일 지정)
 - SQLite 파일은 Finder 에서 두 번 누르기 · 창이나 Dock 아이콘에 끌어 놓기로도 열기
 - 비밀번호는 모두 iCloud 키체인(동기화 항목)에 저장, 서버 목록은 iCloud Drive 로 다른 맥과 동기화
 - 서버 그룹, 끌어다 놓아 정리, 서버 색, 접속 문자열 복사
@@ -83,8 +83,8 @@
 - 뷰 만들기: 쿼리 결과 · 지금 보는 데이터(찾기 조건 · 정렬 · 컬럼 순서 · 숨김 그대로)로. "나만 보기" 면 서버에 만들지 않고 iCloud 에 두는 나만 보는 뷰(사이드바에 자물쇠 눈)
 - 서버마다 새 데이터베이스 · 새 테이블의 기본 문자셋 · 콜레이션 (서버 설정 > 일반)
 
-**서버 설정 창** (제목바 톱니, MySQL · MariaDB)
-- 상태: 가동 시간 · 연결 · 초당 쿼리 · 느린 쿼리 · 버퍼 풀 적중률 요약, 프로세스 목록(오래 도는 쿼리 노랑 · 잠금 대기 빨강, 쿼리 멈추기 · 연결 끊기), performance_schema 쿼리 통계. 5초마다 새로 읽음
+**서버 설정 창** (제목바 톱니, MySQL · MariaDB · SQL Server)
+- 상태: 가동 시간 · 연결 · 초당 쿼리 · 느린 쿼리 · 버퍼 풀 적중률 요약, 프로세스 목록(오래 도는 쿼리 노랑 · 잠금 대기 빨강, 쿼리 멈추기 · 연결 끊기), 쿼리 통계 (MySQL 은 performance_schema, SQL Server 는 계획 캐시). 5초마다 새로 읽음
 - 서버 설정: 서버 변수 보기 (자주 보는 변수는 위에 설명과 함께)
 - 사용자 계정 · 권한 (MySQL)
 
@@ -118,10 +118,10 @@
 
 - macOS 26 이상, Apple silicon(arm64)
 - 빌드: Xcode 26 이상
-- 서버: MySQL 5.7 / 8.x (`mysql_native_password`, `caching_sha2_password` 인증). MariaDB 는 같은 인증 방식이면 접속됩니다. Oracle 12.1 이상 (Oracle Client 없이 바로)
+- 서버: MySQL 5.7 / 8.x (`mysql_native_password`, `caching_sha2_password` 인증). MariaDB 는 같은 인증 방식이면 접속됩니다. SQL Server 2016 SP1 이상 (ODBC 드라이버 없이 바로). Oracle 12.1 이상 (Oracle Client 없이 바로)
 
 외부 패키지는 자동 업데이트용 [Sparkle](https://sparkle-project.org) 하나입니다. 나머지는 Apple 기본 프레임워크(SwiftUI, AppKit, CryptoKit, CommonCrypto, Security)만 씁니다.
-MySQL · Oracle 접속 프로토콜은 직접 구현했고(Oracle 은 python-oracledb · oracle-nio 를 참고), SSH 터널은 macOS 에 들어 있는 `/usr/bin/ssh` 를 씁니다.
+MySQL · SQL Server · Oracle 접속 프로토콜은 직접 구현했고(Oracle 은 python-oracledb · oracle-nio 를 참고), SSH 터널은 macOS 에 들어 있는 `/usr/bin/ssh` 를 씁니다.
 
 ## DB 별 지원 범위와 아직 안 되는 것
 
@@ -135,6 +135,14 @@ MySQL · Oracle 접속 프로토콜은 직접 구현했고(Oracle 은 python-ora
 **SQLite**
 - 파일 하나가 DB 하나라 DB 만들기 · 이름 바꾸기 · 복제, 서버 상태 · 계정, 엔진 · 문자셋 기능이 없습니다
 - 컬럼 이름 바꾸기 · 추가 · 삭제만 됩니다 (타입 바꾸기는 SQLite 가 지원하지 않음)
+
+**SQL Server (베타)**
+- SQL Server 로그인(아이디 · 비밀번호) 인증, TLS(기본 필수), SSH 터널. 사이드바는 데이터베이스 아래 `스키마.테이블` (dbo 는 이름만)
+- 시험한 서버: SQL Server 2022 Developer (Docker) 하나뿐입니다. Azure SQL · 2016 · 2019 같은 다른 판은 아직 확인하지 못했습니다
+- 아직 없는 것: Windows 인증 · Entra ID(Azure AD) 로그인, 계정 · 권한 관리, DB 이름 바꾸기 · 복제, 테이블 · 컬럼 설명 고치기(보기만)
+- SQL 파일과 쿼리 패널은 `GO` 줄로 배치를 나눕니다. 프로시저 · 함수 · 트리거 · 뷰 정의는 `;` 로 나누지 않습니다
+- 상태 탭의 몇 칸은 MySQL 과 뜻이 다릅니다: 초당 쿼리는 배치 수, 느린 쿼리는 계획 캐시에서 평균 1초 넘는 쿼리의 실행 횟수, 주고받은 양은 패킷 수, 쿼리 통계의 읽은 양은 페이지 수. 쿼리 멈추기는 없고 연결 끊기(KILL)만 됩니다. 다른 세션까지 보려면 VIEW SERVER STATE 권한이 있어야 합니다
+- 결과는 다 받은 뒤에 보여 줍니다 (아주 큰 결과는 쿼리 패널에서 TOP 으로 줄여 주세요)
 
 **Oracle (베타)**
 - 비밀번호 인증(12c · 11g 방식), 서비스 이름 · SID, SYSDBA, SSH 터널. "데이터베이스" 자리에는 스키마(사용자)가 보입니다
@@ -175,7 +183,7 @@ iCloud 를 쓸 수 없으면 서버 목록은 이 맥에만, 비밀번호는 이
 
 ## 상표
 
-MySQL · Oracle 은 Oracle 및 그 계열사의 상표이고, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
+MySQL · Oracle 은 Oracle 및 그 계열사의 상표이고, SQL Server 는 Microsoft, MariaDB 는 MariaDB Corporation Ab, SQLite 는 Hipp, Wyrick & Company 의 상표입니다. 서버 목록의 로고는 접속한 DB 종류를 알리는 데만 쓰며, iSQL 은 이 회사들과 관계가 없습니다. 로고 그림은 [Simple Icons](https://simpleicons.org) (CC0) 의 것을 줄여 썼습니다.
 
 ## 오픈소스
 

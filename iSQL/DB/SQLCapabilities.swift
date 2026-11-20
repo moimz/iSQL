@@ -16,6 +16,10 @@ struct SQLCapabilities: Sendable {
 	var serverStatus = true
 	/// 프로세스 목록에서 쿼리 멈추기·연결 끊기
 	var processKill = true
+	/// 연결은 두고 쿼리만 멈추기 (KILL QUERY). SQL Server 의 KILL 은 세션을 끊는 것뿐이라 없다
+	var killQuery = true
+	/// 상태 탭 숫자가 MySQL 과 다른 뜻: 주고받은 양은 바이트가 아니라 패킷 수, 쿼리 통계의 읽은 양은 행이 아니라 논리 읽기(페이지) (SQL Server)
+	var packetAndPageCounts = false
 	/// 상태 탭의 쿼리 통계
 	var queryDigests = true
 	/// 서버 설정(변수) 탭

@@ -110,10 +110,12 @@ final class ServerStatusMonitor {
 
 	/// 프로세스 멈추기·끊기가 있는 서버 종류인지
 	var canKill: Bool { session?.capabilities.processKill ?? true }
+	var canKillQuery: Bool { session?.capabilities.killQuery ?? true }
 
 	init(session: Session) {
 		self.session = session
 		processSource.monitor = self
+		digestSource.pageReads = session.capabilities.packetAndPageCounts
 	}
 
 	deinit { loop?.cancel(); conn?.close() }
@@ -172,7 +174,8 @@ final class ServerStatusMonitor {
 					digestError = nil
 				} catch {
 					digests = []
-					digestError = "쿼리 통계를 읽지 못했습니다 (performance_schema 가 꺼져 있거나 권한이 없습니다): \(error.localizedDescription)"
+					let why = session.capabilities.packetAndPageCounts ? "VIEW SERVER STATE 권한이 없습니다" : "performance_schema 가 꺼져 있거나 권한이 없습니다"
+					digestError = "쿼리 통계를 읽지 못했습니다 (\(why)): \(error.localizedDescription)"
 				}
 			}
 			error = nil
@@ -261,6 +264,8 @@ final class ProcessListSource: GridSource {
 		if own { return [.disabled("iSQL 이 쓰는 연결입니다")] }
 		// 멈추기·끊기가 없는 서버 종류
 		if m.canKill == false { return [] }
+		// 쿼리만 멈추기가 없는 서버 종류 (SQL Server 의 KILL 은 세션을 끊는다)
+		if m.canKillQuery == false { return [.action("연결 끊기 (KILL)…", confirm("이 연결을 끊을까요?", true))] }
 		return [
 			p.command == "Query" ? .action("쿼리 멈추기 (KILL QUERY)…", confirm("이 쿼리를 멈출까요?", false)) : .disabled("쿼리 멈추기 (KILL QUERY)…"),
 			.action("연결 끊기 (KILL)…", confirm("이 연결을 끊을까요?", true)),
@@ -274,6 +279,8 @@ final class ProcessListSource: GridSource {
 final class DigestSource: GridSource {
 	@ObservationIgnored var scrollOrigin: CGPoint = .zero
 	@ObservationIgnored private var list: [ServerDiagnostics.Digest] = []
+	/// 읽은 양이 행이 아니라 논리 읽기(페이지)인 서버 종류 (SQL Server)
+	@ObservationIgnored var pageReads = false
 	private(set) var gridVersion = 0
 	func set(_ l: [ServerDiagnostics.Digest]) { list = l; gridVersion += 1 }
 
@@ -282,10 +289,10 @@ final class DigestSource: GridSource {
 		[GridColumn(key: "count", title: "횟수", numeric: true, width: 80),
 		 GridColumn(key: "total", title: "총 시간", numeric: true, width: 90),
 		 GridColumn(key: "avg", title: "평균", numeric: true, width: 80),
-		 GridColumn(key: "examined", title: "읽은 행", numeric: true, width: 100),
+		 GridColumn(key: "examined", title: pageReads ? "읽은 페이지" : "읽은 행", numeric: true, width: 100),
 		 GridColumn(key: "sent", title: "보낸 행", numeric: true, width: 90),
 		 GridColumn(key: "schema", title: "DB", width: 100),
-		 GridColumn(key: "sql", title: "쿼리 (값은 ? 로)", mono: true, width: 700)]
+		 GridColumn(key: "sql", title: pageReads ? "쿼리 (같은 모양 중 하나)" : "쿼리 (값은 ? 로)", mono: true, width: 700)]
 	}
 	var rowCount: Int { list.count }
 	var sortable: Bool { false }

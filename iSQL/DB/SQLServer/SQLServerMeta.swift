@@ -217,9 +217,12 @@ struct SQLServerMeta: SQLMeta {
 		}
 	}
 
+	/// 끝의 ; 는 뺀다 (배치째 보낸 정의는 ; 까지 저장되어, 내보내기가 ; 를 또 붙이면 넣을 때마다 ;; ;;; 로 늘었다)
 	private func moduleDefinition(_ run: DBRun, _ db: String, _ name: String) async throws -> String? {
-		try await one(run, "SELECT definition FROM \(sys(db))sql_modules WHERE object_id = \(objectID(db, name))").rows.first?.first?.string?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard var def = try await one(run, "SELECT definition FROM \(sys(db))sql_modules WHERE object_id = \(objectID(db, name))").rows.first?.first?.string?
+			.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+		while def.hasSuffix(";") { def = String(def.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines) }
+		return def
 	}
 
 	/// 컬럼 정의 + 기본 키 (+ 인덱스는 따로 선 CREATE INDEX). 외래 키는 표에 따로 보인다
@@ -249,7 +252,9 @@ struct SQLServerMeta: SQLMeta {
 		return out
 	}
 
-	/// 내보내기 끝: 외래 키 (CREATE TABLE 에는 넣지 않아 테이블 순서와 상관없이 넣어진다). 내보낸 테이블끼리만
+	/// 내보내기 끝: 외래 키 (CREATE TABLE 에는 넣지 않아 테이블 순서와 상관없이 넣어진다). 내보낸 테이블끼리만.
+	/// 테이블·컬럼 설명(MS_Description)도 다시 붙인다 (CREATE TABLE 에 넣을 수 없어서).
+	/// 그리고 IDENTITY 마지막 값을 원래대로 (IDENTITY_INSERT 로 넣으면 넣은 최댓값이 되어, 지운 행 번호를 다시 쓰게 된다 — MySQL 의 AUTO_INCREMENT= 처럼)
 	func dumpTrailer(_ run: DBRun, schema db: String, tables: [String]) async throws -> [String] {
 		var out: [String] = []
 		let names = Set(tables)
@@ -258,7 +263,51 @@ struct SQLServerMeta: SQLMeta {
 				out.append("ALTER TABLE \(dialect.quoteLocal(t)) " + dialect.addForeignKeyClause(fk, schema: db))
 			}
 		}
+		let s = sys(db)
+		let notes = try await one(run, """
+			SELECT sc.name, o.name, c.name, CAST(ep.value AS NVARCHAR(4000)) FROM \(s)extended_properties ep
+			JOIN \(s)objects o ON o.object_id = ep.major_id AND o.type = 'U' JOIN \(s)schemas sc ON sc.schema_id = o.schema_id
+			LEFT JOIN \(s)columns c ON c.object_id = ep.major_id AND c.column_id = ep.minor_id
+			WHERE ep.class = 1 AND ep.name = N'MS_Description' AND ep.value IS NOT NULL
+			ORDER BY o.name, ep.minor_id
+			""")
+		for r in notes.rows {
+			let schema = r[safe: 0]?.string ?? "dbo", table = r[safe: 1]?.string ?? ""
+			guard names.contains(schema == "dbo" ? table : schema + "." + table), let text = r[safe: 3]?.string else { continue }
+			func lit(_ v: String) -> String { dialect.literal(.text(v)) }
+			var e = "EXEC sys.sp_addextendedproperty @name = N'MS_Description', @value = \(lit(text)), @level0type = N'SCHEMA', @level0name = \(lit(schema)), @level1type = N'TABLE', @level1name = \(lit(table))"
+			if let col = r[safe: 2]?.string { e += ", @level2type = N'COLUMN', @level2name = \(lit(col))" }
+			out.append(e)
+		}
+		let ids = try await one(run, """
+			SELECT sc.name, o.name, CAST(ic.last_value AS BIGINT), CAST(ic.increment_value AS BIGINT) FROM \(s)identity_columns ic
+			JOIN \(s)objects o ON o.object_id = ic.object_id AND o.type = 'U' JOIN \(s)schemas sc ON sc.schema_id = o.schema_id
+			WHERE ic.last_value IS NOT NULL
+			""")
+		for r in ids.rows {
+			let schema = r[safe: 0]?.string ?? "dbo", table = r[safe: 1]?.string ?? ""
+			let local = schema == "dbo" ? table : schema + "." + table
+			guard names.contains(local), let v = r[safe: 2]?.string.flatMap({ Int64($0) }) else { continue }
+			// 만든 뒤 행을 한 번도 안 넣은 테이블은 다음 값이 RESEED 값 그대로라 (넣었으면 + 증가값) 비었을 때는 한 칸 더
+			let step = r[safe: 3]?.string.flatMap { Int64($0) } ?? 1
+			let name = dialect.quoteLocal(local), lit = name.replacingOccurrences(of: "'", with: "''")
+			out.append("IF EXISTS (SELECT 1 FROM \(name)) DBCC CHECKIDENT (N'\(lit)', RESEED, \(v)) WITH NO_INFOMSGS ELSE DBCC CHECKIDENT (N'\(lit)', RESEED, \(v + step)) WITH NO_INFOMSGS")
+		}
 		return out
+	}
+
+	/// 내보내기 맨 앞 (있으면 지우기): 내보낸 테이블끼리의 외래 키를 이름과 상관없이 지운다 (넣을 DB 에서 찾아서).
+	/// 다른 테이블이 가리키는 외래 키는 두므로 그런 테이블은 DROP TABLE 이 오류로 알려 준다
+	func dumpPreamble(schema db: String, tables: [String]) -> [String] {
+		guard !tables.isEmpty else { return [] }
+		let ids = tables.map { "OBJECT_ID(N'" + dialect.quoteLocal($0).replacingOccurrences(of: "'", with: "''") + "')" }.joined(separator: ", ")
+		return ["""
+			DECLARE @isql_fk NVARCHAR(MAX) = N'';
+			SELECT @isql_fk += N'ALTER TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(parent_object_id)) + N'.' + QUOTENAME(OBJECT_NAME(parent_object_id))
+			     + N' DROP CONSTRAINT ' + QUOTENAME(name) + N'; '
+			  FROM sys.foreign_keys WHERE parent_object_id IN (\(ids)) AND referenced_object_id IN (\(ids));
+			EXEC sys.sp_executesql @isql_fk
+			"""]
 	}
 
 	func indexes(_ run: DBRun, _ table: TableInfo, createSQL: String) async throws -> [IndexInfo] {
@@ -410,9 +459,109 @@ struct SQLServerMeta: SQLMeta {
 	func databaseGrants(_ run: DBRun) async throws -> [String: [DBGrant]] { throw unsupported }
 	func currentUser(_ run: DBRun) async throws -> String? { try await one(run, "SELECT SUSER_NAME()").rows.first?.first?.string }
 	func grantStatements(_ run: DBRun, account: String) async throws -> [String] { throw unsupported }
-	func serverSummary(_ run: DBRun) async throws -> ServerDiagnostics.Summary { throw unsupported }
-	func processes(_ run: DBRun) async throws -> [ServerDiagnostics.Process] { throw unsupported }
-	func topQueries(_ run: DBRun, limit: Int) async throws -> [ServerDiagnostics.Digest] { throw unsupported }
+	/// 상태 요약 (한 번에 읽는다). 다른 세션까지 보려면 VIEW SERVER STATE 권한이 있어야 한다.
+	/// questions = Batch Requests/sec 누적값, received·sent = 패킷 수 (@@PACK_*),
+	/// 느린 쿼리 = 계획 캐시에서 평균 1초 넘는 쿼리의 실행 횟수, 버퍼 풀 = Buffer Manager 의 데이터 페이지 / 목표 서버 메모리
+	func serverSummary(_ run: DBRun) async throws -> ServerDiagnostics.Summary {
+		let r = try await one(run, """
+			SET NOCOUNT ON;
+			DECLARE @pc TABLE (name NVARCHAR(128), v BIGINT);
+			INSERT INTO @pc SELECT RTRIM(counter_name), cntr_value FROM sys.dm_os_performance_counters
+			 WHERE (object_name LIKE N'%Buffer Manager%' AND counter_name IN (N'Buffer cache hit ratio', N'Buffer cache hit ratio base', N'Database pages'))
+			    OR (object_name LIKE N'%SQL Statistics%' AND counter_name = N'Batch Requests/sec')
+			    OR (object_name LIKE N'%Memory Manager%' AND counter_name = N'Target Server Memory (KB)');
+			SELECT CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)), CAST(SERVERPROPERTY('Edition') AS NVARCHAR(128)),
+			       (SELECT DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) FROM sys.dm_os_sys_info),
+			       (SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1),
+			       (SELECT COUNT(*) FROM sys.dm_exec_requests r JOIN sys.dm_exec_sessions s ON s.session_id = r.session_id WHERE s.is_user_process = 1),
+			       @@MAX_CONNECTIONS,
+			       (SELECT SUM(v) FROM @pc WHERE name = N'Batch Requests/sec'),
+			       (SELECT SUM(execution_count) FROM sys.dm_exec_query_stats WHERE total_elapsed_time >= execution_count * 1000000),
+			       (SELECT SUM(v) FROM @pc WHERE name = N'Buffer cache hit ratio'),
+			       (SELECT SUM(v) FROM @pc WHERE name = N'Buffer cache hit ratio base'),
+			       (SELECT SUM(v) FROM @pc WHERE name = N'Database pages'),
+			       (SELECT SUM(v) FROM @pc WHERE name = N'Target Server Memory (KB)'),
+			       CAST(@@PACK_RECEIVED AS BIGINT), CAST(@@PACK_SENT AS BIGINT)
+			""")
+		guard let row = r.rows.first else { throw DBError.message("서버 상태를 읽지 못했습니다.") }
+		func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
+		func i(_ i: Int) -> Int64 { Int64(s(i)) ?? 0 }
+		var out = ServerDiagnostics.Summary()
+		out.version = [s(0), s(1)].filter { !$0.isEmpty }.joined(separator: " · ")
+		out.uptime = Int(i(2))
+		out.connected = Int(i(3))
+		out.running = Int(i(4))
+		out.maxConnections = Int(i(5))
+		out.questions = Int(i(6))
+		out.slowQueries = Int(i(7))
+		out.longQueryTime = "1"
+		if i(9) > 0 { out.bufferHit = min(1, Double(i(8)) / Double(i(9))) }
+		out.bufferUsed = i(10) * 8192
+		out.bufferSize = i(11) * 1024
+		out.received = i(12)
+		out.sent = i(13)
+		return out
+	}
+
+	/// 사용자 세션 목록. 실행 중이면 명령 "Query"·시간은 시작한 뒤, 쉬는 중이면 "Sleep"·마지막 요청 뒤 (MySQL 프로세스 목록처럼).
+	/// 잠금 대기(LCK_*)는 상태에 "lock" 과 막고 있는 세션을 적는다
+	func processes(_ run: DBRun) async throws -> [ServerDiagnostics.Process] {
+		let r = try await one(run, """
+			SELECT s.session_id, s.login_name, COALESCE(c.client_net_address + ':' + CAST(c.client_tcp_port AS NVARCHAR(10)), s.host_name, N''),
+			       DB_NAME(COALESCE(r.database_id, s.database_id)),
+			       CASE WHEN r.session_id IS NULL THEN N'Sleep' ELSE N'Query' END,
+			       CASE WHEN r.session_id IS NULL THEN DATEDIFF(SECOND, s.last_request_end_time, GETDATE())
+			            ELSE DATEDIFF(SECOND, r.start_time, GETDATE()) END,
+			       r.status, r.wait_type, r.blocking_session_id, r.command,
+			       CASE WHEN r.session_id IS NULL THEN N'' ELSE COALESCE(
+			         SUBSTRING(t.text, r.statement_start_offset / 2 + 1,
+			           (CASE WHEN r.statement_end_offset <= 0 THEN DATALENGTH(t.text) ELSE r.statement_end_offset END - r.statement_start_offset) / 2 + 1), t.text, N'') END,
+			       s.program_name
+			  FROM sys.dm_exec_sessions s
+			  LEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id
+			  LEFT JOIN sys.dm_exec_connections c ON c.session_id = s.session_id AND c.parent_connection_id IS NULL
+			  OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+			 WHERE s.is_user_process = 1
+			 ORDER BY s.session_id
+			""")
+		return r.rows.map { row in
+			func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
+			var state = [s(6), s(9)].filter { !$0.isEmpty }.joined(separator: " · ")
+			let wait = s(7)
+			if wait.hasPrefix("LCK_") {
+				state = ((Int64(s(8)) ?? 0) > 0 ? "\(s(8)) 이 막음 · " : "") + "\(wait) lock"
+			} else if !wait.isEmpty {
+				state += " · \(wait)"
+			}
+			if s(4) == "Sleep" { state = s(11) }
+			return ServerDiagnostics.Process(id: Int64(s(0)) ?? 0, user: s(1), host: s(2), db: s(3), command: s(4),
+			                                 time: max(0, Int(s(5)) ?? 0), state: state, info: s(10).trimmingCharacters(in: .whitespacesAndNewlines))
+		}
+	}
+
+	/// 계획 캐시의 쿼리별 통계 (query_hash 로 묶음, 총 시간 순). 값을 ? 로 바꾸지 않고 한 문장을 보기로 보여 준다.
+	/// rowsExamined = 논리 읽기(페이지), rowsSent = 돌려준 행
+	func topQueries(_ run: DBRun, limit: Int) async throws -> [ServerDiagnostics.Digest] {
+		let r = try await one(run, """
+			SELECT TOP (\(max(1, min(limit, 200)))) MAX(x.sql), MAX(x.db), SUM(x.execution_count), SUM(x.total_elapsed_time) / 1e6,
+			       SUM(x.total_elapsed_time) / 1e6 / NULLIF(SUM(x.execution_count), 0), SUM(x.total_logical_reads), SUM(x.total_rows)
+			  FROM (SELECT q.query_hash, q.execution_count, q.total_elapsed_time, q.total_logical_reads, q.total_rows,
+			               SUBSTRING(t.text, q.statement_start_offset / 2 + 1,
+			                 (CASE WHEN q.statement_end_offset <= 0 THEN DATALENGTH(t.text) ELSE q.statement_end_offset END - q.statement_start_offset) / 2 + 1) AS sql,
+			               DB_NAME(CONVERT(INT, a.value)) AS db
+			          FROM sys.dm_exec_query_stats q
+			          CROSS APPLY sys.dm_exec_sql_text(q.sql_handle) t
+			          OUTER APPLY (SELECT value FROM sys.dm_exec_plan_attributes(q.plan_handle) WHERE attribute = N'dbid') a) x
+			 GROUP BY x.query_hash
+			 ORDER BY SUM(x.total_elapsed_time) DESC
+			""")
+		return r.rows.map { row in
+			func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
+			return ServerDiagnostics.Digest(sql: s(0).trimmingCharacters(in: .whitespacesAndNewlines), schema: s(1), count: Int64(s(2)) ?? 0,
+			                                totalSeconds: Double(s(3)) ?? 0, avgSeconds: Double(s(4)) ?? 0,
+			                                rowsExamined: Int64(s(5)) ?? 0, rowsSent: Int64(s(6)) ?? 0)
+		}
+	}
 	/// 서버 설정 (sys.configurations, 지금 쓰는 값)
 	func variables(_ run: DBRun) async throws -> [(String, String)] {
 		try await one(run, "SELECT name, CAST(value_in_use AS NVARCHAR(100)) FROM sys.configurations ORDER BY name").rows.map { ($0[0].string ?? "", $0[safe: 1]?.string ?? "") }

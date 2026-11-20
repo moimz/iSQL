@@ -89,10 +89,11 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.foreignKeyChecksToggle = false; c.jsonPathFilter = false
 		}
 		if self == .sqlserver {
-			// 데이터베이스 > 스키마 > 테이블 (사이드바는 DB 아래 "스키마.테이블", dbo 는 이름만). 서버 관리·계정·엔진·문자셋은 아직 없다
+			// 데이터베이스 > 스키마 > 테이블 (사이드바는 DB 아래 "스키마.테이블", dbo 는 이름만). 계정·엔진·문자셋은 아직 없다
 			c.routineKinds = [.procedure, .function, .trigger]
 			c.routineDefiner = false
-			c.serverStatus = false; c.processKill = false; c.queryDigests = false; c.serverVariables = false
+			// 상태 탭: 요약·프로세스(끊기만)·쿼리 통계(계획 캐시)·서버 설정(sys.configurations)
+			c.killQuery = false; c.packetAndPageCounts = true
 			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false
 			c.createTableLike = false
 			c.engines = false; c.charsets = false; c.tableComment = false; c.columnComment = false

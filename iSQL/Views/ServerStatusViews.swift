@@ -55,11 +55,13 @@ struct ServerStatusTab: View {
 							// 멈추기·끊기가 있는 서버 종류만
 							if session.capabilities.processKill {
 								Text("·").padding(.horizontal, 2)
-								Text("우클릭으로 중단")
+								Text(session.capabilities.killQuery ? "우클릭으로 중단" : "우클릭으로 연결 끊기")
 							}
 						}
 					} else {
-						Text("서버가 켜진 뒤(또는 통계를 비운 뒤) 오래 걸린 쿼리 순, 값은 ? 로 묶음")
+						Text(session.capabilities.packetAndPageCounts
+						     ? "계획 캐시에 남은 쿼리 중 오래 걸린 순, 같은 모양(값만 다른 것)은 묶음"
+						     : "서버가 켜진 뒤(또는 통계를 비운 뒤) 오래 걸린 쿼리 순, 값은 ? 로 묶음")
 					}
 				}
 				.font(.callout).foregroundStyle(.secondary).lineLimit(1)
@@ -80,16 +82,24 @@ struct ServerStatusTab: View {
 		.onDisappear { monitor.stop() }
 	}
 
+	private var packets: Bool { session.capabilities.packetAndPageCounts }
+
 	private func cards(_ s: ServerDiagnostics.Summary) -> some View {
 		LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
 			StatCard(title: "가동 시간", value: ServerDiagnostics.duration(s.uptime), detail: s.version)
 			StatCard(title: "연결", value: "\(s.connected) / \(s.maxConnections)", detail: "실행 중 \(s.running)", warn: s.connectionsTight)
 			StatCard(title: "초당 쿼리", value: String(format: monitor.qps < 10 ? "%.1f" : "%.0f", monitor.qps), detail: String(format: "평균 %.1f", s.avgQPS))
-			StatCard(title: "느린 쿼리", value: s.slowQueries.formatted(), detail: s.longQueryTime.isEmpty ? "" : "기준 \(ServerDiagnostics.trimNumber(s.longQueryTime))초", warn: s.slowQueries > 0)
+			StatCard(title: "느린 쿼리", value: s.slowQueries.formatted(), detail: s.longQueryTime.isEmpty ? "" : (packets ? "평균 \(ServerDiagnostics.trimNumber(s.longQueryTime))초 넘음" : "기준 \(ServerDiagnostics.trimNumber(s.longQueryTime))초"), warn: s.slowQueries > 0)
 			StatCard(title: "버퍼 풀 적중률", value: s.bufferHit.map { String(format: "%.2f%%", $0 * 100) } ?? "—", detail: "95% 아래면 메모리 부족", warn: s.bufferLow)
 			StatCard(title: "버퍼 풀 사용", value: ServerDiagnostics.bytes(s.bufferUsed), detail: "전체 \(ServerDiagnostics.bytes(s.bufferSize))")
-			StatCard(title: "받은 데이터", value: ServerDiagnostics.bytes(s.received), detail: "시작한 뒤")
-			StatCard(title: "보낸 데이터", value: ServerDiagnostics.bytes(s.sent), detail: "시작한 뒤")
+			if packets {
+				// SQL Server 는 바이트 수가 없어 패킷 수 (@@PACK_RECEIVED·@@PACK_SENT)
+				StatCard(title: "받은 패킷", value: s.received.formatted(), detail: "시작한 뒤")
+				StatCard(title: "보낸 패킷", value: s.sent.formatted(), detail: "시작한 뒤")
+			} else {
+				StatCard(title: "받은 데이터", value: ServerDiagnostics.bytes(s.received), detail: "시작한 뒤")
+				StatCard(title: "보낸 데이터", value: ServerDiagnostics.bytes(s.sent), detail: "시작한 뒤")
+			}
 		}
 	}
 }

@@ -121,6 +121,8 @@ protocol SQLMeta: Sendable {
 	func dumpCreate(_ run: DBRun, schema: String, name: String) async throws -> String?
 	/// 내보내기 파일 맨 끝에 붙일 문장 (; 없이. Oracle: 외래 키, 자동 증가 번호 맞추기)
 	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String]
+	/// "있으면 지우기" 를 켠 내보내기의 맨 앞 문장 (; 없이). SQL Server: 내보낸 테이블끼리의 외래 키를 먼저 지워 같은 DB 에 다시 넣을 때 DROP TABLE 이 막히지 않게
+	func dumpPreamble(schema: String, tables: [String]) -> [String]
 }
 
 extension SQLMeta {
@@ -128,4 +130,5 @@ extension SQLMeta {
 		try await createStatement(run, .table, schema: schema, name: name)
 	}
 	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String] { [] }
+	func dumpPreamble(schema: String, tables: [String]) -> [String] { [] }
 }

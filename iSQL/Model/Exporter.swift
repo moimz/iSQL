@@ -340,6 +340,13 @@ final class ExportJob {
 
 			""")
 		do {
+			// 같은 DB 에 다시 넣을 때 막히지 않게 (SQL Server: 내보낸 테이블끼리의 외래 키 먼저 지우기)
+			if o.includeStructure, o.includeDrop {
+				let pre = session.meta.dumpPreamble(schema: schema, tables: tables.filter { !$0.isView }.map(\.name))
+				if !pre.isEmpty {
+					write("-- 다시 넣을 때 테이블 지우기가 막히지 않게 외래 키 먼저 지우기\n" + pre.map { $0 + ";\n" + (dialect.batchSeparator.map { $0 + "\n" } ?? "") }.joined() + "\n")
+				}
+			}
 			// 테이블 먼저, 뷰는 나중 (뷰는 만들 때 가리키는 테이블이 있어야 한다 — 이름 순으로 앞에 오는 뷰가 뒤 테이블을 가리키면 실패했다)
 			for t in tables.filter({ !$0.isView }) + tables.filter(\.isView) where !cancelled {
 				let q = dialect.quote(schema: schema, table: t.name)
