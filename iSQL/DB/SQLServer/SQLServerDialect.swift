@@ -29,6 +29,8 @@ struct SQLServerDialect: SQLDialect {
 		return (db.isEmpty ? "" : quote(db) + ".") + quote(s) + "." + quote(t)
 	}
 	func quoteLocal(_ table: String) -> String { quote(schema: "", table: table) }
+	func identityInsert(_ table: String, _ on: Bool) -> String? { "SET IDENTITY_INSERT \(table) \(on ? "ON" : "OFF")" }
+	var batchSeparator: String? { "GO" }
 	func quoteIfNeeded(_ name: String, reserved: Set<String>) -> String {
 		let ok = name.first.map { $0 == "_" || ($0.isASCII && $0.isLetter) } == true
 			&& name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
@@ -239,9 +241,19 @@ extension SQLServerDialect {
 		let db = parts.count == 3 ? quote(parts[0]) + "." : ""
 		let obj = parts.suffix(2).map(quote).joined(separator: ".")
 		var list: [String] = []
+		var defaults = 0
 		for c in clauses where !c.hasPrefix("--") {
 			for piece in c.components(separatedBy: "\u{2}") {
-				if piece.hasPrefix("{RENAME}") {
+				if piece.hasPrefix("{DEFAULT}") {
+					let parts = piece.dropFirst("{DEFAULT}".count).components(separatedBy: "\u{1}")
+					guard parts.count == 2 else { continue }
+					defaults += 1
+					let v = "@df\(defaults)"
+					let col = literal(.text(parts[0]))
+					list.append("DECLARE \(v) sysname = (SELECT dc.name FROM \(db)sys.default_constraints dc JOIN \(db)sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id WHERE dc.parent_object_id = OBJECT_ID(\(literal(.text(target)))) AND c.name = \(col))")
+					list.append("IF \(v) IS NOT NULL EXEC(N'ALTER TABLE \(target.replacingOccurrences(of: "'", with: "''")) DROP CONSTRAINT [' + \(v) + N']')")
+					if !parts[1].isEmpty { list.append("ALTER TABLE \(target) ADD DEFAULT \(parts[1]) FOR \(quote(parts[0]))") }
+				} else if piece.hasPrefix("{RENAME}") {
 					let names = piece.dropFirst("{RENAME}".count).components(separatedBy: "\u{1}")
 					guard names.count == 2 else { continue }
 					list.append("EXEC \(db)sys.sp_rename \(literal(.text(obj + "." + quote(names[0])))), \(literal(.text(names[1]))), N'COLUMN'")
@@ -257,12 +269,14 @@ extension SQLServerDialect {
 	func dropColumn(_ name: String) -> String { "DROP COLUMN \(quote(name))" }
 	/// 위치는 정할 수 없다 (늘 맨 뒤)
 	func addColumn(_ name: String, definition: String, position: ColumnPosition?) -> String { "ADD \(quote(name)) \(definition)" }
-	/// 이름 바꾸기는 sp_rename, 정의는 ALTER COLUMN (기본값·IDENTITY 는 ALTER COLUMN 으로 못 바꿔 뺀다)
+	/// 이름 바꾸기는 sp_rename, 정의는 ALTER COLUMN (IDENTITY 는 바꿀 수 없어 뺀다).
+	/// 기본값은 이름이 따로 붙은 제약이라 ALTER COLUMN 으로 못 바꾼다 → {DEFAULT} 조각: 지금 기본값 제약을 찾아 지우고 새 기본값을 더한다
 	func changeColumn(_ old: String, to name: String, definition: String, position: ColumnPosition?) -> String {
 		var def = definition
-		if let r = def.range(of: " DEFAULT ") { def = String(def[..<r.lowerBound]) }
+		var newDefault = ""
+		if let r = def.range(of: " DEFAULT ") { newDefault = String(def[r.upperBound...]); def = String(def[..<r.lowerBound]) }
 		def = def.replacingOccurrences(of: " IDENTITY(1,1)", with: "")
-		let alter = "ALTER COLUMN \(quote(name)) \(def)"
+		let alter = "ALTER COLUMN \(quote(name)) \(def)" + "\u{2}{DEFAULT}\(name)\u{1}\(newDefault)"
 		return old == name ? alter : "{RENAME}\(old)\u{1}\(name)\u{2}" + alter
 	}
 	func engineClause(_ engine: String) -> String { "--" }

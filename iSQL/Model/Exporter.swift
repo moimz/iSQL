@@ -340,12 +340,15 @@ final class ExportJob {
 
 			""")
 		do {
-			for t in tables where !cancelled {
+			// 테이블 먼저, 뷰는 나중 (뷰는 만들 때 가리키는 테이블이 있어야 한다 — 이름 순으로 앞에 오는 뷰가 뒤 테이블을 가리키면 실패했다)
+			for t in tables.filter({ !$0.isView }) + tables.filter(\.isView) where !cancelled {
 				let q = dialect.quote(schema: schema, table: t.name)
 				write("-- ----------------------------------------\n-- \(t.name)\(t.comment.isEmpty ? "" : " · " + t.comment)\n-- ----------------------------------------\n")
+				// SQL Server: 문장 묶음마다 GO (CREATE VIEW 등은 배치에 혼자여야 한다). 다른 DB 는 아무것도 안 씀
+				func endBatch() { if let sep = dialect.batchSeparator { write(sep + "\n") } }
 				if o.includeStructure {
-					if o.includeDrop { write(dialect.dropIfExists(dialect.quoteLocal(t.name), view: t.isView) + ";\n") }
-					if let create = try await session.meta.dumpCreate(session.query, schema: schema, name: t.name) { write(create + ";\n\n") }
+					if o.includeDrop { write(dialect.dropIfExists(dialect.quoteLocal(t.name), view: t.isView) + ";\n"); endBatch() }
+					if let create = try await session.meta.dumpCreate(session.query, schema: schema, name: t.name) { write(create + ";\n"); endBatch(); write("\n") }
 				}
 				guard o.includeData, !t.isView else { continue }
 				let cols = (session.columns[schema + "." + t.name] ?? [])
@@ -353,6 +356,10 @@ final class ExportJob {
 				let order = pk.isEmpty ? "" : " ORDER BY " + pk.joined(separator: ", ")
 				var offset = 0
 				let size = 1000
+				// SQL Server: IDENTITY 컬럼에 값을 넣으려면 그 동안 IDENTITY_INSERT 를 켠다
+				let identity = cols.contains { $0.extra == "auto_increment" } ? dialect.identityInsert(dialect.quoteLocal(t.name), true) : nil
+				if let identity { write(identity + ";\n") }
+				defer { if identity != nil, let off = dialect.identityInsert(dialect.quoteLocal(t.name), false) { write(off + ";\n") } }
 				while !cancelled {
 					let res = try await session.query(dialect.paged("SELECT * FROM \(q)\(order)", limit: size, offset: offset)).last ?? QueryResult()
 					let names = res.columns.map { dialect.quote($0.orgName.isEmpty ? $0.name : $0.orgName) }.joined(separator: ", ")

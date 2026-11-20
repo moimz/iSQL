@@ -21,6 +21,8 @@ final class ExcelImportJob {
 	@ObservationIgnored private weak var session: Session?
 	/// SQL 문법 (세션이 없어졌으면 MySQL — 그때는 어차피 실행하지 않는다)
 	private var dialect: any SQLDialect { session?.dialect ?? SQLKind.mysql.dialect }
+	/// 이 DB 종류 (미리보기 표의 형식 이름)
+	var sqlKind: SQLKind { dialect.kind }
 	let schema: String
 	private(set) var url: URL
 	private(set) var fileSize: Int64 = 0
@@ -230,8 +232,18 @@ final class ExcelImportJob {
 		}
 	}
 
-	static func sqlType(_ k: Kind) -> String {
-		switch k {
+	/// 새 테이블 컬럼 형식. SQL Server 는 그 형식 이름으로 (글자는 유니코드 NVARCHAR — 한글이 콜레이션과 상관없이 들어가게)
+	static func sqlType(_ k: Kind, _ kind: SQLKind = .mysql) -> String {
+		if kind == .sqlserver {
+			switch k {
+			case .double: return "FLOAT"
+			case .datetime: return "DATETIME2(0)"
+			case .varchar(let n): return n > 4000 ? "NVARCHAR(MAX)" : "NVARCHAR(\(n))"
+			case .text: return "NVARCHAR(MAX)"
+			default: break
+			}
+		}
+		return switch k {
 		case .int: "INT"
 		case .bigint: "BIGINT"
 		case .decimal(let m, let d): "DECIMAL(\(m),\(d))"
@@ -288,7 +300,7 @@ final class ExcelImportJob {
 	var createSQL: String {
 		let q = dialect.quote(_:)
 		let names = self.names, kinds = self.kinds
-		var defs = names.indices.map { "\(q(names[$0])) \(Self.sqlType(kinds[$0])) NULL" }
+		var defs = names.indices.map { "\(q(names[$0])) \(Self.sqlType(kinds[$0], dialect.kind)) NULL" }
 		let hasID = names.contains { $0.lowercased() == "id" }
 		if addID && !hasID { defs.insert(dialect.autoIncrementKeyColumn("id"), at: 0) }
 		return dialect.createTable(schema: schema, name: newName.trimmingCharacters(in: .whitespaces), definitions: defs)
@@ -308,7 +320,7 @@ final class ExcelImportJob {
 		let q = dialect.quote(_:)
 		let names = self.names, kinds = self.kinds
 		let tableName = target == .newTable ? newName.trimmingCharacters(in: .whitespaces) : existingName
-		let full = "\(q(schema)).\(q(tableName))"
+		let full = dialect.quote(schema: schema, table: tableName)
 		// 넣을 열과 대상 컬럼
 		var pairs: [(col: Int, name: String, numeric: Bool, dateOnly: Bool)] = []
 		if target == .newTable {

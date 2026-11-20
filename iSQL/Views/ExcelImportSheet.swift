@@ -189,7 +189,7 @@ final class ExcelPreviewSource: GridSource {
 			return names.indices.map { i in
 				let detail: String
 				if job.target == .existing { detail = i < mapping.count ? (mapping[i].map { "→ \($0)" } ?? "건너뜀") : "" }
-				else { detail = i < kinds.count ? ExcelImportJob.sqlType(kinds[i]) : "" }
+				else { detail = i < kinds.count ? ExcelImportJob.sqlType(kinds[i], job.sqlKind) : "" }
 				let numeric: Bool = i < kinds.count && { switch kinds[i] { case .int, .bigint, .decimal, .double: true; default: false } }()
 				return GridColumn(key: String(i), title: names[i], comment: detail, isKey: false, numeric: numeric, long: false)
 			}

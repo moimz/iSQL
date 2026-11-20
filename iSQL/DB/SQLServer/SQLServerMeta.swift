@@ -249,6 +249,18 @@ struct SQLServerMeta: SQLMeta {
 		return out
 	}
 
+	/// 내보내기 끝: 외래 키 (CREATE TABLE 에는 넣지 않아 테이블 순서와 상관없이 넣어진다). 내보낸 테이블끼리만
+	func dumpTrailer(_ run: DBRun, schema db: String, tables: [String]) async throws -> [String] {
+		var out: [String] = []
+		let names = Set(tables)
+		for t in tables {
+			for fk in try await foreignKeys(run, schema: db, table: t, incoming: false) where names.contains(fk.refTable) {
+				out.append("ALTER TABLE \(dialect.quoteLocal(t)) " + dialect.addForeignKeyClause(fk, schema: db))
+			}
+		}
+		return out
+	}
+
 	func indexes(_ run: DBRun, _ table: TableInfo, createSQL: String) async throws -> [IndexInfo] {
 		let s = sys(table.schema)
 		let r = try await one(run, """

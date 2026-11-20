@@ -103,6 +103,17 @@ final class SQLDumpReader: @unchecked Sendable {
 		return true
 	}
 
+	/// GO 뒤 줄 끝까지 공백·숫자(반복 횟수)뿐인지
+	private func goLineRest(from k: Int) -> Bool {
+		var i = k
+		while let b = peek(i) {
+			if b == 0x0A { return true }
+			if b != 0x20 && b != 0x09 && b != 0x0D && !(b >= 0x30 && b <= 0x39) { return false }
+			i += 1
+		}
+		return true
+	}
+
 	/// 다음 문장. 파일 끝이면 nil
 	func next() -> Statement? {
 		var out: [UInt8] = []
@@ -123,6 +134,11 @@ final class SQLDumpReader: @unchecked Sendable {
 						out.append(take())
 						continue
 					}
+					// SQL Server: 프로시저·함수·트리거·뷰 정의와 DECLARE 글 안의 ; 도 (GO 줄에서 끝난다)
+					if syntax.tsqlBatches && content && TSQLScript.startsBlock(String(decoding: out, as: UTF8.self)) {
+						out.append(take())
+						continue
+					}
 					for _ in delimiter { take() }
 					if content { return Statement(bytes: out, line: startLine) }
 					continue
@@ -135,6 +151,21 @@ final class SQLDumpReader: @unchecked Sendable {
 						while let l = out.last, Self.isSpace(l) { out.removeLast() }
 						return Statement(bytes: out, line: startLine)
 					}
+					continue
+				}
+				// SQL Server: 줄에 GO 만 있으면 배치 끝 (뒤에 횟수·공백 허용)
+				if syntax.tsqlBatches && (b == 0x47 || b == 0x67) && (peek(1) == 0x4F || peek(1) == 0x6F) && atLineStart(out) && goLineRest(from: 2) {
+					take(); take()
+					while let c = peek(0), c != 0x0A { take(); _ = c }
+					if content {
+						while let l = out.last, Self.isSpace(l) { out.removeLast() }
+						return Statement(bytes: out, line: startLine)
+					}
+					continue
+				}
+				// SQL Server [이름]: ] 까지 (]] 는 ] 글자)
+				if syntax.tsqlBatches && b == 0x5B {
+					begin(); out.append(take()); state = .quote(0x5D)
 					continue
 				}
 				if syntax.opensQuote(UInt16(b)) {   // ' " `

@@ -40,6 +40,15 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 	/// BEGIN TRAN 뒤 서버가 준 트랜잭션 번호 (Batch 머리에 넣는다, 없으면 0)
 	private var transaction: [UInt8] = Array(repeating: 0, count: 8)
 
+	// 쿼리 취소 (ATTENTION): 다른 스레드에서 같은 소켓에 보낸다
+	private let stateLock = NSLock()
+	/// 쓰기 한 번에 하나 (요청 패킷 사이에 ATTENTION 이 끼지 않게)
+	private let writeLock = NSLock()
+	private var busy = false
+	private var attentionSent = false
+	/// 이번 응답에 취소 확인(DONE + ATTN)이 왔는지
+	private var sawAttention = false
+
 	// MARK: - 바깥에서 쓰는 비동기 API
 
 	static func connect(_ o: Options) async throws -> SQLServerConnection {
@@ -61,6 +70,21 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 	}
 
 	func close() { queue.async { self.closeSync() } }
+
+	/// 실행 중인 요청 취소: ATTENTION 패킷(내용 없음)을 보낸다. 서버는 하던 것을 멈추고 DONE(ATTN)으로 알린다 ([MS-TDS] 2.2.1.7).
+	/// 연결은 그대로 쓸 수 있다
+	func cancel() {
+		stateLock.lock()
+		guard busy, !attentionSent, fd >= 0 else { stateLock.unlock(); return }
+		attentionSent = true
+		stateLock.unlock()
+		DispatchQueue.global(qos: .userInitiated).async {
+			let pkt: [UInt8] = [TDS.packetAttention, TDS.statusEOM, 0, 8, 0, 0, 1, 0]
+			self.writeLock.lock()
+			defer { self.writeLock.unlock() }
+			_ = self.rawWrite(pkt)
+		}
+	}
 
 	deinit { if fd >= 0 { Darwin.close(fd) } }
 
@@ -195,6 +219,9 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 
 	private func batchSync(_ sql: String) throws -> [QueryResult] {
 		let start = Date()
+		stateLock.lock(); busy = true; attentionSent = false; stateLock.unlock()
+		sawAttention = false
+		defer { stateLock.lock(); busy = false; attentionSent = false; stateLock.unlock() }
 		do {
 			// ALL_HEADERS: 트랜잭션 머리 (길이 4 + [길이 4, 종류 2, 트랜잭션 8, 대기 요청 수 4])
 			var body: [UInt8] = []
@@ -206,7 +233,9 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 			body += TDS.utf16le(sql)
 			try writeMessage(TDS.packetSQLBatch, body)
 			let reply = try readMessage()
-			let results = try parse(reply.payload) { _, _ in }
+			let results: [QueryResult]
+			do { results = try parse(reply.payload) { _, _ in } } catch { try finishAttention(); throw error }
+			try finishAttention()
 			onQuery?(sql, Date().timeIntervalSince(start), nil)
 			return results
 		} catch {
@@ -246,6 +275,7 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 				let status = try r.u16()
 				_ = try r.u16()
 				let count = try r.u64()
+				if status & TDS.doneAttn != 0 { sawAttention = true }
 				if var c = current {
 					if status & TDS.doneCount != 0 { c.affectedRows = count }
 					results.append(c)
@@ -309,6 +339,19 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 			results[results.count - 1].info = infos.joined(separator: "\n")
 		}
 		return results.isEmpty ? [QueryResult()] : results
+	}
+
+	/// 취소를 보냈으면 확인(DONE + ATTN)까지 읽고 "취소됨" 을 던진다. 확인이 이번 응답에 없으면 다음 메시지를 더 읽는다
+	private func finishAttention() throws {
+		stateLock.lock(); let sent = attentionSent; stateLock.unlock()
+		guard sent || sawAttention else { return }
+		var guardCount = 0
+		while !sawAttention && guardCount < 1000 {
+			guardCount += 1
+			let m = try readMessage()
+			_ = try? parse(m.payload) { _, _ in }
+		}
+		throw TDSError.cancelled
 	}
 
 	private func envChange(_ b: [UInt8]) throws {
@@ -504,6 +547,9 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 
 	/// 메시지 하나를 패킷들로 나눠 보낸다 (마지막 패킷에 EOM)
 	private func writeMessage(_ type: UInt8, _ payload: [UInt8]) throws {
+		// 메시지 하나를 다 보낼 때까지 ATTENTION 이 끼지 않게
+		writeLock.lock()
+		defer { writeLock.unlock() }
 		let room = packetSize - 8
 		var off = 0
 		repeat {
@@ -554,6 +600,23 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 		return out
 	}
 
+	/// ATTENTION 용: 실패해도 연결을 닫지 않는다 (읽는 쪽이 알아서 끝난다)
+	private func rawWrite(_ bytes: [UInt8]) -> Bool {
+		var off = 0
+		while off < bytes.count {
+			let n: Int
+			if let tls {
+				n = (try? bytes.withUnsafeBytes { try tls.write($0.baseAddress! + off, bytes.count - off) }) ?? -1
+			} else {
+				n = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + off, bytes.count - off) }
+			}
+			if n <= 0 { return false }
+			off += n
+		}
+		return true
+	}
+
+	/// writeLock 을 잡은 채로 부른다 (writeMessage)
 	private func writeAll(_ bytes: [UInt8]) throws {
 		var off = 0
 		while off < bytes.count {

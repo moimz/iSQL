@@ -11,6 +11,10 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func quote(schema: String, table: String) -> String
 	/// DB 없이 그 DB 안에서 쓰는 테이블 이름 (내보내기 파일). 기본은 quote(이름), SQL Server 는 [스키마].[이름]
 	func quoteLocal(_ table: String) -> String
+	/// 자동 증가 컬럼에 값을 넣는 동안 켜고 끄는 문장 (SQL Server: SET IDENTITY_INSERT, 다른 DB 는 nil)
+	func identityInsert(_ table: String, _ on: Bool) -> String?
+	/// 내보내기 파일에서 배치를 나누는 줄 (SQL Server: GO — CREATE VIEW · 프로시저는 배치에 혼자 있어야 한다). 다른 DB 는 nil
+	var batchSeparator: String? { get }
 	/// 그대로 쓸 수 있는 이름이면 그대로, 아니면 감싸기 (자동 완성). reserved 는 대문자 예약어
 	func quoteIfNeeded(_ name: String, reserved: Set<String>) -> String
 	/// 값 리터럴 (NULL, '글자', 바이너리)
@@ -72,6 +76,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 extension SQLDialect {
 	func quote(schema: String, table: String) -> String { quote(schema) + "." + quote(table) }
 	func quoteLocal(_ table: String) -> String { quote(table) }
+	func identityInsert(_ table: String, _ on: Bool) -> String? { nil }
+	var batchSeparator: String? { nil }
 	/// 테이블 (스키마.테이블)
 	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
 	func paged(_ sql: String, limit: Int) -> String { paged(sql, limit: limit, offset: nil) }

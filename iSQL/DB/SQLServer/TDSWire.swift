@@ -127,6 +127,8 @@ enum TDSError: LocalizedError {
 	case server(number: Int, state: Int, severity: Int, message: String, line: Int, procedure: String)
 	case protocolError(String)
 	case io(String)
+	/// 쿼리 취소 (ATTENTION 확인을 받음)
+	case cancelled
 	case closed
 
 	var errorDescription: String? {
@@ -134,6 +136,7 @@ enum TDSError: LocalizedError {
 		case .server(let n, _, _, let m, let line, let proc):
 			"\(m) (오류 \(n)" + (proc.isEmpty ? "" : ", \(proc)") + (line > 0 ? ", \(line)번째 줄" : "") + ")"
 		case .protocolError(let s), .io(let s): s
+		case .cancelled: "쿼리를 취소했습니다."
 		case .closed: "서버와 연결이 끊어졌습니다."
 		}
 	}
@@ -363,5 +366,70 @@ enum TDSValues {
 		}
 		let d = Double(bitPattern: uint(b))
 		return d == d.rounded() && abs(d) < 1e15 ? String(format: "%.0f", d) : "\(d)"
+	}
+}
+
+// MARK: - T-SQL 글 (연결이 GO 배치를 나누고, 쿼리 패널이 문장을 나눈다)
+
+/// T-SQL 글 나누기 도움
+enum TSQLScript {
+	/// ; 로 나누면 안 되는 글로 시작하는지: CREATE [OR ALTER] / ALTER 프로시저·함수·트리거·뷰, DECLARE (변수는 배치 안에서만 산다)
+	static func startsBlock(_ s: String) -> Bool {
+		let t = s.replacingOccurrences(of: #"(?s)/\*.*?\*/|--[^\n]*"#, with: " ", options: .regularExpression)
+		let words = t.split(whereSeparator: { !($0.isLetter || $0 == "_") }).prefix(4).map { $0.uppercased() }
+		guard let first = words.first else { return false }
+		if first == "DECLARE" { return true }
+		guard first == "CREATE" || first == "ALTER" else { return false }
+		let objects: Set<String> = ["PROCEDURE", "PROC", "FUNCTION", "TRIGGER", "VIEW"]
+		for w in words.dropFirst() {
+			if objects.contains(w) { return true }
+			if !["OR", "ALTER"].contains(w) { return false }
+		}
+		return false
+	}
+
+	/// 줄 전체가 GO (뒤에 횟수·공백 허용) 인지: u[i] 가 줄 첫 글자일 때 그 줄 끝 위치, 아니면 nil
+	static func goLineEnd(_ u: [UInt16], at i: Int) -> Int? {
+		var b = i - 1
+		while b >= 0 && (u[b] == 32 || u[b] == 9) { b -= 1 }
+		guard b < 0 || u[b] == 10 else { return nil }
+		guard i + 1 < u.count, u[i] == 71 || u[i] == 103, u[i + 1] == 79 || u[i + 1] == 111 else { return nil }
+		var j = i + 2
+		while j < u.count && (u[j] == 32 || u[j] == 9 || u[j] == 13 || (u[j] >= 48 && u[j] <= 57)) { j += 1 }
+		return j >= u.count || u[j] == 10 ? j : nil
+	}
+
+	/// GO 줄로 배치 나누기 (빈 배치는 뺀다)
+	static func batches(_ sql: String) -> [String] {
+		let u = Array(sql.utf16)
+		var out: [String] = []
+		var start = 0, i = 0
+		var quote: UInt16 = 0
+		func cut(_ end: Int) {
+			let t = String(utf16CodeUnits: Array(u[start..<end]), count: end - start).trimmingCharacters(in: .whitespacesAndNewlines)
+			if !t.isEmpty { out.append(t) }
+		}
+		while i < u.count {
+			let c = u[i]
+			if quote != 0 { if c == quote { quote = 0 }; i += 1; continue }
+			switch c {
+			case 39: quote = 39
+			case 91: quote = 93          // [ … ]
+			case 45 where i + 1 < u.count && u[i + 1] == 45:
+				while i < u.count && u[i] != 10 { i += 1 }
+				continue
+			case 47 where i + 1 < u.count && u[i + 1] == 42:
+				i += 2
+				while i + 1 < u.count && !(u[i] == 42 && u[i + 1] == 47) { i += 1 }
+				i += 2
+				continue
+			case 71, 103:
+				if let end = goLineEnd(u, at: i) { cut(i); start = end; i = end; continue }
+			default: break
+			}
+			i += 1
+		}
+		cut(u.count)
+		return out
 	}
 }
