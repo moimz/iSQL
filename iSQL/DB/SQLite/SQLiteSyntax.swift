@@ -32,10 +32,14 @@ extension SQLSyntax {
 
 /// SQLite 트리거 글 나누기
 enum SQLiteScript {
-	/// CREATE [TEMP] TRIGGER 로 시작했고 아직 END 로 끝나지 않았으면 true (그 안의 ; 는 문장 끝이 아니다)
+	/// CREATE [TEMP] TRIGGER 로 시작했고 아직 끝나지 않았으면 true (그 안의 ; 는 문장 끝이 아니다).
+	/// s 는 지금 ; 앞까지의 글. 트리거는 "; END" 다음 ; 에서 끝난다 (sqlite3_complete 와 같게) —
+	/// 그냥 END 로 끝나는지만 보면 본문의 CASE … END; 에서 끊긴다. 주석 · 글자 · 따옴표 이름 안은 보지 않는다
 	static func insideTrigger(_ s: String) -> Bool {
-		let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+		let t = s.replacingOccurrences(of: #"(?s)/\*.*?(\*/|$)|--[^\n]*|'(''|[^'])*('|$)|"(""|[^"])*("|$)|`[^`]*(`|$)|\[[^\]]*(\]|$)"#,
+		                               with: " ", options: .regularExpression)
+			.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard t.range(of: #"^(?i)CREATE\s+(TEMP\s+|TEMPORARY\s+)?TRIGGER\b"#, options: .regularExpression) != nil else { return false }
-		return t.range(of: #"(?i)\bEND$"#, options: .regularExpression) == nil
+		return t.range(of: #"(?i);\s*END$"#, options: .regularExpression) == nil
 	}
 }

@@ -221,7 +221,7 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 		let start = Date()
 		stateLock.lock(); busy = true; attentionSent = false; stateLock.unlock()
 		sawAttention = false
-		defer { stateLock.lock(); busy = false; attentionSent = false; stateLock.unlock() }
+		defer { endBatch() }
 		do {
 			// ALL_HEADERS: 트랜잭션 머리 (길이 4 + [길이 4, 종류 2, 트랜잭션 8, 대기 요청 수 4])
 			var body: [UInt8] = []
@@ -345,13 +345,28 @@ final class SQLServerConnection: DBConnection, @unchecked Sendable {
 	private func finishAttention() throws {
 		stateLock.lock(); let sent = attentionSent; stateLock.unlock()
 		guard sent || sawAttention else { return }
-		var guardCount = 0
-		while !sawAttention && guardCount < 1000 {
-			guardCount += 1
+		try drainAttention()
+		throw TDSError.cancelled
+	}
+
+	/// 배치 끝: busy 를 내린 뒤로는 cancel() 이 ATTENTION 을 보내지 않는다. 그 전에 보냈는데 확인을 아직 못 읽었으면
+	/// (응답을 다 읽은 바로 그때 취소를 누른 경우) 여기서 읽어 버린다 — 안 읽으면 다음 쿼리가 그 확인을 자기 응답으로 읽고,
+	/// 그 뒤로 모든 쿼리가 앞 쿼리의 결과를 받는다. 확인을 못 읽으면 연결을 닫는다 (어긋난 채로 쓰지 않게)
+	private func endBatch() {
+		stateLock.lock(); busy = false; let sent = attentionSent; attentionSent = false; stateLock.unlock()
+		guard sent, !sawAttention, fd >= 0 else { return }
+		do { try drainAttention() } catch { closeSync() }
+	}
+
+	/// 확인(DONE + ATTN)이 올 때까지 메시지를 읽어 버린다. 너무 오래 안 오면 연결을 닫고 오류
+	private func drainAttention() throws {
+		var count = 0
+		while !sawAttention {
+			count += 1
+			guard count <= 1000 else { closeSync(); throw TDSError.closed }
 			let m = try readMessage()
 			_ = try? parse(m.payload) { _, _ in }
 		}
-		throw TDSError.cancelled
 	}
 
 	private func envChange(_ b: [UInt8]) throws {

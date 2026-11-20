@@ -373,12 +373,18 @@ enum TDSValues {
 
 /// T-SQL 글 나누기 도움
 enum TSQLScript {
-	/// ; 로 나누면 안 되는 글로 시작하는지: CREATE [OR ALTER] / ALTER 프로시저·함수·트리거·뷰, DECLARE (변수는 배치 안에서만 산다)
+	/// ; 로 나누면 안 되는 글로 시작하는지: CREATE [OR ALTER] / ALTER 프로시저·함수·트리거·뷰, DECLARE (변수는 배치 안에서만 산다),
+	/// IF · WHILE · BEGIN … END · BEGIN TRY … CATCH (흐름 제어 — 안의 ; 로 자르면 구문 오류). 이런 글은 GO 줄이나 글 끝까지 한 배치로 보낸다.
+	/// BEGIN TRAN(SACTION) · BEGIN DISTRIBUTED … 는 문장 하나라 그대로 나눈다
 	static func startsBlock(_ s: String) -> Bool {
 		let t = s.replacingOccurrences(of: #"(?s)/\*.*?\*/|--[^\n]*"#, with: " ", options: .regularExpression)
 		let words = t.split(whereSeparator: { !($0.isLetter || $0 == "_") }).prefix(4).map { $0.uppercased() }
 		guard let first = words.first else { return false }
-		if first == "DECLARE" { return true }
+		if first == "DECLARE" || first == "IF" || first == "WHILE" { return true }
+		if first == "BEGIN" {
+			let next = words.dropFirst().first ?? ""
+			return !["TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION"].contains(next)
+		}
 		guard first == "CREATE" || first == "ALTER" else { return false }
 		let objects: Set<String> = ["PROCEDURE", "PROC", "FUNCTION", "TRIGGER", "VIEW"]
 		for w in words.dropFirst() {
