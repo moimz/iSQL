@@ -393,6 +393,102 @@ struct OracleMeta: SQLMeta {
 	}
 	func eventSchedulerOff(_ run: DBRun) async -> Bool { false }
 	func accounts(_ run: DBRun) async throws -> [DBAccount] { throw unsupported }
+
+	/// 사용자 계정 보기만: DBA_USERS · DBA_ROLE_PRIVS · DBA_SYS_PRIVS · DBA_TAB_PRIVS.
+	/// DBA 뷰를 못 읽으면(SELECT_CATALOG_ROLE 등 없음) ALL_USERS 이름 목록 + 내 계정(USER_*)만
+	func accountOverview(_ run: DBRun) async throws -> AccountOverview {
+		var o = AccountOverview()
+		o.current = try await one(run, "SELECT USER FROM dual").rows.first?.first?.string ?? ""
+		o.roleTitle = "역할"; o.databaseTitle = "객체 권한"; o.permissionTitle = "시스템 권한"
+		o.roleEmpty = "받은 역할 없음"; o.databaseEmpty = "받은 객체 권한 없음 (자기 스키마 객체는 권한 없이 씀)"; o.permissionEmpty = "받은 시스템 권한 없음"
+		let date = "'YYYY-MM-DD HH24:MI:SS'"
+		func status(_ s: String) -> String {
+			s.replacingOccurrences(of: "EXPIRED(GRACE)", with: "비밀번호 만료 유예").replacingOccurrences(of: "LOCKED(TIMED)", with: "잠김(시간)")
+				.replacingOccurrences(of: "EXPIRED", with: "비밀번호 만료").replacingOccurrences(of: "LOCKED", with: "잠김")
+				.replacingOccurrences(of: "OPEN", with: "사용 중").replacingOccurrences(of: " & ", with: " · ")
+		}
+		let auth = ["PASSWORD": "비밀번호", "EXTERNAL": "외부 인증", "GLOBAL": "글로벌 (디렉터리)", "NONE": "스키마 전용 (로그인 없음)"]
+		func roleText(_ r: [Value]) -> String {
+			(r[safe: 1]?.string ?? "") + (r[safe: 2]?.string == "YES" ? " (ADMIN OPTION)" : "") + (r[safe: 3]?.string == "NO" ? " · 기본 역할 아님" : "")
+		}
+		do {
+			let users = try await one(run, """
+				SELECT username, account_status, authentication_type, default_tablespace, temporary_tablespace, profile,
+				       TO_CHAR(created, \(date)), TO_CHAR(lock_date, \(date)), TO_CHAR(expiry_date, \(date)), oracle_maintained,
+				       TO_CHAR(CAST(last_login AS DATE), \(date))
+				  FROM dba_users ORDER BY oracle_maintained, username
+				""")
+			var roles: [String: [String]] = [:], sys: [String: [String]] = [:], objs: [String: [String: [String]]] = [:]
+			for r in try await one(run, "SELECT grantee, granted_role, admin_option, default_role FROM dba_role_privs ORDER BY granted_role").rows {
+				if let g = r[safe: 0]?.string { roles[g, default: []].append(roleText(r)) }
+			}
+			for r in try await one(run, "SELECT grantee, privilege, admin_option FROM dba_sys_privs ORDER BY privilege").rows {
+				if let g = r[safe: 0]?.string { sys[g, default: []].append((r[safe: 1]?.string ?? "") + (r[safe: 2]?.string == "YES" ? " (ADMIN OPTION)" : "")) }
+			}
+			// 객체 권한은 Oracle 이 만든 사용자(SYS 등 수만 줄)는 빼고
+			for r in try await one(run, """
+				SELECT p.grantee, p.owner, p.table_name, p.privilege, p.grantable FROM dba_tab_privs p
+				JOIN dba_users u ON u.username = p.grantee AND u.oracle_maintained = 'N'
+				ORDER BY p.owner, p.table_name, p.privilege
+				""").rows {
+				guard let g = r[safe: 0]?.string, let owner = r[safe: 1]?.string else { continue }
+				objs[g, default: [:]][owner, default: []].append("\(r[safe: 3]?.string ?? "") ON \(r[safe: 2]?.string ?? "")" + (r[safe: 4]?.string == "YES" ? " (GRANT OPTION)" : ""))
+			}
+			for r in users.rows {
+				func s(_ i: Int) -> String { r[safe: i]?.string ?? "" }
+				var a = AccountInfo(name: s(0), kind: auth[s(2)] ?? s(2))
+				a.system = s(9) == "Y"
+				a.disabled = s(1) != "OPEN" && !s(1).contains("GRACE")
+				a.fields = [.init(label: "상태", value: status(s(1))), .init(label: "인증", value: a.kind),
+				            .init(label: "기본 테이블스페이스", value: s(3).ifEmpty("—")), .init(label: "임시 테이블스페이스", value: s(4).ifEmpty("—")),
+				            .init(label: "프로파일", value: s(5).ifEmpty("—")), .init(label: "만든 때", value: s(6))]
+				if !s(7).isEmpty { a.fields.append(.init(label: "잠긴 때", value: s(7))) }
+				if !s(8).isEmpty { a.fields.append(.init(label: "비밀번호 만료", value: s(8))) }
+				a.fields.append(.init(label: "마지막 로그인", value: s(10).ifEmpty("—")))
+				if a.system { a.fields.append(.init(label: "만든 곳", value: "Oracle (기본 계정)")) }
+				a.roles = roles[a.name] ?? []
+				a.permissions = sys[a.name] ?? []
+				a.databases = (objs[a.name] ?? [:]).sorted { $0.key < $1.key }.map { .init(database: $0.key, user: "", schema: "", roles: $0.value) }
+				o.accounts.append(a)
+			}
+			return o
+		} catch {
+			// DBA 뷰를 못 읽음: 이름 목록(ALL_USERS) + 내 계정만
+			o.note = "다른 사용자의 상태 · 권한을 보려면 DBA 뷰를 읽을 권한(SELECT_CATALOG_ROLE 등)이 있어야 합니다. 지금은 이름과 내 계정만 보입니다."
+		}
+		let me = try await one(run, """
+			SELECT username, account_status, default_tablespace, temporary_tablespace, TO_CHAR(created, \(date)), TO_CHAR(lock_date, \(date)), TO_CHAR(expiry_date, \(date))
+			  FROM user_users
+			""").rows.first
+		let myRoles = try await one(run, "SELECT username, granted_role, admin_option, default_role FROM user_role_privs ORDER BY granted_role").rows.map(roleText)
+		let mySys = try await one(run, "SELECT privilege, admin_option FROM user_sys_privs ORDER BY privilege").rows.map { ($0[safe: 0]?.string ?? "") + ($0[safe: 1]?.string == "YES" ? " (ADMIN OPTION)" : "") }
+		var myObjs: [String: [String]] = [:]
+		for r in try await one(run, "SELECT owner, table_name, privilege, grantable FROM user_tab_privs WHERE grantee = USER ORDER BY owner, table_name, privilege").rows {
+			myObjs[r[safe: 0]?.string ?? "", default: []].append("\(r[safe: 2]?.string ?? "") ON \(r[safe: 1]?.string ?? "")" + (r[safe: 3]?.string == "YES" ? " (GRANT OPTION)" : ""))
+		}
+		for r in try await one(run, "SELECT username, TO_CHAR(created, \(date)), oracle_maintained FROM all_users ORDER BY oracle_maintained, username").rows {
+			let name = r[safe: 0]?.string ?? ""
+			var a = AccountInfo(name: name, kind: "")
+			a.system = r[safe: 2]?.string == "Y"
+			if name == o.current, let me {
+				func s(_ i: Int) -> String { me[safe: i]?.string ?? "" }
+				a.kind = "내 계정"
+				a.disabled = s(1) != "OPEN" && !s(1).contains("GRACE")
+				a.fields = [.init(label: "상태", value: status(s(1))), .init(label: "기본 테이블스페이스", value: s(2).ifEmpty("—")),
+				            .init(label: "임시 테이블스페이스", value: s(3).ifEmpty("—")), .init(label: "만든 때", value: s(4))]
+				if !s(5).isEmpty { a.fields.append(.init(label: "잠긴 때", value: s(5))) }
+				if !s(6).isEmpty { a.fields.append(.init(label: "비밀번호 만료", value: s(6))) }
+				a.roles = myRoles
+				a.permissions = mySys
+				a.databases = myObjs.sorted { $0.key < $1.key }.map { .init(database: $0.key, user: "", schema: "", roles: $0.value) }
+			} else {
+				a.kind = a.system ? "Oracle 기본 계정" : "사용자"
+				a.fields = [.init(label: "만든 때", value: r[safe: 1]?.string ?? ""), .init(label: "자세히", value: "권한이 없어 볼 수 없음")]
+			}
+			o.accounts.append(a)
+		}
+		return o
+	}
 	func databaseGrants(_ run: DBRun) async throws -> [String: [DBGrant]] { throw unsupported }
 	func currentUser(_ run: DBRun) async throws -> String? { try await one(run, "SELECT USER FROM dual").rows.first?.first?.string }
 	func grantStatements(_ run: DBRun, account: String) async throws -> [String] { throw unsupported }

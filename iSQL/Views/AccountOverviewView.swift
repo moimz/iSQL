@@ -95,9 +95,9 @@ struct AccountOverviewView: View {
 		if let a = selected {
 			BoxTabView(titles: ["일반", overview.roleTitle, overview.databaseTitle, overview.permissionTitle], selection: $detailTab) { i in
 				switch i {
-				case 1: AnyView(page { lines(a.roles, empty: "역할 없음 (public 만)") })
+				case 1: AnyView(page { lines(a.roles, empty: overview.roleEmpty) })
 				case 2: AnyView(page { databases(a) })
-				case 3: AnyView(page { lines(a.permissions, empty: "직접 받은 권한 없음", mono: true) })
+				case 3: AnyView(page { lines(a.permissions, empty: overview.permissionEmpty, mono: true) })
 				default: AnyView(page { general(a) })
 				}
 			}
@@ -156,21 +156,31 @@ struct AccountOverviewView: View {
 	private func databases(_ a: AccountInfo) -> some View {
 		VStack(alignment: .leading, spacing: 12) {
 			if a.databases.isEmpty {
-				Text("이어진 DB 사용자가 없습니다 (기본 DB 외에는 들어갈 수 없거나, sysadmin 이면 모든 DB 를 dbo 로 씁니다)")
-					.foregroundStyle(.secondary)
+				Text(overview.databaseEmpty).foregroundStyle(.secondary)
 			}
 			ForEach(a.databases, id: \.self) { d in
 				VStack(alignment: .leading, spacing: 4) {
 					HStack(spacing: 6) {
 						Image(systemName: "cylinder").foregroundStyle(.secondary)
 						Text(d.database).font(.headline)
-						Text("사용자 \(d.user)" + (d.schema.isEmpty ? "" : " · 기본 스키마 \(d.schema)"))
-							.foregroundStyle(.secondary)
+						if !d.user.isEmpty {
+							Text("사용자 \(d.user)" + (d.schema.isEmpty ? "" : " · 기본 스키마 \(d.schema)"))
+								.foregroundStyle(.secondary)
+						}
 					}
-					Text(d.roles.isEmpty ? "역할 없음 (public 만)" : d.roles.joined(separator: ", "))
-						.foregroundStyle(d.roles.isEmpty ? .secondary : .primary)
+					if d.user.isEmpty {
+						// Oracle 객체 권한: 줄마다 하나
+						VStack(alignment: .leading, spacing: 2) {
+							ForEach(d.roles, id: \.self) { Text($0).font(.body.monospaced()) }
+						}
 						.padding(.leading, 22)
 						.textSelection(.enabled)
+					} else {
+						Text(d.roles.isEmpty ? overview.roleEmpty : d.roles.joined(separator: ", "))
+							.foregroundStyle(d.roles.isEmpty ? .secondary : .primary)
+							.padding(.leading, 22)
+							.textSelection(.enabled)
+					}
 				}
 			}
 		}

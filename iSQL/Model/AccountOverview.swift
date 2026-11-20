@@ -12,6 +12,10 @@ struct AccountOverview {
 	var roleTitle = "서버 역할"
 	var databaseTitle = "데이터베이스"
 	var permissionTitle = "서버 권한"
+	/// 탭이 비었을 때 글
+	var roleEmpty = "역할 없음 (public 만)"
+	var databaseEmpty = "이어진 DB 사용자가 없습니다 (기본 DB 외에는 들어갈 수 없거나, sysadmin 이면 모든 DB 를 dbo 로 씁니다)"
+	var permissionEmpty = "직접 받은 권한 없음"
 }
 
 struct AccountInfo: Identifiable, Hashable {
@@ -32,7 +36,7 @@ struct AccountInfo: Identifiable, Hashable {
 	var id: String { name }
 
 	struct Field: Hashable { let label: String; let value: String }
-	/// DB 하나에 이어진 사용자와 그 DB 의 역할
+	/// DB 하나에 이어진 사용자와 그 DB 의 역할 (Oracle: database = 객체 주인 스키마, roles = 그 스키마 객체에 받은 권한, user 는 비움)
 	struct Access: Hashable { let database: String; let user: String; let schema: String; let roles: [String] }
 }
 

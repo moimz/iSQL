@@ -87,6 +87,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.autoIncrementEdit = false; c.rowFormat = false; c.unsignedColumns = false; c.onUpdateTimestamp = false
 			c.fulltextIndex = false; c.spatialIndex = false
 			c.foreignKeyChecksToggle = false; c.jsonPathFilter = false
+			// 사용자 계정: 보기만 (사용자 2026-11-20)
+			c.accountsView = true
 		}
 		if self == .sqlserver {
 			// 데이터베이스 > 스키마 > 테이블 (사이드바는 DB 아래 "스키마.테이블", dbo 는 이름만). 계정·엔진·문자셋은 아직 없다
