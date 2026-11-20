@@ -456,6 +456,104 @@ struct SQLServerMeta: SQLMeta {
 	}
 	func eventSchedulerOff(_ run: DBRun) async -> Bool { false }
 	func accounts(_ run: DBRun) async throws -> [DBAccount] { throw unsupported }
+
+	/// 사용자 계정 보기만: 로그인(sys.server_principals) · 서버 역할 · 서버 권한, 그리고 DB 마다 그 로그인에 이어진 사용자와 DB 역할.
+	/// 남의 로그인은 VIEW ANY DEFINITION(또는 sysadmin) 이 있어야 보인다. 없으면 자기 것과 sa 정도만
+	func accountOverview(_ run: DBRun) async throws -> AccountOverview {
+		var o = AccountOverview()
+		o.current = try await one(run, "SELECT SUSER_NAME()").rows.first?.first?.string ?? ""
+		let kinds = ["S": "SQL 로그인", "U": "Windows 로그인", "G": "Windows 그룹", "E": "Entra ID 사용자", "X": "Entra ID 그룹", "C": "인증서", "K": "비대칭 키"]
+		let logins = try await one(run, """
+			SELECT sp.name, sp.type, sp.is_disabled, CONVERT(VARCHAR(19), sp.create_date, 120), CONVERT(VARCHAR(19), sp.modify_date, 120),
+			       sp.default_database_name, sp.default_language_name, sl.is_policy_checked, sl.is_expiration_checked,
+			       CAST(LOGINPROPERTY(sp.name, 'IsLocked') AS INT), CAST(LOGINPROPERTY(sp.name, 'IsExpired') AS INT),
+			       CONVERT(VARCHAR(19), CAST(LOGINPROPERTY(sp.name, 'PasswordLastSetTime') AS DATETIME), 120),
+			       CAST(LOGINPROPERTY(sp.name, 'BadPasswordCount') AS INT)
+			  FROM sys.server_principals sp LEFT JOIN sys.sql_logins sl ON sl.principal_id = sp.principal_id
+			 WHERE sp.type IN ('S', 'U', 'G', 'E', 'X', 'C', 'K')
+			 ORDER BY CASE WHEN sp.name LIKE '##%' OR sp.name LIKE 'NT %' OR sp.name LIKE 'BUILTIN\\%' THEN 1 ELSE 0 END, sp.name
+			""")
+		let roles = try await one(run, """
+			SELECT m.name, r.name FROM sys.server_role_members rm
+			JOIN sys.server_principals r ON r.principal_id = rm.role_principal_id
+			JOIN sys.server_principals m ON m.principal_id = rm.member_principal_id ORDER BY r.name
+			""")
+		let perms = try await one(run, """
+			SELECT p.name, sp.state_desc, sp.permission_name FROM sys.server_permissions sp
+			JOIN sys.server_principals p ON p.principal_id = sp.grantee_principal_id
+			WHERE sp.class = 100 ORDER BY sp.permission_name
+			""")
+		var roleMap: [String: [String]] = [:], permMap: [String: [String]] = [:]
+		for r in roles.rows { if let m = r[safe: 0]?.string, let n = r[safe: 1]?.string { roleMap[m, default: []].append(n) } }
+		for r in perms.rows {
+			guard let m = r[safe: 0]?.string else { continue }
+			// 모든 로그인이 기본으로 받는 CONNECT SQL 은 빼고 (막은 DENY 만 보인다)
+			if r[safe: 2]?.string == "CONNECT SQL", r[safe: 1]?.string == "GRANT" { continue }
+			let state = (r[safe: 1]?.string ?? "").replacingOccurrences(of: "_WITH_GRANT_OPTION", with: "")
+			let withGrant = (r[safe: 1]?.string ?? "").hasSuffix("WITH_GRANT_OPTION")
+			permMap[m, default: []].append("\(state) \(r[safe: 2]?.string ?? "")" + (withGrant ? " (WITH GRANT OPTION)" : ""))
+		}
+		// DB 마다: 로그인과 sid 로 이어진 사용자 · 기본 스키마 · DB 역할 (역할은 줄마다, 여기서 묶는다 — STRING_AGG 는 2017 부터)
+		var access: [String: [AccountInfo.Access]] = [:]
+		var unreadable: [String] = []
+		for db in try await databaseNames(run) where !["tempdb", "model"].contains(db) {
+			let s = sys(db)
+			do {
+				let r = try await one(run, """
+					SELECT sp.name, dp.name, ISNULL(dp.default_schema_name, N''), r.name
+					  FROM \(s)database_principals dp
+					  JOIN sys.server_principals sp ON sp.sid = dp.sid
+					  LEFT JOIN \(s)database_role_members rm ON rm.member_principal_id = dp.principal_id
+					  LEFT JOIN \(s)database_principals r ON r.principal_id = rm.role_principal_id
+					 WHERE dp.type IN ('S', 'U', 'G', 'E', 'X', 'C', 'K')
+					 ORDER BY sp.name, r.name
+					""")
+				var byLogin: [String: (user: String, schema: String, roles: [String])] = [:]
+				var order: [String] = []
+				for row in r.rows {
+					guard let login = row[safe: 0]?.string else { continue }
+					if byLogin[login] == nil { order.append(login); byLogin[login] = (row[safe: 1]?.string ?? "", row[safe: 2]?.string ?? "", []) }
+					if let role = row[safe: 3]?.string { byLogin[login]?.roles.append(role) }
+				}
+				for login in order { if let a = byLogin[login] { access[login, default: []].append(.init(database: db, user: a.user, schema: a.schema, roles: a.roles)) } }
+			} catch {
+				unreadable.append(db)
+			}
+		}
+		for row in logins.rows {
+			func s(_ i: Int) -> String { row[safe: i]?.string ?? "" }
+			let name = s(0), type = s(1)
+			var a = AccountInfo(name: name, kind: kinds[type] ?? type)
+			a.system = name.hasPrefix("##") || name.hasPrefix("NT ") || name.hasPrefix("BUILTIN\\")
+			let locked = s(9) == "1", expired = s(10) == "1", disabled = s(2) == "1"
+			a.disabled = locked || expired || disabled
+			a.fields.append(.init(label: "상태", value: [disabled ? "사용 안 함" : nil, locked ? "잠김" : nil, expired ? "비밀번호 만료" : nil].compactMap { $0 }.joined(separator: " · ").ifEmpty("사용 중")))
+			a.fields.append(.init(label: "종류", value: a.kind))
+			if type == "S" {
+				a.fields.append(.init(label: "암호 정책", value: s(7) == "1" ? "검사" : "검사 안 함"))
+				a.fields.append(.init(label: "만료 검사", value: s(8) == "1" ? "검사" : "검사 안 함"))
+				if !s(11).isEmpty { a.fields.append(.init(label: "비밀번호 바꾼 때", value: s(11))) }
+				if let bad = Int(s(12)), bad > 0 { a.fields.append(.init(label: "틀린 비밀번호", value: "\(bad)번")) }
+			}
+			a.fields.append(.init(label: "기본 DB", value: s(5).ifEmpty("—")))
+			a.fields.append(.init(label: "기본 언어", value: s(6).ifEmpty("—")))
+			a.fields.append(.init(label: "만든 때", value: s(3)))
+			a.fields.append(.init(label: "바꾼 때", value: s(4)))
+			a.roles = roleMap[name] ?? []
+			a.permissions = permMap[name] ?? []
+			a.databases = access[name] ?? []
+			o.accounts.append(a)
+		}
+		var notes: [String] = []
+		let seeAll = try await one(run, "SELECT HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW ANY DEFINITION')").rows.first?.first?.string == "1"
+		if !seeAll {
+			notes.append("다른 로그인을 보려면 VIEW ANY DEFINITION 권한이 있어야 합니다.")
+		}
+		if !unreadable.isEmpty { notes.append("읽지 못한 DB: \(unreadable.joined(separator: ", "))") }
+		o.note = notes.isEmpty ? nil : notes.joined(separator: " ")
+		o.databaseTitle = "DB 사용자 · 역할"
+		return o
+	}
 	func databaseGrants(_ run: DBRun) async throws -> [String: [DBGrant]] { throw unsupported }
 	func currentUser(_ run: DBRun) async throws -> String? { try await one(run, "SELECT SUSER_NAME()").rows.first?.first?.string }
 	func grantStatements(_ run: DBRun, account: String) async throws -> [String] { throw unsupported }

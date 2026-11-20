@@ -12,6 +12,8 @@ struct SQLCapabilities: Sendable {
 	// MARK: 서버 관리 (서버 설정 창)
 	/// 사용자 계정 탭 (MySQL 전용 — 다른 DB 는 실제로 지원할 때 정한다, 사용자 2026-11-18)
 	var accounts = true
+	/// 사용자 계정 탭을 보기만으로 (accounts 가 꺼진 종류: SQL Server). meta.accountOverview 를 읽는다
+	var accountsView = false
 	/// 상태 탭 (요약·프로세스 목록)
 	var serverStatus = true
 	/// 프로세스 목록에서 쿼리 멈추기·연결 끊기

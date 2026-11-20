@@ -97,6 +97,8 @@ protocol SQLMeta: Sendable {
 	func eventSchedulerOff(_ run: DBRun) async -> Bool
 	/// 계정 목록과 전역 권한 (권한 이름은 Privilege.sql)
 	func accounts(_ run: DBRun) async throws -> [DBAccount]
+	/// 보기만 하는 계정 목록 (capabilities.accountsView 인 종류)
+	func accountOverview(_ run: DBRun) async throws -> AccountOverview
 	/// 계정 id(user@host) → DB 별 권한
 	func databaseGrants(_ run: DBRun) async throws -> [String: [DBGrant]]
 	/// 지금 접속한 계정
@@ -131,4 +133,5 @@ extension SQLMeta {
 	}
 	func dumpTrailer(_ run: DBRun, schema: String, tables: [String]) async throws -> [String] { [] }
 	func dumpPreamble(schema: String, tables: [String]) -> [String] { [] }
+	func accountOverview(_ run: DBRun) async throws -> AccountOverview { throw DBError.message("이 서버 종류에서는 계정 목록을 볼 수 없습니다.") }
 }

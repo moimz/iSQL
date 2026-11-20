@@ -36,7 +36,7 @@ final class ServerSettingsWindow: NSObject, NSWindowDelegate {
 		guard let c = session?.capabilities else { return pages.map(\.key) }
 		return pages.map(\.key).filter { k in
 			switch k {
-			case "accounts": c.accounts
+			case "accounts": c.accounts || c.accountsView
 			case "status": c.serverStatus
 			case "variables": c.serverVariables
 			default: true
@@ -133,7 +133,11 @@ struct ServerSettingsPage: View {
 			if let s = target.session, s.isConnected {
 				switch key {
 				case "accounts":
-					UserAccountsView(session: s, manager: s.accountManager()).id(ObjectIdentifier(s))
+					if s.capabilities.accounts {
+						UserAccountsView(session: s, manager: s.accountManager()).id(ObjectIdentifier(s))
+					} else {
+						AccountOverviewView(session: s).id(ObjectIdentifier(s))
+					}
 				case "status":
 					ServerStatusTab(session: s).id(ObjectIdentifier(s))
 				case "variables":

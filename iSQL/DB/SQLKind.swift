@@ -94,6 +94,8 @@ enum SQLKind: String, CaseIterable, Identifiable, Sendable {
 			c.routineDefiner = false
 			// 상태 탭: 요약·프로세스(끊기만)·쿼리 통계(계획 캐시)·서버 설정(sys.configurations)
 			c.killQuery = false; c.packetAndPageCounts = true
+			// 사용자 계정: 로그인 · DB 사용자 · 역할 보기만 (사용자 2026-11-20)
+			c.accountsView = true
 			c.renameDatabase = false; c.copyDatabase = false; c.copyRoutines = false
 			c.createTableLike = false
 			c.engines = false; c.charsets = false; c.tableComment = false; c.columnComment = false
