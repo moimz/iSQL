@@ -234,6 +234,19 @@ final class ExcelImportJob {
 
 	/// 새 테이블 컬럼 형식. SQL Server 는 그 형식 이름으로 (글자는 유니코드 NVARCHAR — 한글이 콜레이션과 상관없이 들어가게)
 	static func sqlType(_ k: Kind, _ kind: SQLKind = .mysql) -> String {
+		if kind == .oracle {
+			// 날짜만은 DATE, 시각까지는 TIMESTAMP(0). 글자는 글자 수 기준(CHAR), 4000자 넘으면 CLOB
+			return switch k {
+			case .int: "NUMBER(10)"
+			case .bigint: "NUMBER(19)"
+			case .decimal(let m, let d): "NUMBER(\(m),\(d))"
+			case .double: "BINARY_DOUBLE"
+			case .date: "DATE"
+			case .datetime: "TIMESTAMP(0)"
+			case .varchar(let n): n > 4000 ? "CLOB" : "VARCHAR2(\(n) CHAR)"
+			case .text: "CLOB"
+			}
+		}
 		if kind == .sqlserver {
 			switch k {
 			case .double: return "FLOAT"
@@ -333,7 +346,8 @@ final class ExcelImportJob {
 			for (i, m) in mapping.enumerated() {
 				guard let m else { continue }
 				let t = existingType(m)
-				pairs.append((i, m, false, t.hasPrefix("date") && !t.hasPrefix("datetime")))
+				// Oracle DATE 는 시각도 담으므로 자르지 않는다
+				pairs.append((i, m, false, dialect.kind != .oracle && t.hasPrefix("date") && !t.hasPrefix("datetime")))
 			}
 		}
 		let colList = pairs.map { q($0.name) }.joined(separator: ", ")
@@ -362,7 +376,8 @@ final class ExcelImportJob {
 					}.joined(separator: ", ") + ")"
 				}
 				do {
-					_ = try await c.query("INSERT INTO \(full) (\(colList)) VALUES " + values.joined(separator: ", "))
+					// Oracle 은 여러 행 VALUES 가 23ai 부터라 행마다 INSERT 를 한 PL/SQL 블록에 (dialect.insertRowsNow)
+					_ = try await c.query(dialect.insertRowsNow(full, columns: colList, rows: values))
 				} catch {
 					// 엑셀 행 번호로 알려 준다 (첫 행이 이름이면 +1)
 					let first = i + 1 + (header ? 1 : 0)

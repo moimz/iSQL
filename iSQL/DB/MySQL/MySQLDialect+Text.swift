@@ -28,6 +28,19 @@ extension MySQLDialect {
 		return s.replacingCharacters(in: r, with: "CREATE OR REPLACE")
 	}
 
+	/// 트리거 본문의 ; 때문에 DELIMITER ;; 로 감싼다 (mysqldump 와 같게). DEFINER 는 빼서 다른 서버 · 계정으로도 넣어지게
+	/// MariaDB 는 쓴 그대로의 글을 돌려줘 "CREATE TRIGGER db.이름 … ON db.테이블" 처럼 DB 이름이 남는다 → 머리(FOR EACH ROW 앞)에서만 뺀다 (다른 DB 에도 넣어지게)
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String {
+		var text = stripDefiner(ddl)
+		if let body = text.range(of: #"(?i)\bFOR\s+EACH\s+ROW\b"#, options: .regularExpression) {
+			let db = NSRegularExpression.escapedPattern(for: schema)
+			let head = String(text[..<body.lowerBound])
+				.replacingOccurrences(of: "(?<![\\w`$])(`\(db)`|\(db))\\.", with: "", options: .regularExpression)
+			text = head + text[body.lowerBound...]
+		}
+		return (drop ? "DROP TRIGGER IF EXISTS \(quote(name));\n" : "") + "DELIMITER ;;\n" + text + ";;\nDELIMITER ;\n"
+	}
+
 	func stripDefiner(_ s: String) -> String {
 		s.replacingOccurrences(of: #"DEFINER\s*=\s*(`[^`]*`|'[^']*'|[^@\s]+)@(`[^`]*`|'[^']*'|\S+)\s+"#, with: "", options: [.regularExpression, .caseInsensitive])
 	}

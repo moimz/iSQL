@@ -836,6 +836,8 @@ enum SQLSplitter {
 			case 59:                                           // ;
 				// PL/SQL 블록 안의 ; 는 문장 끝이 아니다 (블록은 / 줄이나 글 끝에서 끝난다)
 				if syntax.plsqlBlocks, SQLSyntax.startsPLSQLBlock((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
+				// SQLite 트리거 BEGIN … END 안의 ; 도
+				if syntax.sqliteTriggers, SQLiteScript.insideTrigger((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
 				// T-SQL 프로시저 정의·DECLARE 글 안의 ; 도 (GO 줄이나 글 끝에서 끝난다)
 				if syntax.tsqlBatches, TSQLScript.startsBlock((sql as NSString).substring(with: NSRange(location: start, length: i - start))) { break }
 				cut(i)

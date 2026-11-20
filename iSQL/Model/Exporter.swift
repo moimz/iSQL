@@ -27,6 +27,8 @@ protocol ExportSource: AnyObject {
 	var exportResultColumns: [Column] { get }
 	/// 컬럼 이름 → 코멘트 (엑셀 첫 행)
 	var exportColumnComments: [String: String] { get }
+	/// 구조를 넣을 때 트리거를 찾을 원래 테이블 (DB, 이름)
+	var exportTableRef: (schema: String, table: String)? { get }
 }
 
 /// SQL 내보내기 옵션
@@ -295,6 +297,11 @@ final class ExportJob {
 					offset += size
 				}
 			}
+			// 트리거 (화면에 보이는 행만이 아닐 때 · 구조를 넣을 때)
+			if o.includeStructure, src.canExportStructure, !cancelled, let ref = src.exportTableRef, let session = src.exportSession {
+				let triggers = try await Self.triggerDump(session, schema: ref.schema, tables: [ref.table], drop: o.includeDrop)
+				if !triggers.isEmpty { write("\n-- 트리거\n" + triggers) }
+			}
 			write("\n" + dialect.dumpEpilogue.map { $0 + ";\n" }.joined())
 			if cancelled {
 				message = "그만둠 · \(written.formatted())행까지 썼습니다"
@@ -391,11 +398,31 @@ final class ExportJob {
 				let trailer = try await session.meta.dumpTrailer(session.query, schema: schema, tables: tables.filter { !$0.isView }.map(\.name))
 				if !trailer.isEmpty { write("-- 외래 키 · 자동 증가\n" + trailer.map { $0 + ";\n" }.joined() + "\n") }
 			}
+			if o.includeStructure, !cancelled {
+				let triggers = try await Self.triggerDump(session, schema: schema, tables: Set(tables.map(\.name)), drop: o.includeDrop)
+				if !triggers.isEmpty { write("-- ----------------------------------------\n-- 트리거\n-- ----------------------------------------\n" + triggers) }
+			}
 			write(dialect.dumpEpilogue.map { $0 + ";\n" }.joined())
 			message = cancelled ? "그만둠 · \(written.formatted())행까지 썼습니다" : "테이블 \(tables.count)개 · \(written.formatted())행 내보냄 · \(url.lastPathComponent)"
 		} catch {
 			fail(error.localizedDescription)
 		}
+	}
+
+	/// 내보낸 테이블에 걸린 트리거 (데이터 다음에 둔다 — 먼저 만들면 넣는 행마다 돌아 값이 바뀐다).
+	/// routines 의 트리거 설명은 모든 DB 가 "… · 테이블" 로 끝난다
+	@MainActor
+	static func triggerDump(_ session: Session, schema: String, tables: Set<String>, drop: Bool) async throws -> String {
+		let dialect = session.dialect
+		let list = try await session.meta.routines(session.query).filter { r in
+			r.kind == .trigger && r.schema == schema && tables.contains(r.detail.components(separatedBy: " · ").last ?? "")
+		}
+		var out = ""
+		for t in list.sorted(by: { $0.name < $1.name }) {
+			guard let ddl = try await session.meta.createStatement(session.query, .routine(.trigger), schema: schema, name: t.name) else { continue }
+			out += "-- 트리거 \(t.name) · \(t.detail)\n" + dialect.dumpTrigger(ddl, name: t.name, schema: schema, drop: drop) + "\n"
+		}
+		return out
 	}
 
 	/// 엑셀(xlsx)로. oneFile 이면 url 은 파일 하나(시트 여럿), 아니면 url 은 폴더(시트마다 파일).
@@ -540,6 +567,7 @@ extension TableData: ExportSource {
 	}
 
 	var exportSession: Session? { session }
+	var exportTableRef: (schema: String, table: String)? { table.isView ? nil : (table.schema, table.name) }
 	var exportTotalEstimate: Int? { exactTotal ?? statTotal.map { Int($0) } }
 	var isExactTotal: Bool { exactTotal != nil || (statTotal != nil && table.rowsExact) }
 	var exportResultColumns: [Column] { columns }
@@ -577,6 +605,7 @@ extension QueryOutput: ExportSource {
 	}
 
 	var exportSession: Session? { session }
+	var exportTableRef: (schema: String, table: String)? { singleTable }
 	var exportTotalEstimate: Int? { paged ? knownTotal : result.rows.count }
 	var isExactTotal: Bool { true }
 	var exportResultColumns: [Column] { result.columns }

@@ -134,6 +134,11 @@ final class SQLDumpReader: @unchecked Sendable {
 						out.append(take())
 						continue
 					}
+					// SQLite: CREATE TRIGGER … BEGIN … END 안의 ; 도 (END; 에서 끝난다)
+					if syntax.sqliteTriggers && content && SQLiteScript.insideTrigger(String(decoding: out, as: UTF8.self)) {
+						out.append(take())
+						continue
+					}
 					// SQL Server: 프로시저·함수·트리거·뷰 정의와 DECLARE 글 안의 ; 도 (GO 줄에서 끝난다)
 					if syntax.tsqlBatches && content && TSQLScript.startsBlock(String(decoding: out, as: UTF8.self)) {
 						out.append(take())

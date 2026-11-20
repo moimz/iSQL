@@ -74,6 +74,10 @@ struct OracleDialect: SQLDialect {
 	func insertRows(_ table: String, columns: String, rows: [String]) -> String {
 		"INSERT ALL\n" + rows.map { "  INTO \(table) (\(columns)) VALUES \($0)" }.joined(separator: "\n") + "\nSELECT 1 FROM dual"
 	}
+	/// INSERT ALL 은 IDENTITY · 시퀀스 값을 문장마다 한 번만 매겨(모든 행이 같은 id) 엑셀 가져오기는 행마다 INSERT 를 한 블록에
+	func insertRowsNow(_ table: String, columns: String, rows: [String]) -> String {
+		"BEGIN\n" + rows.map { "  INSERT INTO \(table) (\(columns)) VALUES \($0);" }.joined(separator: "\n") + "\nEND;"
+	}
 	func byteLength(_ expr: String) -> String { "DBMS_LOB.GETLENGTH(\(expr))" }
 	/// CLOB 은 ORDER BY 에 못 써서(ORA-22848) 앞 4000자로. 바이너리(BLOB · RAW 계열 LONG RAW)는 정렬해도 뜻이 없어 막는다
 	/// (MySQL · SQLite 의 BLOB 과 같게, 사용자 2026-11-20). JSON · LONG · BFILE · 객체도 정렬할 수 없다
@@ -126,6 +130,23 @@ extension OracleDialect {
 	func renameTables(_ pairs: [(from: String, to: String)]) -> String {
 		pairs.map { "ALTER TABLE \($0.from) RENAME TO \(Self.unqualified($0.to))" }.joined(separator: ";\n")
 	}
+	/// PL/SQL 이라 / 줄로 끝낸다. 정의의 "스키마". 는 빼서(테이블처럼) 넣는 스키마에 만들어지게, CREATE OR REPLACE 라 지우기는 없다.
+	/// GET_DDL 이 뒤에 붙이는 ALTER TRIGGER … ENABLE 은 뺀다 (만들면 켜져 있고, 남의 스키마에 넣을 때 ALTER ANY TRIGGER 권한이 없으면 실패했다). DISABLE 만 따로 한 문장
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String {
+		var body = ddl.replacingOccurrences(of: quote(schema) + ".", with: "")
+		var tail = ""
+		if let r = body.range(of: #"\n\s*ALTER\s+TRIGGER\s[^\n]*$"#, options: .regularExpression) {
+			let alter = body[r].trimmingCharacters(in: .whitespacesAndNewlines)
+			if alter.uppercased().hasSuffix("DISABLE") { tail = alter }
+			body.removeSubrange(r)
+		}
+		body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+		if body.range(of: #"^(?i)CREATE\s+TRIGGER"#, options: .regularExpression) != nil {
+			body = body.replacingOccurrences(of: #"^(?i)CREATE\s+"#, with: "CREATE OR REPLACE ", options: .regularExpression)
+		}
+		return body + "\n/\n" + (tail.isEmpty ? "" : tail + ";\n")
+	}
+
 	func retargetSchema(_ ddl: String, from: String, to: String) -> String {
 		ddl.replacingOccurrences(of: quote(from) + ".", with: quote(to) + ".")
 	}

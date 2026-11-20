@@ -21,9 +21,21 @@ extension SQLSyntax {
 		                                "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "TEMP", "TEMPORARY", "VIRTUAL", "STORED",
 		                                "GENERATED", "ALWAYS", "BEFORE", "AFTER", "INSTEAD", "OF", "FOR", "EACH", "ROW", "COUNT", "SUM", "AVG", "MIN", "MAX"])
 		let any: [SQLKind: ServerVersion] = [.sqlite: ServerVersion(0)]
-		return SQLSyntax(identifierQuote: 0x22, stringQuotes: [0x27], backslashEscapes: false, hashComments: false, delimiterCommand: false,
-		                 highlightKeywords: highlight, completionKeywords: keywords,
-		                 functions: functions.map { SQLFunction(name: $0, since: any) },
-		                 reservedWords: Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC"]))
+		var s = SQLSyntax(identifierQuote: 0x22, stringQuotes: [0x27], backslashEscapes: false, hashComments: false, delimiterCommand: false,
+		                  highlightKeywords: highlight, completionKeywords: keywords,
+		                  functions: functions.map { SQLFunction(name: $0, since: any) },
+		                  reservedWords: Set(keywords.map { $0.uppercased() } + ["KEY", "ORDER", "GROUP", "INDEX", "TABLE", "DESC"]))
+		s.sqliteTriggers = true
+		return s
 	}()
+}
+
+/// SQLite 트리거 글 나누기
+enum SQLiteScript {
+	/// CREATE [TEMP] TRIGGER 로 시작했고 아직 END 로 끝나지 않았으면 true (그 안의 ; 는 문장 끝이 아니다)
+	static func insideTrigger(_ s: String) -> Bool {
+		let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard t.range(of: #"^(?i)CREATE\s+(TEMP\s+|TEMPORARY\s+)?TRIGGER\b"#, options: .regularExpression) != nil else { return false }
+		return t.range(of: #"(?i)\bEND$"#, options: .regularExpression) == nil
+	}
 }

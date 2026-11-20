@@ -172,6 +172,11 @@ extension SQLServerDialect {
 			return "EXEC \(db)sys.sp_rename \(literal(.text(obj))), \(literal(.text(Self.parts(p.to).last ?? p.to)))"
 		}.joined(separator: ";\n")
 	}
+	/// CREATE TRIGGER 는 배치에 혼자 (앞뒤 GO). 이름은 "스키마.이름" (dbo 는 이름만)
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String {
+		(drop ? "DROP TRIGGER IF EXISTS \(quoteLocal(name));\nGO\n" : "") + ddl + "\nGO\n"
+	}
+
 	func retargetSchema(_ ddl: String, from: String, to: String) -> String {
 		ddl.replacingOccurrences(of: quote(from) + ".", with: quote(to) + ".")
 	}

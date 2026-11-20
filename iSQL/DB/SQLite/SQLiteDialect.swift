@@ -110,6 +110,10 @@ extension SQLiteDialect {
 		pairs.map { "ALTER TABLE \($0.from) RENAME TO \(Self.unqualified($0.to))" }.joined(separator: ";\n")
 	}
 	func retargetSchema(_ ddl: String, from: String, to: String) -> String { ddl }
+	/// sqlite_master 의 정의는 END 로 끝난다 (가져오기는 END; 까지를 한 문장으로)
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String {
+		(drop ? "DROP TRIGGER IF EXISTS \(quote(name));\n" : "") + ddl + ";\n"
+	}
 	func rewriteViewDefinition(_ ddl: String, name: String, from: String, to: String) -> String { ddl }
 	func retargetCreateTable(_ ddl: String, name: String, to target: String) -> String? { nil }
 

@@ -15,6 +15,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func identityInsert(_ table: String, _ on: Bool) -> String?
 	/// 내보내기 파일에서 배치를 나누는 줄 (SQL Server: GO — CREATE VIEW · 프로시저는 배치에 혼자 있어야 한다). 다른 DB 는 nil
 	var batchSeparator: String? { get }
+	/// 내보내기 파일의 트리거 하나 (ddl 은 createStatement 의 정의, name 은 routines 의 이름). drop 이면 먼저 있으면 지우기
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String
 	/// 그대로 쓸 수 있는 이름이면 그대로, 아니면 감싸기 (자동 완성). reserved 는 대문자 예약어
 	func quoteIfNeeded(_ name: String, reserved: Set<String>) -> String
 	/// 값 리터럴 (NULL, '글자', 바이너리)
@@ -60,6 +62,8 @@ protocol SQLDialect: SQLDDL, SQLAdminSQL, Sendable {
 	func insertRow(_ table: String, columns: [String], values: [String]) -> String
 	/// 여러 행을 한 문장으로 넣기 (내보내기 파일). columns 는 "(…)" 안의 감싼 이름들, rows 는 "(값, …)" 들
 	func insertRows(_ table: String, columns: String, rows: [String]) -> String
+	/// 바로 실행할 여러 행 넣기 (엑셀 가져오기). 기본은 insertRows. Oracle 은 INSERT ALL 이 IDENTITY 를 한 번만 매겨 행마다 INSERT 를 PL/SQL 블록으로
+	func insertRowsNow(_ table: String, columns: String, rows: [String]) -> String
 	/// 정렬에 쓸 식 (column 은 감싼 이름, type 은 컬럼 정의 타입). nil 이면 그 컬럼으로는 정렬할 수 없다
 	func sortExpression(_ column: String, type: String) -> String?
 	/// 바이트 길이 식 (큰 BLOB 은 앞부분만 읽으려고)
@@ -78,6 +82,7 @@ extension SQLDialect {
 	func quoteLocal(_ table: String) -> String { quote(table) }
 	func identityInsert(_ table: String, _ on: Bool) -> String? { nil }
 	var batchSeparator: String? { nil }
+	func dumpTrigger(_ ddl: String, name: String, schema: String, drop: Bool) -> String { ddl + ";\n" }
 	/// 테이블 (스키마.테이블)
 	func quote(table t: TableInfo) -> String { quote(schema: t.schema, table: t.name) }
 	func paged(_ sql: String, limit: Int) -> String { paged(sql, limit: limit, offset: nil) }
@@ -87,4 +92,5 @@ extension SQLDialect {
 	func insertRows(_ table: String, columns: String, rows: [String]) -> String {
 		"INSERT INTO \(table) (\(columns)) VALUES\n" + rows.joined(separator: ",\n")
 	}
+	func insertRowsNow(_ table: String, columns: String, rows: [String]) -> String { insertRows(table, columns: columns, rows: rows) }
 }
