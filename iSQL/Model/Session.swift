@@ -444,6 +444,38 @@ final class Session {
 		}
 	}
 
+	/// 앱 밖(MCP)에서 테이블을 바꾼 뒤: 열린 탭을 다시 읽는다.
+	/// schema · table 이 nil 이면 넓게(그 DB 의 탭 / 모든 테이블 탭). structure 면 구조 · 정보 패널까지, dropped 면 탭을 닫는다.
+	/// 저장 안 한 편집이 있는 탭은 건드리지 않고 그 탭 이름을 돌려준다
+	@MainActor
+	func externalChange(schema: String?, table: String?, structure: Bool, dropped: Bool) async -> [String] {
+		func hit(_ tab: String) -> Bool {
+			let tid = Self.tableID(ofTab: tab)
+			guard !tid.hasPrefix("db:"), let dot = tid.firstIndex(of: ".") else { return false }
+			let s = String(tid[..<dot]), n = String(tid[tid.index(after: dot)...])
+			if let schema, s.caseInsensitiveCompare(schema) != .orderedSame { return false }
+			if let table, n.caseInsensitiveCompare(table) != .orderedSame { return false }
+			return true
+		}
+		if structure || dropped { try? await loadSchema() }
+		for (key, o) in overviews where schema == nil || key == schema { Task { await o.load() } }
+		if dropped {
+			closeTabs(ofTables: Set((tabs + parked).filter(hit).map(Self.tableID(ofTab:))))
+			return []
+		}
+		var skipped: [String] = []
+		for (tab, d) in openData where hit(tab) {
+			let editing = d.hasChanges || (structure && d.structure?.hasChanges == true)
+			if editing { d.stale = true; skipped.append(d.table.id); continue }
+			if structure {
+				if let e = d.structure { await e.load() }
+				await reloadInspector(d.table)
+			}
+			if d.loaded { await d.load(offset: d.offset) }
+		}
+		return skipped
+	}
+
 	/// 테이블 삭제·비우기 요청 (어디서 부르든 창이 확인 창 하나로 묻는다: DB 개요 −, 오른쪽 클릭 메뉴)
 	var tableAction: TableActionRequest?
 	/// 삭제·비우기 실패 글자 (창이 알림으로 보인다)

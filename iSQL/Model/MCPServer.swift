@@ -341,6 +341,37 @@ final class MCPServer {
 		 	"sql": ["type": "string"],
 		 	"name": ["type": "string"],
 		 ], "required": ["view"]]],
+		["name": "open_table",
+		 "description": "앱 화면에 테이블을 띄운다: 그 서버 창을 앞으로, 테이블 탭을 열고 데이터 또는 구조 보기. where 를 주면 조건 줄에 넣어 걸러 보여 준다. 사용자가 '보여 줘' 할 때 쓴다. 앱에서 접속한 서버만",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"database": ["type": "string"],
+		 	"table": ["type": "string"],
+		 	"view": ["type": "string", "enum": ["data", "structure"], "description": "기본 data"],
+		 	"where": ["type": "string", "description": "WHERE 뒤 조건 (WHERE 는 빼고). 빈 글자면 조건을 지운다"],
+		 ], "required": ["database", "table"]]],
+		["name": "open_database",
+		 "description": "앱 화면에 DB 개요 탭을 띄운다 (테이블 목록 · 행 수 · 크기). 앱에서 접속한 서버만",
+		 "inputSchema": ["type": "object", "properties": ["server": serverArg, "database": ["type": "string"]], "required": ["database"]]],
+		["name": "refresh",
+		 "description": "앱에 열린 탭을 다시 읽는다 (⌘R 과 같음). run_query 뒤에는 바뀐 테이블의 탭을 자동으로 다시 읽으니, 프로시저 안에서 바뀌었을 때처럼 자동으로 못 잡는 경우에 쓴다. table 을 빼면 그 DB 의 탭, database 도 빼면 모든 테이블 탭. 저장 안 한 편집이 있는 탭은 건너뛰고 알려 준다",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"database": ["type": "string"],
+		 	"table": ["type": "string"],
+		 	"structure": ["type": "boolean", "description": "구조 · 사이드바 목록까지 다시 읽기 (기본 true)"],
+		 ]]],
+		["name": "import_excel",
+		 "description": "엑셀(.xlsx) 파일을 iSQL 의 엑셀 가져오기로 새 테이블에 넣고 그 테이블 탭을 연다. 컬럼 형식은 앱이 값을 보고 정한다(첫 행은 컬럼 이름). 같은 이름 테이블이 있으면 하지 않는다. 쿼리 권한이 읽기 전용이면 안 된다. 앱에서 접속한 서버만",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"path": ["type": "string", "description": "이 맥의 .xlsx 파일 전체 경로"],
+		 	"database": ["type": "string"],
+		 	"table": ["type": "string", "description": "만들 테이블 이름"],
+		 	"sheet": ["type": "string", "description": "시트 이름 (기본 첫 시트)"],
+		 	"header": ["type": "boolean", "description": "첫 행이 컬럼 이름인지 (기본 true)"],
+		 	"add_id": ["type": "boolean", "description": "자동 증가 id 기본 키 컬럼 붙이기 (기본 true, 있어야 iSQL 에서 행을 고칠 수 있다)"],
+		 ], "required": ["path", "database", "table"]]],
 		["name": "list_private_views",
 		 "description": "서버의 나만 보는 뷰 목록 (id, 이름, DB, SQL)",
 		 "inputSchema": ["type": "object", "properties": ["server": serverArg]]],
@@ -417,9 +448,14 @@ final class MCPServer {
 				for r in try await c.query(s) { out.append(describe(r, maxRows: maxRows)) }
 			}
 			note("run_query · \(t.server.displayName) · \(statements.first!.prefix(80))\(statements.count > 1 ? " 외 \(statements.count - 1)개" : "")")
-			// 앱에서 접속한 서버의 구조를 바꿨으면 왼쪽 목록을 다시 읽는다
-			if let session = t.session, statements.contains(where: { Self.changesSchema($0, t.dialect.syntax) }) {
-				Task { try? await session.loadSchema() }
+			// 앱에서 접속한 서버면 바뀐 테이블의 열린 탭 · 사이드바를 다시 읽는다 (저장 안 한 편집이 있는 탭은 건너뜀)
+			if let session = t.session, session.isConnected {
+				let skipped = await refreshAfter(statements, db: a["database"] as? String, t, session)
+				if !skipped.isEmpty {
+					var d: [String: Any] = ["results": out.count == 1 ? out[0] : out]
+					d["app_not_refreshed"] = "저장 안 한 편집이 있어 다시 읽지 않은 탭: " + skipped.joined(separator: ", ")
+					return json(d)
+				}
 			}
 			return json(out.count == 1 ? out[0] : out)
 		case "create_private_view":
@@ -449,6 +485,81 @@ final class MCPServer {
 			show(v, in: session)
 			note("update_private_view · \(t.server.displayName) · \(v.name)")
 			return json(["updated": true, "id": v.id.uuidString, "name": v.name, "database": v.schema])
+		case "open_table":
+			let t = try target(a)
+			let session = try appSession(t)
+			let db = try string(a, "database"), name = try string(a, "table")
+			if session.tables.first(where: { $0.schema == db && $0.name == name }) == nil { try? await session.loadSchema() }
+			guard let info = session.tables.first(where: { $0.schema.caseInsensitiveCompare(db) == .orderedSame && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+				throw MCPFailure("\(db).\(name) 테이블이 없습니다")
+			}
+			front(session)
+			session.expanded.insert(info.schema)
+			session.openTab(info)
+			guard let tab = session.activeTab, let d = session.data(tab: tab) else { return json(["opened": true]) }
+			d.mode = (a["view"] as? String) == "structure" ? .structure : .data
+			if let w = a["where"] as? String {
+				let clause = w.trimmingCharacters(in: .whitespacesAndNewlines)
+				if d.hasChanges { throw MCPFailure("탭은 열었지만 저장 안 한 편집이 있어 조건을 바꾸지 않았습니다") }
+				// 조건 줄은 처음 보일 때 빈 줄을 만들며 WHERE 를 다시 만든다(비워짐) → 먼저 만들어 둔다
+				d.prepareFilters()
+				d.whereClause = clause
+				d.showFilter = !clause.isEmpty
+				d.mode = .data
+				if d.loaded { await d.applyWhere() }
+			}
+			note("open_table · \(t.server.displayName) · \(info.id)")
+			return json(["opened": true, "table": info.id, "view": d.mode == .structure ? "structure" : "data", "where": d.whereClause])
+		case "open_database":
+			let t = try target(a)
+			let session = try appSession(t)
+			let db = try string(a, "database")
+			guard session.databases.contains(db) else { throw MCPFailure("\(db) 데이터베이스가 없습니다") }
+			front(session)
+			session.expanded.insert(db)
+			session.openDatabase(db)
+			note("open_database · \(t.server.displayName) · \(db)")
+			return json(["opened": true, "database": db])
+		case "refresh":
+			let t = try target(a)
+			let session = try appSession(t)
+			let db = (a["database"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+			let table = (a["table"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+			let skipped = await session.externalChange(schema: db, table: table, structure: (a["structure"] as? Bool) ?? true, dropped: false)
+			note("refresh · \(t.server.displayName)\(db.map { " · " + $0 } ?? "")\(table.map { "." + $0 } ?? "")")
+			var d: [String: Any] = ["refreshed": true]
+			if !skipped.isEmpty { d["not_refreshed"] = "저장 안 한 편집이 있어 다시 읽지 않은 탭: " + skipped.joined(separator: ", ") }
+			return json(d)
+		case "import_excel":
+			let t = try target(a)
+			let session = try appSession(t)
+			guard permission != .readOnly else { throw MCPFailure("쿼리 권한이 읽기 전용이라 테이블을 만들 수 없습니다 (iSQL 설정 > MCP)") }
+			let path = (try string(a, "path") as NSString).expandingTildeInPath
+			let db = try string(a, "database"), name = try string(a, "table").trimmingCharacters(in: .whitespaces)
+			guard FileManager.default.fileExists(atPath: path) else { throw MCPFailure("파일이 없습니다: \(path)") }
+			guard session.databases.contains(db) else { throw MCPFailure("\(db) 데이터베이스가 없습니다") }
+			if session.tables.contains(where: { $0.schema == db && $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+				throw MCPFailure("\(db).\(name) 테이블이 이미 있습니다 (덮어쓰지 않음)")
+			}
+			let job = ExcelImportJob(url: URL(fileURLWithPath: path), session: session, schema: db, table: nil)
+			func settle() async { for _ in 0..<600 { try? await Task.sleep(for: .milliseconds(50)); if !job.loading { break } } }
+			await settle()
+			if let e = job.loadError { throw MCPFailure("엑셀을 읽지 못했습니다: \(e)") }
+			if let s = a["sheet"] as? String, !s.isEmpty {
+				guard let i = job.sheets.firstIndex(where: { $0.name == s }) else { throw MCPFailure("시트 '\(s)' 가 없습니다. 시트: " + job.sheets.map(\.name).joined(separator: ", ")) }
+				job.sheetIndex = i
+				await settle()
+			}
+			if let h = a["header"] as? Bool { job.header = h }
+			if let id = a["add_id"] as? Bool { job.addID = id }
+			job.target = .newTable
+			job.newName = name
+			guard job.canRun else { throw MCPFailure("가져올 수 없습니다 (빈 시트이거나 이름이 맞지 않음)") }
+			front(session)
+			await job.run()
+			if job.isError { throw MCPFailure(job.message ?? "가져오기 실패") }
+			note("import_excel · \(t.server.displayName) · \(db).\(name)")
+			return json(["imported": true, "table": db + "." + name, "message": job.message ?? "", "sql": job.createSQL])
 		case "list_private_views":
 			let t = try target(a)
 			let session = try appSession(t)
@@ -535,12 +646,63 @@ final class MCPServer {
 
 	/// 그 서버가 열린 창을 앞으로, 사이드바 [테이블], 뷰 탭 열기
 	private func show(_ v: PrivateView, in session: Session) {
+		front(session)
+		session.expanded.insert(v.schema)
+		session.openPrivateView(v)
+	}
+
+	/// 그 서버가 열린 창을 앞으로 (그 서버로 바꾸고 사이드바 [테이블])
+	private func front(_ session: Session) {
 		guard let m = AppState.shared.allModels.first(where: { $0.sessions.values.contains { $0 === session } }), let srv = session.server else { return }
 		m.open(srv)
 		m.sidebarMode = .tables
-		session.expanded.insert(v.schema)
-		session.openPrivateView(v)
 		NSApp.activate()
+	}
+
+	// MARK: run_query 뒤 화면 새로고침
+
+	/// 문장에서 바뀐 테이블을 찾아 앱의 열린 탭을 다시 읽는다. 저장 안 한 편집이 있어 건너뛴 탭을 돌려준다
+	private func refreshAfter(_ statements: [String], db: String?, _ t: Target, _ session: Session) async -> [String] {
+		var skipped: [String] = []
+		let name = #"((?:[`"\[]?[^\s`"\].(]+[`"\]]?\.)?[`"\[]?[^\s`"\].(;]+[`"\]]?)"#
+		func split(_ raw: String) -> (String?, String) {
+			let clean = raw.replacingOccurrences(of: #"[`"\[\]]"#, with: "", options: .regularExpression)
+			if let dot = clean.lastIndex(of: ".") { return (String(clean[..<dot]), String(clean[clean.index(after: dot)...])) }
+			return (db, clean)
+		}
+		func match(_ s: String, _ pattern: String) -> [String]? {
+			guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+			      let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) else { return nil }
+			return (1..<m.numberOfRanges).compactMap { Range(m.range(at: $0), in: s).map { String(s[$0]) } }
+		}
+		for raw in statements {
+			let s = SQLSplitter.stripComments(raw, t.dialect.syntax).trimmingCharacters(in: .whitespacesAndNewlines)
+			// 이름 바꾸기: 열린 탭이 새 이름을 따라간다
+			if let g = match(s, #"^RENAME\s+TABLE\s+"# + name + #"\s+TO\s+"# + name) ?? match(s, #"^ALTER\s+TABLE\s+"# + name + #"\s+RENAME\s+TO\s+"# + name), g.count == 2 {
+				let (sc, old) = split(g[0]), (_, new) = split(g[1])
+				if let sc { await session.tableRenamed(schema: sc, from: old, to: new) }
+				else { _ = await session.externalChange(schema: nil, table: nil, structure: true, dropped: false) }
+				continue
+			}
+			let kinds: [(String, Bool, Bool)] = [   // 패턴, 구조가 바뀌나, 지웠나
+				(#"^DROP\s+(?:TABLE|VIEW)\s+(?:IF\s+EXISTS\s+)?"#, true, true),
+				(#"^ALTER\s+TABLE\s+(?:ONLY\s+)?"#, true, false),
+				(#"^CREATE\s+(?:UNIQUE\s+)?INDEX\s+\S+\s+ON\s+"#, true, false),
+				(#"^(?:CREATE|REPLACE)\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?"#, true, false),
+				(#"^TRUNCATE\s+(?:TABLE\s+)?"#, false, false),
+				(#"^(?:INSERT|REPLACE)\s+(?:IGNORE\s+)?(?:INTO\s+)?"#, false, false),
+				(#"^UPDATE\s+(?:LOW_PRIORITY\s+)?(?:IGNORE\s+)?"#, false, false),
+				(#"^DELETE\s+(?:FROM\s+)?"#, false, false),
+			]
+			if let k = kinds.first(where: { match(s, $0.0 + name) != nil }), let g = match(s, k.0 + name) {
+				let (sc, tb) = split(g[0])
+				skipped += await session.externalChange(schema: sc, table: tb, structure: k.1, dropped: k.2)
+			} else if Self.changesSchema(s, t.dialect.syntax) {
+				// 못 알아본 구조 변경 (DB 만들기 · 지우기 등): 목록만 다시
+				try? await session.loadSchema()
+			}
+		}
+		return skipped
 	}
 
 	private static func changesSchema(_ s: String, _ syntax: SQLSyntax) -> Bool {
