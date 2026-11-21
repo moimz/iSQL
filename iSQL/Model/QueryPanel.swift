@@ -21,6 +21,25 @@ final class QueryPanel {
 		didSet { UserDefaults.standard.set(Double(height), forKey: "queryPanelHeight") }
 	}
 	var text: String { didSet { if !applyingRemote { scheduleSave() } } }
+
+	/// 입력창에 보이는 글: 사용자 것(iCloud 동기화) / MCP 가 넣은 것(이 맥에만, 사용자 2026-11-22).
+	/// 입력창은 text 하나만 보고, 바꿀 때 보이는 글과 숨은 글을 맞바꾼다
+	enum Source: Int { case mine, mcp }
+	var source: Source = .mine {
+		didSet {
+			guard oldValue != source else { return }
+			flushSave()
+			applyingRemote = true
+			let shown = text
+			text = hiddenText
+			hiddenText = shown
+			applyingRemote = false
+			selection = NSRange(location: (text as NSString).length, length: 0)
+		}
+	}
+	/// 지금 안 보이는 쪽의 글
+	@ObservationIgnored private var hiddenText = ""
+	private var mcpKey: String? { serverID.map { "query.mcp.\($0.uuidString)" } }
 	/// 쿼리를 돌릴 기본 DB (USE)
 	var database = ""
 
@@ -77,6 +96,7 @@ final class QueryPanel {
 		} else {
 			text = local ?? ""
 		}
+		hiddenText = serverID.flatMap { UserDefaults.standard.string(forKey: "query.mcp.\($0.uuidString)") } ?? ""
 	}
 
 	deinit { observers.forEach(NotificationCenter.default.removeObserver) }
@@ -91,13 +111,23 @@ final class QueryPanel {
 	@ObservationIgnored private var applyingRemote = false
 	@ObservationIgnored private var observers: [NSObjectProtocol] = []
 
+	/// 기다리던 저장을 지금 한다 (보이는 글을 바꾸기 전에)
+	private func flushSave() {
+		guard let w = saveWork else { return }
+		w.cancel()
+		w.perform()
+	}
+
 	private func scheduleSave() {
 		guard let id = serverID else { return }
 		saveWork?.cancel()
 		let t = text
+		let mcp = source == .mcp, mcpKey = self.mcpKey
 		let w = DispatchWorkItem { [weak self] in
 			guard let self else { return }
-			if self.synced {
+			if mcp {
+				if let mcpKey { UserDefaults.standard.set(t, forKey: mcpKey) }
+			} else if self.synced {
 				QueryStore.write(id, t)
 				self.lastSynced = t
 			} else {
@@ -111,12 +141,14 @@ final class QueryPanel {
 
 	/// 다른 맥에서 고친 내용을 받아 넣는다. 이 맥에서 치고 있는 중(저장 대기)이면 이쪽 것이 이긴다
 	func pullRemote() {
-		guard synced, let id = serverID, saveWork == nil, let remote = QueryStore.read(id),
-		      remote != lastSynced, remote != text else { return }
+		guard synced, let id = serverID, saveWork == nil, let remote = QueryStore.read(id), remote != lastSynced else { return }
+		lastSynced = remote
+		// MCP 글을 보고 있으면 숨은 사용자 글만 바꾼다
+		if source == .mcp { hiddenText = remote; return }
+		guard remote != text else { return }
 		applyingRemote = true
 		text = remote
 		applyingRemote = false
-		lastSynced = remote
 	}
 
 	// MARK: - 실행할 문장 고르기

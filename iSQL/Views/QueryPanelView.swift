@@ -153,6 +153,11 @@ struct QueryPanelView: View {
 				}
 				.help(panel.showResults ? "결과를 걷고 탭을 봅니다" : "마지막 결과를 다시 봅니다")
 			}
+			// 맨 오른쪽: [사용자 | MCP] 입력창 바꾸기 (사용자 것은 iCloud 동기화, MCP 가 넣은 것은 이 맥에만)
+			LabelSegment(labels: ["사용자", "MCP"], selection: Binding(get: { panel.source.rawValue },
+			                                                         set: { panel.source = QueryPanel.Source(rawValue: $0) ?? .mine }),
+			             tips: ["내가 쓰는 쿼리 (iCloud 로 내 맥끼리 동기화)", "MCP(AI)가 넣어 준 쿼리 (이 맥에만)"])
+				.frame(width: 150)
 		}
 		.controlSize(.large)
 		.padding(.horizontal, 12)

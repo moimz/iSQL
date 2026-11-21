@@ -349,6 +349,35 @@ struct ModeSegment: NSViewRepresentable {
 	}
 }
 
+/// 글자 세그먼트 (칸을 똑같이 나눔): 쿼리 패널 [사용자 | MCP] 등
+struct LabelSegment: NSViewRepresentable {
+	let labels: [String]
+	@Binding var selection: Int
+	var tips: [String] = []
+
+	func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+	func makeNSView(context: Context) -> NSSegmentedControl {
+		let c = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+		c.segmentDistribution = .fillEqually
+		c.controlSize = .large
+		for (i, t) in tips.enumerated() where i < labels.count { c.setToolTip(t, forSegment: i) }
+		c.selectedSegment = selection
+		return c
+	}
+
+	func updateNSView(_ c: NSSegmentedControl, context: Context) {
+		context.coordinator.parent = self
+		if c.selectedSegment != selection { c.selectedSegment = selection }
+	}
+
+	final class Coordinator: NSObject {
+		var parent: LabelSegment
+		init(_ p: LabelSegment) { parent = p }
+		@objc func changed(_ sender: NSSegmentedControl) { parent.selection = sender.selectedSegment }
+	}
+}
+
 /// 사이드바 위 [서버 | 테이블]. SwiftUI 세그먼트 Picker 는 너비를 채우지 않아 NSSegmentedControl 로 칸을 똑같이 나눈다
 struct SidebarModeSegment: NSViewRepresentable {
 	@Binding var selection: SidebarMode
