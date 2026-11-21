@@ -143,13 +143,15 @@ private struct TabReorderModifier<ID: Hashable>: ViewModifier {
 							state.startX = left(of: id, in: order)
 						}
 						let w = state.widths[id] ?? 0
-						let wantX = max(0, state.startX + v.translation.width)
+						// 왼쪽 끝을 0 에 묶으면 탭 너비가 같을 때 끄는 탭 가운데가 첫 탭 가운데를 못 넘어
+						// 두 번째 탭을 맨 앞으로 못 옮겼다 (사용자 2026-11-21) → 반 탭만큼 왼쪽 밖까지 허용
+						let wantX = max(-w / 2, state.startX + v.translation.width)
 						// 끄는 탭 가운데가 넘어선 옆 탭들 → 들어갈 자리
 						let others = order.filter { $0 != id }
 						var x: CGFloat = 0, target = others.count
 						for (i, o) in others.enumerated() {
 							let ow = state.widths[o] ?? 0
-							if wantX + w / 2 < x + ow / 2 { target = i; break }
+							if wantX + w / 2 <= x + ow / 2 { target = i; break }
 							x += ow
 						}
 						var newOrder = others
