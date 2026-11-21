@@ -131,15 +131,34 @@ private struct MCPSettingsPage: View {
 
 	var body: some View {
 		Form {
+			// iVNC 와 같은 모양 (Ai.md "MCP 설정 화면"): 켜기 · 포트 · 상태 · 주소 복사 · 연결 명령 복사를 한 칸에 (2026-11-21 사용자 지시)
 			Section {
 				Toggle("MCP 서버 켜기", isOn: $mcp.enabled)
-				// LabeledContent 안의 TextField 는 아래가 남아 줄이 안 맞았다 → Form 기본 TextField 줄로 (사용자 2026-11-18)
-				TextField("포트", text: $portText)
-					.multilineTextAlignment(.trailing)
-					.onSubmit(applyPort)
-				statusLine
-			} header: {
-				Text("서버")
+				LabeledContent("포트") {
+					TextField("포트", text: $portText)
+						.labelsHidden().frame(width: 80).multilineTextAlignment(.trailing)
+						.onSubmit(applyPort)
+				}
+				LabeledContent("상태") {
+					switch mcp.status {
+					case .stopped: Text("꺼짐").foregroundStyle(.secondary)
+					case .running(let p): Label("듣는 중 (127.0.0.1:\(String(p)))", systemImage: "circle.fill").foregroundStyle(.green)
+					case .failed(let e): Text("열지 못했습니다: \(e)").foregroundStyle(.red)
+					}
+				}
+				LabeledContent("주소") {
+					// 오른쪽 끝을 아래 "연결 명령 복사" 버튼과 맞춘다
+					HStack(spacing: 8) {
+						Text(mcp.endpoint).textSelection(.enabled).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+						Button("복사") { copy(mcp.endpoint) }
+					}
+					.frame(maxWidth: .infinity, alignment: .trailing)
+				}
+				LabeledContent("Claude Code") {
+					Button("연결 명령 복사") { copy(claudeCommand) }
+				}
+			} footer: {
+				Text("이 맥 안(127.0.0.1)에서만 받습니다. 암호는 MCP 로 넘기지 않습니다.")
 			}
 
 			Section("접근 범위") {
@@ -163,11 +182,6 @@ private struct MCPSettingsPage: View {
 				}
 				.pickerStyle(.radioGroup)
 				.labelsHidden()
-			}
-
-			Section("연결") {
-				copyRow("주소", mcp.endpoint)
-				copyRow("Claude Code", claudeCommand)
 			}
 
 			Section("최근 요청") {
@@ -196,28 +210,6 @@ private struct MCPSettingsPage: View {
 		}
 	}
 
-	@ViewBuilder private var statusLine: some View {
-		switch mcp.status {
-		case .running:
-			// 주소는 고를 수 있고, 연결 칸까지 내려가지 않아도 바로 복사
-			HStack(spacing: 8) {
-				Label(mcp.endpoint, systemImage: "circle.fill")
-					.foregroundStyle(.green).font(.callout)
-					.textSelection(.enabled)
-				Spacer()
-				Button("주소 복사") {
-					NSPasteboard.general.clearContents()
-					NSPasteboard.general.setString(mcp.endpoint, forType: .string)
-				}
-			}
-		case .failed(let e):
-			Label("열지 못했습니다: \(e)", systemImage: "exclamationmark.triangle.fill")
-				.foregroundStyle(.orange).font(.callout)
-		case .stopped:
-			Label("꺼짐", systemImage: "circle").foregroundStyle(.secondary).font(.callout)
-		}
-	}
-
 	private func applyPort() {
 		if let p = Int(portText.trimmingCharacters(in: .whitespaces)), (1024...65535).contains(p) {
 			mcp.port = p
@@ -227,15 +219,8 @@ private struct MCPSettingsPage: View {
 		}
 	}
 
-	private func copyRow(_ label: String, _ value: String) -> some View {
-		LabeledContent(label) {
-			HStack(spacing: 8) {
-				Text(value).font(.callout.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-				Button("복사") {
-					NSPasteboard.general.clearContents()
-					NSPasteboard.general.setString(value, forType: .string)
-				}
-			}
-		}
+	private func copy(_ s: String) {
+		NSPasteboard.general.clearContents()
+		NSPasteboard.general.setString(s, forType: .string)
 	}
 }
