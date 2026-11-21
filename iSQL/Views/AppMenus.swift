@@ -23,6 +23,13 @@ struct TabCommands {
 	var hasTab: Bool
 	var closeTab: () -> Void
 	var moveTab: (Int) -> Void
+	/// 직전에 보던 탭으로 (⌃Tab)
+	var previousTab: () -> Void
+	/// 쿼리 패널이 열려 있으면 탭 단축키(⌘W ⌘[ ⌘] ⌃Tab ⌘⇧T)를 끈다: 쿼리를 쓰다가 탭이 닫히거나 바뀌지 않게 (사용자 2026-11-21)
+	var tabKeysOff: Bool
+	/// 닫은 탭이 있는지 · 다시 열기 (⌘⇧T)
+	var canReopen: Bool
+	var reopenTab: () -> Void
 }
 
 extension FocusedValues {
@@ -69,7 +76,8 @@ struct ViewMenuItems: View {
 	}
 }
 
-/// 파일 메뉴: 저장 · 탭 닫기
+/// 파일 메뉴: 저장 · 탭 닫기 · 창 닫기 (macOS 기본 "닫기 ⌘W" 자리를 바꾼다).
+/// 크롬처럼 ⌘W 는 탭을 닫고, 탭이 없으면(설정 창 등) 창을 닫는다. 창 닫기는 ⌘⇧W (사용자 2026-11-21: ⌘⇧W 로 탭을 닫다가 창이 닫힐 뻔)
 struct FileMenuItems: View {
 	@FocusedValue(\.tabCommands) private var c
 
@@ -77,9 +85,17 @@ struct FileMenuItems: View {
 		Button("저장") { c?.save() }
 			.keyboardShortcut("s")
 			.disabled(c == nil)
-		Button("탭 닫기") { c?.closeTab() }
+		Button("탭 닫기") {
+			if let c, c.hasTab { c.closeTab() } else { NSApp.keyWindow?.performClose(nil) }
+		}
+		.keyboardShortcut("w")
+		.disabled(c?.tabKeysOff == true)
+		// ⌘⇧T: 닫은 탭을 하나씩 되살린다 (크롬과 같은 키)
+		Button("닫은 탭 다시 열기") { c?.reopenTab() }
+			.keyboardShortcut("t", modifiers: [.command, .shift])
+			.disabled(c?.canReopen != true || c?.tabKeysOff == true)
+		Button("창 닫기") { NSApp.keyWindow?.performClose(nil) }
 			.keyboardShortcut("w", modifiers: [.command, .shift])
-			.disabled(c?.hasTab != true)
 	}
 }
 
@@ -89,11 +105,14 @@ struct WindowMenuItems: View {
 
 	var body: some View {
 		Button("이전 탭") { c?.moveTab(-1) }
-			.keyboardShortcut("[", modifiers: [.command, .shift])
-			.disabled(c?.hasTab != true)
+			.keyboardShortcut("[")
+			.disabled(c?.hasTab != true || c?.tabKeysOff == true)
 		Button("다음 탭") { c?.moveTab(1) }
-			.keyboardShortcut("]", modifiers: [.command, .shift])
-			.disabled(c?.hasTab != true)
+			.keyboardShortcut("]")
+			.disabled(c?.hasTab != true || c?.tabKeysOff == true)
+		Button("직전 탭 보기") { c?.previousTab() }
+			.keyboardShortcut(.tab, modifiers: .control)
+			.disabled(c?.hasTab != true || c?.tabKeysOff == true)
 		Divider()
 	}
 }

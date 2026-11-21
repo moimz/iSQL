@@ -100,7 +100,11 @@ struct TabArea: View {
 			quickOpen: { model.showQuickOpen.toggle() },
 			hasTab: focused != nil,
 			closeTab: { closeFocused() },
-			moveTab: { move($0) })
+			moveTab: { move($0) },
+			previousTab: { if !session.showPreviousTab() { NSSound.beep() } },
+			tabKeysOff: session.queryPanel?.open == true,
+			canReopen: !session.closedTabs.isEmpty,
+			reopenTab: { if !session.reopenClosedTab() { NSSound.beep() } })
 	}
 
 	/// ⌘S: 쿼리 결과가 덮고 있으면 고른 결과, 루틴 탭이면 루틴(DROP → CREATE), 아니면 지금 표(데이터 · 구조)
@@ -824,7 +828,7 @@ struct TabItem: View {
 					.buttonStyle(.plain)
 					.foregroundStyle(.secondary)
 					.opacity(hover || active ? 1 : 0)
-					.help("탭 닫기 (⌘⇧W)")
+					.help("탭 닫기 (⌘W)")
 				}
 			}
 			.frame(width: 16, height: 16)

@@ -54,7 +54,8 @@ struct iSQLApp: App {
 			}
 			// 보기 · 파일 · 윈도우 메뉴의 탭 단축키 (AppMenus.swift)
 			CommandGroup(before: .toolbar) { ViewMenuItems() }
-			CommandGroup(after: .saveItem) { FileMenuItems() }
+			// 저장 · 탭 닫기(⌘W) · 창 닫기(⌘⇧W): 기본 "닫기 ⌘W" 를 바꾼다
+			CommandGroup(replacing: .saveItem) { FileMenuItems() }
 			CommandGroup(before: .windowList) { WindowMenuItems() }
 			CommandGroup(replacing: .importExport) {
 				Button("서버 설정 가져오기…") { AppState.shared.requestTransfer(.importFile(nil)) }

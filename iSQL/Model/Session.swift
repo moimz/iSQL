@@ -275,6 +275,8 @@ final class Session {
 	private(set) var tabs: [String] = []
 	var activeTab: String? {
 		didSet {
+			// 직전 탭 보기(⌃Tab)용: 바로 전에 보던 탭
+			if let o = oldValue, o != activeTab, tabs.contains(o) { previousTab = o }   // 닫힌 탭은 빼고
 			rememberTabs()
 			// ⌘K 빠른 열기의 최근 연 것 (이 접속 동안만)
 			if let id = activeTab {
@@ -285,6 +287,8 @@ final class Session {
 			}
 		}
 	}
+	/// 바로 전에 보던 왼쪽 탭 (⌃Tab 으로 지금 탭과 오간다)
+	@ObservationIgnored private(set) var previousTab: String?
 	/// 최근 본 테이블·DB 개요 (테이블 id 또는 "db:이름", 최근이 앞)
 	@ObservationIgnored private(set) var recent: [String] = []
 	/// 오른쪽 분할(임시 영역)에 옮겨 둔 이 서버의 탭. 순서·보이는 탭은 창(WindowModel)이 정한다.
@@ -616,6 +620,9 @@ final class Session {
 
 	func closeTab(_ id: String) {
 		guard let i = tabs.firstIndex(of: id) else { return }
+		// ⌘⇧T 로 다시 열 수 있게 (최근 30개)
+		closedTabs.append((id, i))
+		if closedTabs.count > 30 { closedTabs.removeFirst() }
 		tabs.remove(at: i)
 		openData[id] = nil
 		setUnsaved(id, false)
@@ -634,6 +641,29 @@ final class Session {
 	func selectTab(_ id: String) {
 		leftFocusTick += 1
 		activeTab = id
+	}
+
+	/// 닫은 왼쪽 탭 (탭 id, 있던 자리). 마지막이 가장 최근
+	private(set) var closedTabs: [(id: String, index: Int)] = []
+
+	/// ⌘⇧T: 가장 최근에 닫은 탭을 그 자리에 다시 연다. 그새 지워진 테이블 · 이미 열린 탭은 건너뛴다 (되살릴 게 없으면 false)
+	@discardableResult func reopenClosedTab() -> Bool {
+		let existing = Set(tables.map(\.id)).union(databases.map(Self.databaseTabID))
+		while let last = closedTabs.popLast() {
+			guard existing.contains(Self.tableID(ofTab: last.id)), !tabs.contains(last.id), !parked.contains(last.id) else { continue }
+			tabs.insert(last.id, at: min(last.index, tabs.count))
+			selectTab(last.id)
+			rememberTabs()
+			return true
+		}
+		return false
+	}
+
+	/// 직전에 보던 왼쪽 탭으로 (닫혔으면 false)
+	@discardableResult func showPreviousTab() -> Bool {
+		guard let p = previousTab, p != activeTab, tabs.contains(p) else { return false }
+		selectTab(p)
+		return true
 	}
 
 	// MARK: 오른쪽 분할 (임시 영역)
