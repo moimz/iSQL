@@ -7,6 +7,8 @@ struct ContentView: View {
 	@State private var confirmDisconnect: UUID?
 	/// 이 창이 앞(키)에 오면 MCP "지금 보고 있는 창의 서버" 가 이 창을 따른다
 	@Environment(\.controlActiveState) private var activeState
+	/// 창이 뜬 뒤 본문 자리가 잡혔는지 (그 전엔 본문을 숨긴다)
+	@State private var settled = false
 
 	var body: some View {
 		NavigationSplitView {
@@ -34,18 +36,47 @@ struct ContentView: View {
 			}
 			.navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 480)
 		} detail: {
-			if let s = model.current {
-				if s.isConnected {
-					ConnectedArea(session: s, model: model)
+			Group {
+				if let s = model.current {
+					if s.isConnected {
+						ConnectedArea(session: s, model: model)
+					} else {
+						SessionStatusView(model: model, session: s)
+					}
 				} else {
-					SessionStatusView(model: model, session: s)
+					ConnectPanel(model: model)
 				}
-			} else {
-				ConnectPanel(model: model)
+			}
+			// 맥 26 NavigationSplitView 는 창을 막 열면 본문을 사이드바 밑(왼쪽)에 한 번 깔았다가 옮긴다 → 자리가 잡힐 때까지 숨긴다 (Ai.md 12번)
+			.opacity(settled ? 1 : 0)
+			// 제목 자리 서버 버튼도 본문에 붙인다: 창 전체 .toolbar 에 두면 처음엔 사이드바 토글 밑에 깔렸다가 옆으로 밀려 나왔다 (Ai.md 12번)
+			.toolbar {
+				// 제목이자 서버 바꾸기 (둥근 배경 없이 글자만)
+				ToolbarItem(placement: .navigation) {
+					ServerSwitcher(model: model, disconnect: askDisconnect)
+				}
+				.sharedBackgroundVisibility(.hidden)
+				// 서버 이름 옆: 이 서버 설정 (접속했을 때만)
+				if model.current?.isConnected == true {
+					ToolbarItem(placement: .navigation) {
+						Button {
+							SettingsTarget.shared.session = model.current
+							ServerSettingsWindow.shared.show(store: store)
+						} label: { Image(systemName: "gearshape") }
+							.help("서버 설정")
+					}
+				}
+				// 오른쪽 버튼은 여기 두지 않는다: 본문 뷰(TableDetailView)의 .toolbar 에 붙인다 (Ai/iSQL.md 툴바 규칙)
 			}
 		}
 		.toolbar(removing: .title)
-		.onAppear { AppState.shared.register(model) }
+		.onAppear {
+			AppState.shared.register(model)
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+				var t = Transaction(); t.disablesAnimations = true
+				withTransaction(t) { settled = true }
+			}
+		}
 		// 앱 열 때 자동 접속 (첫 창만)
 		.task { await model.autoConnect(saved: store.servers) }
 		.onChange(of: activeState, initial: true) { if activeState == .key { AppState.shared.activeModel = model } }
@@ -67,26 +98,6 @@ struct ContentView: View {
 				// 서버 목록에서 고른 서버가 접속 중이면 그 서버 화면으로 (아니면 "접속한 서버가 아닙니다")
 				model.returnToSelectedConnection()
 			}
-		}
-		.toolbar {
-			// 제목이자 서버 바꾸기 (둥근 배경 없이 글자만)
-			ToolbarItem(placement: .navigation) {
-				ServerSwitcher(model: model, disconnect: askDisconnect)
-			}
-			.sharedBackgroundVisibility(.hidden)
-			// 서버 이름 옆: 이 서버 설정 (접속했을 때만)
-			if model.current?.isConnected == true {
-				ToolbarItem(placement: .navigation) {
-					Button {
-						SettingsTarget.shared.session = model.current
-						ServerSettingsWindow.shared.show(store: store)
-					} label: { Image(systemName: "gearshape") }
-						.help("서버 설정")
-				}
-			}
-
-			// 오른쪽 버튼은 여기 두지 않는다: 창 전체에 붙이면 오른쪽 정렬·묶음 나누기가 안 먹는다.
-			// 본문 뷰(TableDetailView)의 .toolbar 에 붙인다 (Ai/iSQL.md 툴바 규칙)
 		}
 		.navigationTitle(model.current?.server?.displayName ?? "iSQL")
 		// 내보내기: 제목바에 붙는 시트 하나 (하단바 버튼·사이드바 오른쪽 클릭·DB 개요 어디서 불러도)
