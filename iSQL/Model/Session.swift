@@ -830,6 +830,18 @@ final class Session {
 		return v
 	}
 
+	/// SQL · 이름 바꾸기 (MCP update_private_view). 열린 탭이면 결과를 다시 읽는다
+	func updatePrivateView(_ id: UUID, name: String?, sql: String?) -> PrivateView? {
+		guard let i = privateViews.firstIndex(where: { $0.id == id }) else { return nil }
+		if let name, !name.isEmpty { privateViews[i].name = name }
+		if let sql, !sql.isEmpty { privateViews[i].sql = sql }
+		let v = privateViews[i]
+		privateOutputs[v.tabID] = nil
+		savePrivateViews()
+		NotificationCenter.default.post(name: PrivateViewTabView.refreshRequest, object: self, userInfo: ["view": v.id])
+		return v
+	}
+
 	func renamePrivateView(_ v: PrivateView, to name: String) {
 		guard let i = privateViews.firstIndex(where: { $0.id == v.id }) else { return }
 		privateViews[i].name = name

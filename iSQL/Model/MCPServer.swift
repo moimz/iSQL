@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Network
 import Observation
 
@@ -324,6 +325,25 @@ final class MCPServer {
 		 	"database": ["type": "string", "description": "이 DB 로 USE 한 뒤 실행 (MCP 전용 연결이라 앱 화면에는 영향 없음)"],
 		 	"max_rows": ["type": "integer"],
 		 ], "required": ["sql"]]],
+		["name": "create_private_view",
+		 "description": "사용자의 '나만 보는 뷰' 를 만든다: 서버에 CREATE VIEW 하지 않고 SELECT 를 이름 붙여 iSQL 에 저장(iCloud, 사용자의 맥끼리 공유)하고, 그 서버 창 사이드바의 DB 아래에 넣은 뒤 탭으로 열어 결과를 보여 준다. 사용자가 '이런 데이터를 보고 싶다' 고 하면 list_tables · describe_table 로 구조를 보고 조인 · 서브쿼리를 짜서 이것으로 띄운다(쿼리 패널에 넣지 않아 사용자의 쿼리와 섞이지 않음). SELECT(WITH) 한 문장만, 저장 전에 한 번 실행해 오류를 확인한다. 앱에서 접속한 서버만. 이름 앞에 ✨ 가 붙는다",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"database": ["type": "string", "description": "사이드바에서 뷰가 들어갈 DB (쿼리 안의 DB 안 붙인 테이블도 이 DB 로 푼다)"],
+		 	"name": ["type": "string", "description": "뷰 이름 (짧게, 한국어 가능)"],
+		 	"sql": ["type": "string"],
+		 ], "required": ["database", "name", "sql"]]],
+		["name": "update_private_view",
+		 "description": "나만 보는 뷰의 SQL 이나 이름을 바꾸고 그 탭을 열어 다시 실행한다 (결과가 원하던 게 아니어서 고칠 때). view 는 list_private_views 의 id 또는 이름",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"view": ["type": "string"],
+		 	"sql": ["type": "string"],
+		 	"name": ["type": "string"],
+		 ], "required": ["view"]]],
+		["name": "list_private_views",
+		 "description": "서버의 나만 보는 뷰 목록 (id, 이름, DB, SQL)",
+		 "inputSchema": ["type": "object", "properties": ["server": serverArg]]],
 		["name": "server_status",
 		 "description": "서버 상태 진단: 가동 시간·연결 수/최대·실행 중 스레드·평균 초당 쿼리·느린 쿼리 수·InnoDB 버퍼 풀 적중률과 사용량, 그리고 프로세스 목록(10초 넘게 도는 쿼리·잠금 대기 표시). '이 서버 왜 느려?' 같은 질문에 먼저 쓴다. 쿼리 권한과 상관없이 읽기만 한다",
 		 "inputSchema": ["type": "object", "properties": [
@@ -402,6 +422,38 @@ final class MCPServer {
 				Task { try? await session.loadSchema() }
 			}
 			return json(out.count == 1 ? out[0] : out)
+		case "create_private_view":
+			let t = try target(a)
+			let session = try appSession(t)
+			let db = try string(a, "database"), sql = try viewSQL(a, t)
+			let raw = try string(a, "name").trimmingCharacters(in: .whitespacesAndNewlines)
+			try await tryViewSQL(t, db: db, sql: sql)
+			let v = session.addPrivateView(name: raw.hasPrefix(Self.aiMark) ? raw : Self.aiMark + raw, schema: db, sql: sql)
+			show(v, in: session)
+			note("create_private_view · \(t.server.displayName) · \(db) · \(v.name)")
+			return json(["created": true, "id": v.id.uuidString, "name": v.name, "database": db])
+		case "update_private_view":
+			let t = try target(a)
+			let session = try appSession(t)
+			let key = try string(a, "view")
+			guard let old = session.privateViews.first(where: { $0.id.uuidString == key || $0.name == key || $0.name == Self.aiMark + key }) else {
+				throw MCPFailure("나만 보는 뷰 '\(key)' 가 없습니다 (list_private_views)")
+			}
+			var sql: String?
+			if a["sql"] != nil {
+				sql = try viewSQL(a, t)
+				try await tryViewSQL(t, db: old.schema, sql: sql!)
+			}
+			let name = (a["name"] as? String).map { n in n.hasPrefix(Self.aiMark) ? n : Self.aiMark + n }
+			guard let v = session.updatePrivateView(old.id, name: name, sql: sql) else { throw MCPFailure("뷰를 바꾸지 못했습니다") }
+			show(v, in: session)
+			note("update_private_view · \(t.server.displayName) · \(v.name)")
+			return json(["updated": true, "id": v.id.uuidString, "name": v.name, "database": v.schema])
+		case "list_private_views":
+			let t = try target(a)
+			let session = try appSession(t)
+			note("list_private_views · \(t.server.displayName)")
+			return json(session.privateViews.map { ["id": $0.id.uuidString, "name": $0.name, "database": $0.schema, "sql": $0.sql] })
 		case "server_status":
 			let t = try target(a)
 			guard t.capabilities.serverStatus else { throw MCPFailure("\(t.server.displayName) (\(t.server.kindLabel)) 는 서버 상태를 지원하지 않습니다") }
@@ -447,6 +499,48 @@ final class MCPServer {
 		default:
 			throw MCPFailure("모르는 도구: \(name)")
 		}
+	}
+
+	// MARK: 나만 보는 뷰
+
+	/// AI 가 만든 뷰 표시 (사이드바에서 구분되게)
+	private static let aiMark = "✨ "
+
+	private func appSession(_ t: Target) throws -> Session {
+		guard let s = t.session, s.isConnected else { throw MCPFailure("\(t.server.displayName) 는 iSQL 에서 접속해 있지 않습니다. 나만 보는 뷰는 앱에서 접속한 서버에만 만들 수 있습니다") }
+		return s
+	}
+
+	/// 보기용이라 SELECT(WITH) 한 문장만 (쿼리 권한과 상관없이 읽기 전용 검사)
+	private func viewSQL(_ a: [String: Any], _ t: Target) throws -> String {
+		let sql = try string(a, "sql").trimmingCharacters(in: .whitespacesAndNewlines)
+		let parts = SQLSplitter.split(sql, t.dialect.syntax).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+		guard parts.count == 1 else { throw MCPFailure("나만 보는 뷰는 SELECT 한 문장만 됩니다 (\(parts.count)문장)") }
+		let s = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: ";"))
+		let first = SQLSplitter.stripComments(s, t.dialect.syntax).trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+		guard first.hasPrefix("SELECT") || first.hasPrefix("WITH") || first.hasPrefix("("), MCPPolicy.check(s, .readOnly, t.dialect.syntax) == nil else {
+			throw MCPFailure("나만 보는 뷰는 SELECT(WITH) 문장만 됩니다")
+		}
+		return s
+	}
+
+	/// 저장 전에 MCP 연결로 한 번 실행해 오류를 돌려준다 (1행만)
+	private func tryViewSQL(_ t: Target, db: String, sql: String) async throws {
+		let c = try await connection(t)
+		_ = try await c.query(t.dialect.use(db))
+		let probe = SQLSplitter.canAutoLimit(sql, t.dialect.syntax) ? t.dialect.paged(sql, limit: 1) : sql
+		do { _ = try await c.query(probe) }
+		catch { throw MCPFailure("SQL 오류: \(error.localizedDescription)") }
+	}
+
+	/// 그 서버가 열린 창을 앞으로, 사이드바 [테이블], 뷰 탭 열기
+	private func show(_ v: PrivateView, in session: Session) {
+		guard let m = AppState.shared.allModels.first(where: { $0.sessions.values.contains { $0 === session } }), let srv = session.server else { return }
+		m.open(srv)
+		m.sidebarMode = .tables
+		session.expanded.insert(v.schema)
+		session.openPrivateView(v)
+		NSApp.activate()
 	}
 
 	private static func changesSchema(_ s: String, _ syntax: SQLSyntax) -> Bool {
