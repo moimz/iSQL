@@ -137,6 +137,8 @@ struct ServerSwitcher: View {
 	let model: WindowModel
 	let disconnect: (UUID) -> Void
 	@State private var hover = false
+	/// 메뉴를 버튼 바로 아래 같은 자리에 띄우려고 잡아 두는 버튼 뒤의 NSView
+	@State private var anchor = MenuAnchorBox()
 
 	var body: some View {
 		Button(action: showMenu) {
@@ -160,6 +162,7 @@ struct ServerSwitcher: View {
 			.padding(.horizontal, 12)
 			.frame(height: 30)
 			.background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.08 : 0)))
+			.background(MenuAnchor(box: anchor))
 			.padding(.leading, 2)
 			.contentShape(Rectangle())
 		}
@@ -194,33 +197,95 @@ struct ServerSwitcher: View {
 			none.isEnabled = false
 			menu.addItem(none)
 		}
-		// 버튼 바로 아래에 띄운다
-		if let event = NSApp.currentEvent, let window = event.window, let view = window.contentView {
-			let p = view.convert(event.locationInWindow, from: nil)
-			menu.popUp(positioning: nil, at: NSPoint(x: p.x - 20, y: p.y - 18), in: view)
+		// 마우스 자리와 상관없이 늘 버튼 바로 아래, 왼쪽 끝을 버튼에 맞춰 띄운다 (사용자 2026-11-21)
+		if let v = anchor.view, v.window != nil {
+			menu.popUp(positioning: nil, at: NSPoint(x: 0, y: v.isFlipped ? v.bounds.height + 4 : -4), in: v)
 		} else {
 			menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
 		}
 	}
 
-	/// 왼쪽 목록처럼: 색 점 + 이름 (+ 접속 상태), 아래 줄에 접속 정보
+	/// 왼쪽 서버 목록처럼: 서버 아이콘 + 이름 · 접속 정보 + 상태 뱃지 (사용자 2026-11-21).
+	/// macOS 26 메뉴는 항목 이미지(색 점)를 안 그려서, 항목을 SwiftUI 뷰로 직접 그린다
 	private func serverItem(_ s: Server) -> NSMenuItem {
-		let item = MenuAction.item(s.displayName + status(s)) { model.open(s) }
-		item.subtitle = s.subtitle
-		item.state = model.currentID == s.id ? .on : .off
-		let color = s.color.swiftUI.map { NSColor($0) } ?? NSColor.tertiaryLabelColor
-		item.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil)?
-			.withSymbolConfiguration(.init(pointSize: 9, weight: .regular).applying(.init(paletteColors: [color])))
+		let item = MenuAction.item(s.displayName) { model.open(s) }
+		item.view = MenuRowView(ServerMenuRow(server: s, state: model.state(s.id), current: model.currentID == s.id))
 		return item
 	}
+}
 
-	private func status(_ s: Server) -> String {
-		switch model.state(s.id) {
-		case .connected: "   · 접속 중"
-		case .connecting: "   · 접속하는 중…"
-		case .failed: "   · 접속 실패"
-		default: ""
+/// 메뉴를 띄울 자리 (버튼 뒤에 깔린 빈 NSView)
+final class MenuAnchorBox { weak var view: NSView? }
+
+struct MenuAnchor: NSViewRepresentable {
+	let box: MenuAnchorBox
+	func makeNSView(context: Context) -> NSView { let v = NSView(); box.view = v; return v }
+	func updateNSView(_ v: NSView, context: Context) { box.view = v }
+}
+
+/// 접속한 서버 메뉴의 한 줄
+private struct ServerMenuRow: View {
+	let server: Server
+	let state: Session.State?
+	let current: Bool
+
+	var body: some View {
+		HStack(spacing: 9) {
+			ServerIcon(color: server.color, kind: server.sqlKind, size: 26)
+			VStack(alignment: .leading, spacing: 1) {
+				Text(server.displayName).font(.system(size: 13))
+				Text(server.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+			}
+			Spacer(minLength: 16)
+			// 여기는 접속한 서버만 나오니 "접속 중" 대신, 지금 보고 있는 서버에 초록 점 (체크 대신 · 사용자 2026-11-21)
+			if current, state == .connected {
+				Circle().fill(Color.green).frame(width: 8, height: 8).padding(.trailing, 4)
+			} else if let (text, color) = badge {
+				Text(text).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+					.background(Capsule().fill(color.opacity(0.2))).foregroundStyle(color)
+			}
 		}
+		// 왼쪽 끝을 "접속한 서버" 머리글 · "접속 종료 후 닫기" 글자와 맞춘다
+		.padding(.leading, 16).padding(.trailing, 14).padding(.vertical, 4)
+	}
+
+	private var badge: (String, Color)? {
+		switch state {
+		case .connecting: ("접속하는 중", .orange)
+		case .failed: ("접속 실패", .red)
+		default: nil
+		}
+	}
+}
+
+/// SwiftUI 로 그린 메뉴 항목: 마우스가 올라가면 둥근 강조, 누르면 메뉴를 닫고 항목 동작을 부른다
+final class MenuRowView: NSView {
+	private let host: NSHostingView<AnyView>
+
+	init<V: View>(_ content: V) {
+		host = NSHostingView(rootView: AnyView(content))
+		let size = host.fittingSize
+		super.init(frame: NSRect(x: 0, y: 0, width: max(size.width, 300), height: size.height))
+		host.frame = bounds
+		host.autoresizingMask = [.width, .height]
+		addSubview(host)
+		autoresizingMask = [.width]
+	}
+	required init?(coder: NSCoder) { fatalError() }
+
+	// 안의 SwiftUI 가 마우스를 먹지 않게
+	override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+
+	override func draw(_ dirtyRect: NSRect) {
+		guard enclosingMenuItem?.isHighlighted == true else { return }
+		NSColor.labelColor.withAlphaComponent(0.1).setFill()
+		NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 6, yRadius: 6).fill()
+	}
+
+	override func mouseUp(with event: NSEvent) {
+		guard let item = enclosingMenuItem, let menu = item.menu else { return }
+		menu.cancelTracking()
+		if let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
 	}
 }
 
