@@ -146,7 +146,9 @@ struct PrivateViewTabView: View {
 		loading = true
 		defer { loading = false }
 		do {
-			output = try await session.runPrivateView(view, refresh: refresh)
+			// 지금 저장된 정의로 (MCP 가 SQL 을 바꾸고 바로 알리면, 이 뷰의 view 는 아직 옛 SQL 이다)
+			let current = session.privateViews.first { $0.id == view.id } ?? view
+			output = try await session.runPrivateView(current, refresh: refresh)
 			error = nil
 		} catch {
 			self.error = error.localizedDescription
