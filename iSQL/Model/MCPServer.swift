@@ -593,7 +593,10 @@ final class MCPServer {
 				return json(d)
 			}
 			await panel.run(statements)
-			return json(["shown": true, "ran": true, "message": panel.message ?? "", "error": panel.isError, "results": panel.outputs.count])
+			var d: [String: Any] = ["shown": true, "ran": true, "error": panel.isError,
+			                        "results": panel.outputs.map { ["rows": $0.totalText, "seconds": $0.elapsed.map { String(format: "%.2f", $0) } ?? ""] }]
+			if let m = panel.message { d["message"] = m }
+			return json(d)
 		case "list_private_views":
 			let t = try target(a)
 			let session = try appSession(t)

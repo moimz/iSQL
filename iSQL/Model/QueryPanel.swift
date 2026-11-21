@@ -223,9 +223,14 @@ final class QueryPanel {
 				let paged = SQLSplitter.canAutoLimit(st, dialect.syntax)
 				let size = QueryOutput.currentPageSize
 				let sql = paged ? dialect.paged(st, limit: size + 1) : st
-				for r in try await session.query(sql) {
+				let t0 = Date()
+				let results = try await session.query(sql)
+				let took = Date().timeIntervalSince(t0)
+				for r in results {
 					if r.isResultSet {
-						outs.append(QueryOutput(sql: st, paged: paged, result: r, pageSize: size, session: session))
+						let o = QueryOutput(sql: st, paged: paged, result: r, pageSize: size, session: session)
+						o.elapsed = took
+						outs.append(o)
 					} else {
 						affected += r.affectedRows
 						changes += 1
@@ -234,13 +239,17 @@ final class QueryPanel {
 				}
 			}
 			let secs = Date().timeIntervalSince(start)
-			var parts: [String] = []
-			if !outs.isEmpty { parts.append(outs.count == 1 ? outs[0].totalText : "결과 \(outs.count)개") }
-			if changes > 0 { parts.append("\(affected.formatted())행 바뀜") }
-			if cancelled { parts.append("취소함 (남은 문장은 실행하지 않음)") }
-			if parts.isEmpty { parts.append("완료") }
-			parts.append(String(format: "%.2f초", secs))
-			message = parts.joined(separator: " · ")
+			// 결과만 낸 실행이면 툴바에는 아무것도 적지 않는다: 걸린 시간은 결과 탭에, 행 수는 결과 아래 쪽 줄에 (사용자 2026-11-22)
+			if !outs.isEmpty && changes == 0 && !cancelled {
+				message = nil
+			} else {
+				var parts: [String] = []
+				if changes > 0 { parts.append("\(affected.formatted())행 바뀜") }
+				if cancelled { parts.append("취소함 (남은 문장은 실행하지 않음)") }
+				if parts.isEmpty { parts.append("완료") }
+				parts.append(String(format: "%.2f초", secs))
+				message = parts.joined(separator: " · ")
+			}
 		} catch {
 			isError = true
 			message = cancelled ? "취소했습니다 (\(error.localizedDescription))" : error.localizedDescription
@@ -399,6 +408,8 @@ final class QueryOutput: Identifiable, Pager {
 	private(set) var error: String?
 	/// EXPLAIN 결과면 실행계획 (나무 글·경고)
 	var plan: ExplainPlan?
+	/// 이 결과를 낸 문장이 걸린 시간 (결과 탭에 보인다, 행 수는 아래 쪽 줄에)
+	var elapsed: TimeInterval?
 
 	static var currentPageSize: Int {
 		let v = UserDefaults.standard.integer(forKey: "pageSize")

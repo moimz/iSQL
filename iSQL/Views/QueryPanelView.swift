@@ -208,7 +208,7 @@ struct QueryResultsOverlay: View {
 			TabStrip(selected: panel.selectedOutput) {
 				ForEach(Array(panel.outputs.enumerated()), id: \.element.id) { i, o in
 					ResultTabItem(title: o.plan != nil ? "실행계획 \(i + 1)" : "결과 \(i + 1)",
-					              detail: o.plan.map { $0.warnings.isEmpty ? "경고 없음" : "경고 \($0.warnings.count)" } ?? o.totalText, sql: o.sql,
+					              detail: o.plan.map { $0.warnings.isEmpty ? "경고 없음" : "경고 \($0.warnings.count)" } ?? o.elapsed.map { String(format: "%.2f초", $0) } ?? "", sql: o.sql,
 					              active: i == panel.selectedOutput, loading: o.loading) {
 						panel.selectedOutput = i
 					}
