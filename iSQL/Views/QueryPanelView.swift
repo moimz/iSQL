@@ -44,7 +44,8 @@ struct QueryPanelView: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			QueryEditor(text: $panel.text, session: panel.session, database: panel.database) { panel.selection = $0 }
+			QueryEditor(text: $panel.text, session: panel.session, database: panel.database,
+			            onSelection: { panel.selection = $0 }, reveal: panel.reveal, onRevealed: { panel.reveal = nil })
 				.frame(height: panel.height)
 			Divider()
 			actionBar
@@ -366,6 +367,9 @@ struct QueryEditor: NSViewRepresentable {
 	weak var session: Session?
 	var database: String = ""
 	var onSelection: ((NSRange) -> Void)?
+	/// 한 번 골라 보여 줄 범위 (MCP 가 넣은 쿼리)
+	var reveal: NSRange? = nil
+	var onRevealed: (() -> Void)? = nil
 	/// 보기만 (루틴 탭의 패키지)
 	var readOnly = false
 	/// 글자 규칙 (색칠·자동 완성을 띄우는 글자): 접속한 서버 종류의 것
@@ -413,6 +417,13 @@ struct QueryEditor: NSViewRepresentable {
 		context.coordinator.parent = self
 		guard let tv = context.coordinator.textView else { return }
 		if tv.string != text { tv.string = text; SQLHighlight.apply(to: tv, syntax) }
+		if let r = reveal, NSMaxRange(r) <= (tv.string as NSString).length {
+			tv.setSelectedRange(r)
+			tv.scrollRangeToVisible(r)
+			onSelection?(r)
+			let done = onRevealed
+			DispatchQueue.main.async { done?() }
+		}
 	}
 
 	@MainActor

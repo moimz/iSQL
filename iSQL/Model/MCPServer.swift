@@ -372,6 +372,15 @@ final class MCPServer {
 		 	"header": ["type": "boolean", "description": "첫 행이 컬럼 이름인지 (기본 true)"],
 		 	"add_id": ["type": "boolean", "description": "자동 증가 id 기본 키 컬럼 붙이기 (기본 true, 있어야 iSQL 에서 행을 고칠 수 있다)"],
 		 ], "required": ["path", "database", "table"]]],
+		["name": "show_query",
+		 "description": "앱의 쿼리 패널 [MCP] 칸에 SQL 을 넣어 보여 준다: 그 서버 창을 앞으로, 쿼리 패널을 열고 [MCP] 칸으로 바꿔 끝에 '-- ✨ 시각 · 설명' 과 함께 붙이고 그 SQL 을 골라 둔다(사용자는 ⌘↩ 로 실행). 사용자의 [사용자] 칸 쿼리와 섞이지 않고, [MCP] 칸은 그 맥에만 남는다(최근 50개). 사용자가 검토하고 직접 돌릴 쿼리(변경 · 계정 · 비밀번호 자리를 채워야 하는 쿼리, 한 번 보고 고칠 쿼리)에 쓴다. 넣기만 할 때는 쿼리 권한과 상관없다. run=true 면 바로 실행해 결과를 띄우되 쿼리 권한을 따른다(넘으면 실행하지 않고 넣기만 하고 not_run 으로 알려 준다). 두고두고 볼 데이터는 create_private_view. 앱에서 접속한 서버만",
+		 "inputSchema": ["type": "object", "properties": [
+		 	"server": serverArg,
+		 	"sql": ["type": "string"],
+		 	"database": ["type": "string", "description": "쿼리 패널의 기본 DB (USE)"],
+		 	"note": ["type": "string", "description": "무슨 쿼리인지 한 줄 (주석으로 붙는다)"],
+		 	"run": ["type": "boolean", "description": "바로 실행 (기본 false, 쿼리 권한을 따른다)"],
+		 ], "required": ["sql"]]],
 		["name": "list_private_views",
 		 "description": "서버의 나만 보는 뷰 목록 (id, 이름, DB, SQL)",
 		 "inputSchema": ["type": "object", "properties": ["server": serverArg]]],
@@ -560,6 +569,31 @@ final class MCPServer {
 			if job.isError { throw MCPFailure(job.message ?? "가져오기 실패") }
 			note("import_excel · \(t.server.displayName) · \(db).\(name)")
 			return json(["imported": true, "table": db + "." + name, "message": job.message ?? "", "sql": job.createSQL])
+		case "show_query":
+			let t = try target(a)
+			let session = try appSession(t)
+			guard let panel = session.queryPanel else { throw MCPFailure("쿼리 패널이 없습니다") }
+			let sql = try string(a, "sql")
+			var run = (a["run"] as? Bool) ?? false
+			let statements = SQLSplitter.split(sql, t.dialect.syntax).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+			// 실행이 쿼리 권한을 넘으면 실행하지 않고 넣기만 한다 (사용자가 검토하고 직접 실행)
+			var blocked: String?
+			if run, let s = statements.first(where: { MCPPolicy.check($0, permission, t.dialect.syntax) != nil }) {
+				blocked = MCPPolicy.check(s, permission, t.dialect.syntax)! + " 막힌 문장: " + String(s.prefix(200))
+				run = false
+			}
+			front(session)
+			if let db = a["database"] as? String, !db.isEmpty, session.databases.contains(db) { panel.database = db }
+			panel.open = true
+			panel.appendFromMCP(sql, note: a["note"] as? String)
+			note("show_query · \(t.server.displayName) · \(sql.prefix(80))")
+			guard run else {
+				var d: [String: Any] = ["shown": true, "ran": false]
+				if let blocked { d["not_run"] = blocked + " — 쿼리 패널 [MCP] 칸에 넣어 두었으니 사용자가 검토하고 ⌘↩ 로 직접 실행할 수 있다" }
+				return json(d)
+			}
+			await panel.run(statements)
+			return json(["shown": true, "ran": true, "message": panel.message ?? "", "error": panel.isError, "results": panel.outputs.count])
 		case "list_private_views":
 			let t = try target(a)
 			let session = try appSession(t)

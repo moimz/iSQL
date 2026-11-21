@@ -39,6 +39,28 @@ final class QueryPanel {
 	}
 	/// 지금 안 보이는 쪽의 글
 	@ObservationIgnored private var hiddenText = ""
+	/// 입력창이 한 번 골라 보여 줄 범위 (MCP 가 넣은 쿼리). 입력창이 보여 준 뒤 nil
+	var reveal: NSRange?
+
+	/// MCP show_query: MCP 칸 끝에 "-- ✨ 시각 · 설명" 과 SQL 을 붙이고 그 SQL 을 골라 둔다 (⌘↩ 로 바로 실행).
+	/// 오래된 것은 지워 최근 50개만 남긴다. 붙인 SQL 의 범위
+	@discardableResult func appendFromMCP(_ sql: String, note: String?) -> NSRange {
+		source = .mcp
+		let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"
+		let marker = "-- ✨ "
+		let header = marker + f.string(from: Date()) + (note.map { $0.isEmpty ? "" : " · " + $0.replacingOccurrences(of: "\n", with: " ") } ?? "")
+		var entries = text.components(separatedBy: "\n\n" + marker)
+		if entries.count > 49 { entries = Array(entries.suffix(49)); if !entries[0].hasPrefix(marker) { entries[0] = marker + entries[0] } }
+		var base = entries.joined(separator: "\n\n" + marker).trimmingCharacters(in: .whitespacesAndNewlines)
+		if !base.isEmpty { base += "\n\n" }
+		let body = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+		let prefix = base + header + "\n"
+		text = prefix + body
+		let r = NSRange(location: (prefix as NSString).length, length: (body as NSString).length)
+		selection = r
+		reveal = r
+		return r
+	}
 	private var mcpKey: String? { serverID.map { "query.mcp.\($0.uuidString)" } }
 	/// 쿼리를 돌릴 기본 DB (USE)
 	var database = ""
