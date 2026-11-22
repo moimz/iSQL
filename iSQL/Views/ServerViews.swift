@@ -214,14 +214,7 @@ struct GroupHeader: View {
 		HStack {
 			Text(name.isEmpty ? "그룹 없음" : name)
 			Spacer()
-			// 접속 후 DB 머리의 개수와 같은 작은 알약, 오른쪽에 붙지 않게 여백
-			Text("\(count)")
-				.font(.system(size: 11, weight: .medium))
-				.monospacedDigit()
-				.foregroundStyle(.secondary)
-				.padding(.horizontal, 6).padding(.vertical, 1)
-				.background(Capsule().fill(Color.secondary.opacity(0.15)))
-				.padding(.trailing, 8)
+			// 그룹 안 서버 개수 알약은 뺐다: 접속 중 뱃지와 겹쳐 지저분해 보임 (사용자 2026-11-23)
 		}
 		.contentShape(Rectangle())
 	}
