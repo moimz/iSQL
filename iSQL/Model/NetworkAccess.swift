@@ -206,7 +206,8 @@ struct CIDR {
 		for i in 0..<bytes.count {
 			guard left > 0 else { return true }
 			let bits = min(8, left)
-			let mask: UInt8 = bits == 8 ? 0xFF : UInt8(0xFF << (8 - bits))
+			// UInt8 끼리 밀어야 한다: Int 로 0xFF << n 을 UInt8 로 바꾸면 넘쳐서 앱이 죽었다 (/7 · /10 · /12, fdab:… 같은 IPv6 가 있는 맥, 2.7 (204))
+			let mask: UInt8 = UInt8.max << UInt8(8 - bits)
 			if b[i] & mask != bytes[i] & mask { return false }
 			left -= bits
 		}
