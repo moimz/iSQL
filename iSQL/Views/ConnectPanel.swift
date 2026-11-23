@@ -28,6 +28,8 @@ struct ConnectForm: View {
 	@State private var savedFlash = false
 	/// 허용 IP 칸에 친 글 그대로 (치는 중에 쉼표가 사라지지 않게). 나눈 목록은 server.allowedIPs 에
 	@State private var allowedText = ""
+	/// 접속 시험에서 허용 IP 가 아니었으면 그 결과 (아래에 VPN 목록)
+	@State private var testBlocked: NetworkAccess.Report?
 
 	struct TestStep: Identifiable {
 		let id = UUID()
@@ -64,6 +66,14 @@ struct ConnectForm: View {
 			if saved {
 				mysqlPassword = Keychain.get(server.mysqlPasswordKey) ?? ""
 				sshSecret = Keychain.get(server.sshSecretKey) ?? ""
+			}
+		}
+		// 접속 시험에서 허용 IP 가 아니면: 앱 접속과 같은 제목바 시트 (VPN 을 켜면 다시 시험)
+		.sheet(isPresented: Binding(get: { testBlocked != nil }, set: { if !$0 { testBlocked = nil } })) {
+			if let r = testBlocked {
+				AccessSheet(server: server.displayName, report: r,
+				            retry: { testBlocked = nil; test() },
+				            close: { testBlocked = nil })
 			}
 		}
 		// 새 접속 내용은 다른 화면에 다녀와도 남게
@@ -509,11 +519,26 @@ struct ConnectForm: View {
 		let run = testRun
 		testing = true
 		testSteps = []
+		testBlocked = nil
 		let s = server
 		let mysqlPw = mysqlPassword
 		let sshPw = s.ssh.enabled ? sshSecret : nil
 		Task { @MainActor in
 			defer { if run == testRun { testing = false } }
+			// 접속 허용 IP: 앱 접속과 같은 검사 (아니면 여기서 멈추고 VPN 목록)
+			if let allowed = s.allowedIPs, !allowed.isEmpty {
+				testSteps.append(.init(ok: nil, text: "이 맥의 IP 확인 중…"))
+				let r = await NetworkAccess.check(allowed)
+				guard run == testRun else { return }
+				if r.allowed {
+					testSteps[testSteps.count - 1] = .init(ok: true, text: "허용 IP 에서 접속 (\(r.matched ?? ""))")
+				} else {
+					testSteps[testSteps.count - 1] = .init(ok: false, text: "이 맥의 IP 가 접속 허용 IP(\(allowed.joined(separator: ", "))) 가 아닙니다. VPN 을 켜면 다시 시험합니다.")
+					testBlocked = r
+					return
+				}
+			}
+			let firstStep = testSteps.count
 			do {
 				let (tunnel, conn) = try await Session.open(s, mysqlPassword: mysqlPw, sshSecret: sshPw) { step in
 					guard run == testRun else { return }
@@ -522,7 +547,7 @@ struct ConnectForm: View {
 				}
 				// 중단한 뒤에 열렸으면 닫고 끝
 				guard run == testRun else { conn.close(); tunnel?.close(); return }
-				if s.ssh.enabled, let t = tunnel { testSteps[0].text = "SSH 터널 열림 (\(s.ssh.host) → 이 맥 \(t.localPort) 포트)" }
+				if s.ssh.enabled, let t = tunnel, testSteps.indices.contains(firstStep) { testSteps[firstStep].text = "SSH 터널 열림 (\(s.ssh.host) → 이 맥 \(t.localPort) 포트)" }
 				// MySQL·MariaDB 는 버전을 보고 종류를 맞춘다 (저장하면 그 종류로)
 				let detected = s.sqlKind?.detected(fromVersion: conn.serverVersion) ?? s.sqlKind
 				if let detected, detected != server.sqlKind { server.kind = detected.rawValue }
