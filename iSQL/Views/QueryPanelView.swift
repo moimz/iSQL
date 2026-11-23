@@ -186,7 +186,21 @@ struct QueryPanelView: View {
 		guard !statements.isEmpty else { NSSound.beep(); return }
 		// 위험한 쿼리는 확인한다 (서버 설정 > 일반 에서 끌 수 있다, 기본 켬)
 		let warn = panel.session?.server?.warnsDangerousSQL ?? true
-		let found = warn ? statements.compactMap { st in SQLSplitter.danger(st, panel.dialect.syntax).map { "• \($0)\n  \(st.prefix(120))" } } : []
+		let hits = warn ? statements.compactMap { st in SQLSplitter.danger(st, panel.dialect.syntax).map { (kind: $0, sql: st) } } : []
+		// 확인 창 글은 스크롤이 안 된다: 문장이 많으면 버튼이 화면 밖으로 밀려 누를 수 없었다 (사용자 2026-11-23, MCP 로 넣은 대량 쿼리)
+		// → 종류별 개수 + 앞의 몇 개만, 나머지는 "외 N개"
+		var found: [String] = []
+		if !hits.isEmpty {
+			var counts: [(String, Int)] = []
+			for h in hits { if let i = counts.firstIndex(where: { $0.0 == h.kind }) { counts[i].1 += 1 } else { counts.append((h.kind, 1)) } }
+			if hits.count > 1 { found.append("위험한 문장 \(hits.count)개 (전체 \(statements.count)개 중): " + counts.map { "\($0.0) \($0.1)개" }.joined(separator: ", ")) }
+			let shown = 5
+			for h in hits.prefix(shown) {
+				let one = h.sql.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+				found.append("• \(h.kind)\n  \(one.prefix(100))\(one.count > 100 ? "…" : "")")
+			}
+			if hits.count > shown { found.append("… 외 \(hits.count - shown)개") }
+		}
 		if found.isEmpty {
 			Task { await panel.run(statements, button: all ? .all : .run) }
 		} else {
