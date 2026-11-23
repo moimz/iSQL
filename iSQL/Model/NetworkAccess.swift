@@ -129,6 +129,10 @@ enum NetworkAccess {
 		var id: String
 		var name: String
 		var status: String
+		/// 끝의 [PPP:L2TP] · [IPSec] · [VPN:…]
+		var kind = ""
+		/// L2TP · PPTP 같은 PPP 방식: scutil 로 켜면 키체인의 공유 암호를 못 읽어 networksetup 으로 켠다
+		var isPPP: Bool { kind.hasPrefix("PPP") }
 		var connected: Bool { status == "Connected" }
 		var connecting: Bool { status == "Connecting" }
 	}
@@ -145,12 +149,24 @@ enum NetworkAccess {
 			let status = String(s[s.index(after: open)..<close])
 			let after = s[s.index(after: close)...].split(separator: " ", omittingEmptySubsequences: true)
 			let id = after.first.map(String.init) ?? ""
-			out.append(VPN(id: id, name: String(s[s.index(after: q1)..<q2]), status: status))
+			var kind = ""
+			if let b1 = s.lastIndex(of: "["), let b2 = s.lastIndex(of: "]"), b1 < b2 { kind = String(s[s.index(after: b1)..<b2]) }
+			out.append(VPN(id: id, name: String(s[s.index(after: q1)..<q2]), status: status, kind: kind))
 		}
 		return out
 	}
 
-	static func start(_ vpn: VPN) async { _ = await run("/usr/sbin/scutil", ["--nc", "start", vpn.id]) }
+	/// 켜기. L2TP 같은 PPP 방식을 `scutil --nc start` 로 켜면 "IPSec 공유 비밀이 없습니다" 가 뜬다 (키체인의 공유 암호를 못 읽음) →
+	/// `networksetup -connectpppoeservice` 는 시스템 설정에서 켤 때처럼 저장된 암호를 쓴다 (사용자 2026-11-23 확인)
+	static func start(_ vpn: VPN) async {
+		if vpn.isPPP { _ = await run("/usr/sbin/networksetup", ["-connectpppoeservice", vpn.name]) }
+		else { _ = await run("/usr/sbin/scutil", ["--nc", "start", vpn.id]) }
+	}
+
+	static func stop(_ vpn: VPN) async {
+		if vpn.isPPP { _ = await run("/usr/sbin/networksetup", ["-disconnectpppoeservice", vpn.name]) }
+		else { _ = await run("/usr/sbin/scutil", ["--nc", "stop", vpn.id]) }
+	}
 
 	private static func run(_ path: String, _ args: [String]) async -> String {
 		await Task.detached {

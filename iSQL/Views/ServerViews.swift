@@ -503,20 +503,25 @@ struct SeenIPList: View {
 	}
 }
 
-/// macOS 에 등록된 VPN 목록 (시스템 설정 > VPN). [연결] 을 누른 VPN 이 연결되면 onConnected
+/// macOS 에 등록된 VPN 목록 (시스템 설정 > VPN). [연결] 을 누른 VPN 이 연결되면 onConnected.
+/// 연결하는 동안은 [취소], 연결 중이었다가 다시 꺼지거나 30초가 지나면 실패로 보고 [연결] 로 돌린다
 struct VPNList: View {
 	let onConnected: () -> Void
 	@State private var vpns: [NetworkAccess.VPN] = []
 	@State private var loaded = false
+	/// [연결] 을 누른 VPN 과 그때 시각, 연결 중(Connecting)을 본 적 있는지
 	@State private var waiting: String?
+	@State private var waitStart = Date()
+	@State private var sawConnecting = false
+	@State private var failed: String?
 
 	static func openSettings() {
 		NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension")!)
 	}
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 6) {
-			Text("이 맥의 VPN").font(.headline)
+		VStack(alignment: .leading, spacing: 4) {
+			Text("이 맥의 VPN").font(.headline).padding(.bottom, 2)
 			if !loaded {
 				ProgressView().controlSize(.small)
 			} else if vpns.isEmpty {
@@ -524,32 +529,57 @@ struct VPNList: View {
 			}
 			ForEach(vpns) { v in
 				HStack(spacing: 8) {
-					Circle().fill(v.connected ? Color.green : v.connecting ? Color.orange : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
+					Circle().fill(v.connected ? Color.green : (v.connecting || waiting == v.id) ? Color.orange : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
 					Text(v.name)
+					if failed == v.id { Text("연결 실패").font(.callout).foregroundStyle(.red) }
 					Spacer()
 					if v.connected {
 						Text("연결됨").foregroundStyle(.secondary).font(.callout)
 					} else if v.connecting || waiting == v.id {
 						ProgressView().controlSize(.small)
+						Button("취소") { cancel(v) }
 					} else {
-						Button("연결") { waiting = v.id; Task { await NetworkAccess.start(v) } }
+						Button("연결") { connect(v) }
 					}
 				}
+				// 버튼 · 진행 표시가 바뀌어도 줄 높이가 같게
+				.frame(height: 28)
 			}
 		}
 		.task { await poll() }
 	}
 
-	/// 1초마다 상태를 읽고, [연결] 을 누른 VPN 이 연결되면 1초 뒤(경로가 바뀔 틈) onConnected
+	private func connect(_ v: NetworkAccess.VPN) {
+		failed = nil
+		waiting = v.id
+		waitStart = Date()
+		sawConnecting = false
+		Task { await NetworkAccess.start(v) }
+	}
+
+	private func cancel(_ v: NetworkAccess.VPN) {
+		waiting = nil
+		Task { await NetworkAccess.stop(v) }
+	}
+
+	/// 1초마다 상태를 읽는다. [연결] 을 누른 VPN 이 연결되면 1초 뒤(경로가 바뀔 틈) onConnected
 	private func poll() async {
 		while !Task.isCancelled {
 			let list = await NetworkAccess.vpnList()
 			vpns = list
 			loaded = true
-			if let w = waiting, list.first(where: { $0.id == w })?.connected == true {
-				waiting = nil
-				try? await Task.sleep(for: .seconds(1))
-				onConnected()
+			if let w = waiting, let v = list.first(where: { $0.id == w }) {
+				if v.connected {
+					waiting = nil
+					try? await Task.sleep(for: .seconds(1))
+					onConnected()
+				} else if v.connecting {
+					sawConnecting = true
+				} else if sawConnecting || Date().timeIntervalSince(waitStart) > 30 {
+					// 연결하다 꺼졌거나(암호 오류 등) 너무 오래 걸림
+					waiting = nil
+					failed = w
+				}
 			}
 			try? await Task.sleep(for: .seconds(1))
 		}
