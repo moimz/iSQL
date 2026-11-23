@@ -93,11 +93,11 @@
 
 **MCP**
 - Claude 같은 AI 도구가 iSQL 로 DB 를 볼 수 있는 로컬 MCP 서버 (앱 설정에서 켜고, 읽기 전용부터 권한을 고름)
-- 접근 범위(지금 보는 서버 · 접속한 서버 · 모든 서버)와 쿼리 권한(읽기 전용 · 안전한 쿼리만 · 모든 권한)을 고름. 이 맥 안(127.0.0.1)에서만 받고, 비밀번호는 넘기지 않음. 설정 > MCP 의 [연결 명령 복사] 로 Claude Code 에 연결
-- 보기 · 실행: `list_servers` · `list_databases` · `list_tables` · `describe_table` · `run_query` (쿼리 권한 안에서)
+- 접근 범위(지금 보는 서버 · 접속한 서버 · 모든 서버)와 쿼리 권한을 고름: 읽기 전용(그 밖은 거절) · 안전한 쿼리만 자동 허용(읽기 · INSERT · WHERE 있는 UPDATE · 컬럼 추가는 바로, DELETE · DROP 같은 그 밖은 허용 창을 띄워 물음, 2분 안에 답이 없으면 거절) · 모든 쿼리 자동 허용. 이 맥 안(127.0.0.1)에서만 받고, 비밀번호는 넘기지 않음. 설정 > MCP 의 [연결 명령 복사] 로 Claude Code 에 연결
+- 보기 · 실행: `list_servers` · `list_databases` · `list_tables` · `describe_table` · `run_query` (쿼리 권한에 따라 바로 실행 · 물음 · 거절)
 - 진단: `server_status` · `top_queries` (서버 상태 요약 · 프로세스 목록 · 쿼리 통계, 서버가 느린 원인 진단용)
 - 나만 보는 뷰: `create_private_view` · `update_private_view` · `list_private_views` — "이런 데이터를 보고 싶다" 고 하면 AI 가 조인 · 서브쿼리를 짜서 나만 보는 뷰(이름 앞 ✨)로 저장하고 탭으로 열어 줌 (SELECT 한 문장만, 저장 전에 한 번 실행해 오류 확인)
-- 화면: `open_table`(데이터 · 구조, 조건으로 걸러서) · `open_database` · `refresh` · `show_query`(쿼리 패널 [MCP] 칸에 넣고 골라 두기, 권한 안이면 바로 실행도)
+- 화면: `open_table`(데이터 · 구조, 조건으로 걸러서) · `open_database` · `refresh` · `show_query`(쿼리 패널 [MCP] 칸에 넣고 골라 두기, 실행까지 하면 `run_query` 와 같은 권한 규칙)
 - 엑셀: `import_excel` — 엑셀 파일을 iSQL 의 엑셀 가져오기로 새 테이블에 넣고 탭을 엶 (읽기 전용 권한이면 안 함)
 - MCP 로 테이블을 바꾸면 열려 있는 그 테이블 탭을 바로 다시 읽음 (저장 안 한 편집이 있는 탭은 건드리지 않음)
 - 접속 허용 IP 가 아닌 서버는 MCP 도 접속하지 않고, 본 IP 와 이 맥의 VPN 목록을 알려 줌 (AI 가 VPN 을 켜 달라고 안내)

@@ -31,15 +31,15 @@ enum MCPPermission: String, CaseIterable, Identifiable {
 	var label: String {
 		switch self {
 		case .readOnly: "읽기 전용"
-		case .safe: "안전한 쿼리만"
-		case .full: "모든 권한"
+		case .safe: "안전한 쿼리만 자동 허용"
+		case .full: "모든 쿼리 자동 허용"
 		}
 	}
 	var detail: String {
 		switch self {
-		case .readOnly: "SELECT · SHOW · DESCRIBE · EXPLAIN 만"
-		case .safe: "읽기 + INSERT + WHERE 있는 UPDATE + 컬럼 추가(ALTER TABLE … ADD COLUMN)"
-		case .full: "모든 SQL (DROP · TRUNCATE · DELETE 포함)"
+		case .readOnly: "SELECT · SHOW · DESCRIBE · EXPLAIN 만. 그 밖은 묻지 않고 거절"
+		case .safe: "읽기 + INSERT + WHERE 있는 UPDATE + 컬럼 추가는 바로 실행, 그 밖(DELETE · DROP 등)은 실행할지 묻기"
+		case .full: "모든 SQL 을 묻지 않고 실행 (DROP · TRUNCATE · DELETE 포함)"
 		}
 	}
 }
@@ -445,12 +445,7 @@ final class MCPServer {
 			let maxRows = min(max((a["max_rows"] as? Int) ?? 200, 1), 5000)
 			let statements = SQLSplitter.split(sql, t.dialect.syntax).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 			guard !statements.isEmpty else { throw MCPFailure("실행할 SQL 이 없습니다") }
-			for s in statements {
-				if let why = MCPPolicy.check(s, permission, t.dialect.syntax) {
-					note("막음 · \(t.server.displayName) · \(s.prefix(80))", ok: false)
-					throw MCPFailure(why + "\n막힌 문장: " + String(s.prefix(200)))
-				}
-			}
+			try await approve(statements, t, database: a["database"] as? String)
 			let c = try await connection(t)
 			if let db = a["database"] as? String, !db.isEmpty { _ = try await c.query(t.dialect.use(db)) }
 			var out: [[String: Any]] = []
@@ -577,11 +572,11 @@ final class MCPServer {
 			let sql = try string(a, "sql")
 			var run = (a["run"] as? Bool) ?? false
 			let statements = SQLSplitter.split(sql, t.dialect.syntax).map(\.text).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-			// 실행이 쿼리 권한을 넘으면 실행하지 않고 넣기만 한다 (사용자가 검토하고 직접 실행)
+			// 실행이 자동 허용 범위를 넘으면: 읽기 전용은 실행하지 않고, 안전한 쿼리만 자동 허용이면 사용자에게 묻는다 (넣기는 한다)
 			var blocked: String?
-			if run, let s = statements.first(where: { MCPPolicy.check($0, permission, t.dialect.syntax) != nil }) {
-				blocked = MCPPolicy.check(s, permission, t.dialect.syntax)! + " 막힌 문장: " + String(s.prefix(200))
-				run = false
+			if run {
+				do { try await approve(statements, t, database: a["database"] as? String) }
+				catch { blocked = error.localizedDescription; run = false }
 			}
 			front(session)
 			if let db = a["database"] as? String, !db.isEmpty, session.databases.contains(db) { panel.database = db }
@@ -590,7 +585,7 @@ final class MCPServer {
 			note("show_query · \(t.server.displayName) · \(sql.prefix(80))")
 			guard run else {
 				var d: [String: Any] = ["shown": true, "ran": false]
-				if let blocked { d["not_run"] = blocked + " — 쿼리 패널 [MCP] 칸에 넣어 두었으니 사용자가 검토하고 ⌘↩ 로 직접 실행할 수 있다" }
+				if let blocked { d["not_run"] = blocked }
 				return json(d)
 			}
 			await panel.run(statements)
@@ -648,6 +643,27 @@ final class MCPServer {
 		default:
 			throw MCPFailure("모르는 도구: \(name)")
 		}
+	}
+
+	// MARK: 권한 밖 쿼리
+
+	/// 쿼리 권한을 넘는 문장이 있으면: 읽기 전용은 바로 거절, 안전한 쿼리만 자동 허용이면 사용자에게 묻고(허용 시트) 거절이면 실패
+	private func approve(_ statements: [String], _ t: Target, database: String?) async throws {
+		let blocked = statements.filter { MCPPolicy.check($0, permission, t.dialect.syntax) != nil }
+		guard let first = blocked.first else { return }
+		if permission == .readOnly {
+			note("막음 · \(t.server.displayName) · \(first.prefix(80))", ok: false)
+			throw MCPFailure(MCPPolicy.check(first, permission, t.dialect.syntax)! + "\n막힌 문장: " + String(first.prefix(200)))
+		}
+		note("허용 묻는 중 · \(t.server.displayName) · \(blocked.count)개")
+		let window = t.session.flatMap { s in NSApp.windows.first { $0.isVisible && $0.title == s.server?.displayName } }
+		let ok = await MCPApproval.ask(.init(server: t.server.displayName, database: database, blocked: blocked,
+		                                     total: statements.count, syntax: t.dialect.syntax), window: window)
+		guard ok else {
+			note("사용자가 거절 · \(t.server.displayName)", ok: false)
+			throw MCPFailure("사용자가 실행을 거절했습니다 (자동 허용 밖 \(blocked.count)개: " + String(first.prefix(120)) + " …). 거절한 쿼리는 다시 보내지 말고 사용자에게 어떻게 할지 묻는다.")
+		}
+		note("사용자가 허용 · \(t.server.displayName) · \(blocked.count)개")
 	}
 
 	// MARK: 나만 보는 뷰
