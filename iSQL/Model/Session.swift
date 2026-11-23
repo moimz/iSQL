@@ -70,7 +70,12 @@ final class Session {
 		case connecting(String)
 		case connected
 		case failed(String)
+		/// 이 맥의 IP 가 서버의 접속 허용 IP 가 아니라 접속하지 않음 (VPN 안내)
+		case blocked(NetworkAccess.Report)
 	}
+
+	/// 다음 접속 한 번은 허용 IP 검사를 건너뛴다 ("그래도 접속")
+	@ObservationIgnored var skipAccessCheckOnce = false
 
 	private(set) var server: Server?
 	private(set) var state: State = .idle
@@ -196,6 +201,13 @@ final class Session {
 		disconnect()
 		self.server = server
 		authFailed = false
+		// 접속 허용 IP: 이 맥이 그 IP 가 아니면 접속하지 않고 VPN 을 켜라고 안내한다
+		if let allowed = server.allowedIPs, !allowed.isEmpty, !skipAccessCheckOnce {
+			state = .connecting("이 맥의 IP 확인 중…")
+			let r = await NetworkAccess.check(allowed)
+			guard r.allowed else { state = .blocked(r); return }
+		}
+		skipAccessCheckOnce = false
 		do {
 			let (t, c) = try await Self.open(server, mysqlPassword: mysqlPassword, sshSecret: sshSecret) { [weak self] step in
 				self?.state = .connecting(step)

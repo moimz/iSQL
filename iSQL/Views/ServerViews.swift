@@ -378,6 +378,8 @@ struct SessionStatusView: View {
 
 	var body: some View {
 		switch session.state {
+		case .blocked(let report):
+			AccessBlockedView(model: model, session: session, report: report)
 		case .failed(let message):
 			VStack(spacing: 16) {
 				Image(systemName: "exclamationmark.triangle").font(.system(size: 40)).foregroundStyle(.orange)
@@ -412,6 +414,98 @@ struct SessionStatusView: View {
 				Button("그만두기") { if let id = session.server?.id { model.disconnect(id) } }.controlSize(.large)
 			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
+		}
+	}
+}
+
+/// 접속 허용 IP 가 아니어서 접속하지 않았을 때: 본 IP 들과 macOS 에 등록된 VPN 목록 (켜면 다시 확인해 이어서 접속)
+struct AccessBlockedView: View {
+	@Environment(ServerStore.self) private var store
+	let model: WindowModel
+	let session: Session
+	let report: NetworkAccess.Report
+	@State private var vpns: [NetworkAccess.VPN] = []
+	@State private var loaded = false
+	/// [연결] 을 누른 VPN (연결되면 다시 접속)
+	@State private var waiting: String?
+
+	var body: some View {
+		VStack(spacing: 16) {
+			Image(systemName: "network.badge.shield.half.filled").font(.system(size: 40)).foregroundStyle(.orange)
+			Text("\(session.server?.displayName ?? "") 에 접속할 수 없는 IP 입니다").font(.title2)
+			Text("이 서버는 접속 허용 IP 에서만 들어갈 수 있습니다: \(report.allowedList.joined(separator: ", "))\nVPN 을 켜면 다시 확인해 이어서 접속합니다.")
+				.foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 520)
+			// 본 IP
+			VStack(alignment: .leading, spacing: 4) {
+				ForEach(report.seen, id: \.self) { s in
+					HStack(spacing: 6) {
+						Text(NetworkAccess.label(s.interface)).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+						Text(s.asked ? "\(s.local) → \(s.publicIP ?? "공인 IP 를 알 수 없음")" : "\(s.local) (공인)").monospacedDigit().textSelection(.enabled)
+					}
+					.font(.callout)
+				}
+			}
+			.padding(12)
+			.background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+			// VPN 목록
+			VStack(alignment: .leading, spacing: 6) {
+				Text("이 맥의 VPN").font(.headline)
+				if !loaded {
+					ProgressView().controlSize(.small)
+				} else if vpns.isEmpty {
+					Text("시스템 설정 > VPN 에 등록된 VPN 이 없습니다. VPN 앱을 직접 켜 주세요.").foregroundStyle(.secondary).font(.callout)
+				}
+				ForEach(vpns) { v in
+					HStack(spacing: 8) {
+						Circle().fill(v.connected ? Color.green : v.connecting ? Color.orange : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
+						Text(v.name)
+						Spacer()
+						if v.connected {
+							Text("연결됨").foregroundStyle(.secondary).font(.callout)
+						} else if v.connecting || waiting == v.id {
+							ProgressView().controlSize(.small)
+						} else {
+							Button("연결") { connect(v) }
+						}
+					}
+					.frame(width: 360)
+				}
+			}
+			HStack {
+				Button("시스템 설정 > VPN") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension")!) }
+				Button("설정 고치기") { if let s = session.server { model.edit(s, saved: store.servers.contains { $0.id == s.id }) } }
+				Button("그래도 접속") { if let s = session.server { session.skipAccessCheckOnce = true; model.open(s) } }
+				Button("다시 확인") { if let s = session.server { model.open(s) } }
+					.buttonStyle(.borderedProminent)
+			}
+			.controlSize(.large)
+		}
+		.padding()
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.task { await poll() }
+	}
+
+	private func connect(_ v: NetworkAccess.VPN) {
+		waiting = v.id
+		Task { await NetworkAccess.start(v) }
+	}
+
+	/// VPN 상태를 1초마다 읽는다. [연결] 을 누른 VPN 이 연결되면 다시 접속 (허용 IP 를 다시 확인)
+	private func poll() async {
+		while !Task.isCancelled {
+			let list = await NetworkAccess.vpnList()
+			vpns = list
+			loaded = true
+			if let w = waiting, let v = list.first(where: { $0.id == w }) {
+				if v.connected {
+					waiting = nil
+					try? await Task.sleep(for: .seconds(1))   // 경로가 바뀔 틈
+					if let s = session.server { model.open(s) }
+					return
+				}
+				if v.status == "Disconnected" { /* 아직 시작 전이거나 실패: 조금 더 기다린다 */ }
+			}
+			try? await Task.sleep(for: .seconds(1))
 		}
 	}
 }

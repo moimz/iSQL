@@ -59,6 +59,10 @@ struct Server: Codable, Identifiable, Hashable {
 	var tlsCA: String?
 	var tlsMode: TLSMode { tls ?? .off }
 
+	/// 이 DB 에 접속을 허용하는 이 맥의 IP (203.0.113.10, 10.0.0.0/8 …). 비면 모든 IP (검사 안 함). 예전 파일에는 없어서 옵셔널
+	/// 아니면 접속하지 않고 VPN 을 켜라고 안내한다 (NetworkAccess, 사용자 2026-11-23)
+	var allowedIPs: [String]?
+
 	/// Oracle: 서비스 이름 (oracleSID 가 true 면 SID). 예전 파일에는 없어서 옵셔널
 	var service: String?
 	var oracleSID: Bool?

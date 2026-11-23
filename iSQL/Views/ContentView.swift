@@ -254,6 +254,7 @@ private struct ServerMenuRow: View {
 		switch state {
 		case .connecting: ("접속하는 중", .orange)
 		case .failed: ("접속 실패", .red)
+		case .blocked: ("VPN 필요", .orange)
 		default: nil
 		}
 	}

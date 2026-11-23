@@ -26,6 +26,8 @@ struct ConnectForm: View {
 	/// 접속 시험 차례 번호: 중단하면 올려서, 늦게 끝난 시험의 결과는 버리고 연결은 닫는다
 	@State private var testRun = 0
 	@State private var savedFlash = false
+	/// 허용 IP 칸에 친 글 그대로 (치는 중에 쉼표가 사라지지 않게). 나눈 목록은 server.allowedIPs 에
+	@State private var allowedText = ""
 
 	struct TestStep: Identifiable {
 		let id = UUID()
@@ -37,6 +39,7 @@ struct ConnectForm: View {
 		self.model = model
 		self.saved = saved
 		_server = State(initialValue: initial)
+		_allowedText = State(initialValue: (initial.allowedIPs ?? []).joined(separator: ", "))
 	}
 
 	@State private var showPassword = false
@@ -301,6 +304,18 @@ struct ConnectForm: View {
 						row("SSH 비밀번호") { secret($sshSecret, show: $showSecret, "") }
 					}
 					row("SSH 포트") { number($server.ssh.port) }
+				}
+				// 접속 허용 IP: 이 맥이 그 IP 가 아니면 접속하지 않고 VPN 을 켜라고 안내 (비면 검사 안 함)
+				divider
+				row("허용 IP") {
+					field(Binding(get: { allowedText },
+					              set: { allowedText = $0; let l = NetworkAccess.parseList($0); server.allowedIPs = l.isEmpty ? nil : l }),
+					      "선택 (예: 203.0.113.10, 10.0.0.0/8)")
+				}
+				GridRow {
+					Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+					Text("이 DB 에 들어갈 수 있는 이 맥의 IP. 적어 두면 접속 전에 확인하고, 아니면 VPN 을 켜라고 알려 줍니다. 비우면 확인하지 않습니다.")
+						.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 				}
 				}
 			}

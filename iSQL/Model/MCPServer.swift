@@ -415,6 +415,7 @@ final class MCPServer {
 					                        "connection": t.server.subtitle,
 					                        "connected_in_app": t.session != nil]
 					if let v = t.session?.serverVersion, !v.isEmpty { d["version"] = v }
+					if let a = t.server.allowedIPs, !a.isEmpty { d["allowed_ips"] = a }
 					return d
 				},
 			])
@@ -830,7 +831,19 @@ final class MCPServer {
 			conns[t.server.id] = (c, nil)
 			return c
 		}
-		// 앱에서 접속 안 한 서버 (범위: 서버 목록의 모든 서버): 키체인 비밀번호로 직접
+		// 앱에서 접속 안 한 서버 (범위: 서버 목록의 모든 서버): 키체인 비밀번호로 직접.
+		// 접속 허용 IP 가 있고 이 맥이 그 IP 가 아니면 접속하지 않고 VPN 을 켜라고 알려 준다 (앱 화면과 같은 검사)
+		if let allowed = t.server.allowedIPs, !allowed.isEmpty {
+			let r = await NetworkAccess.check(allowed)
+			if !r.allowed {
+				let vpns = await NetworkAccess.vpnList()
+				let list = vpns.isEmpty ? "이 맥에 등록된 VPN 이 없습니다 (VPN 앱을 직접 켜야 함)."
+					: "이 맥의 VPN: " + vpns.map { "\($0.name)(\($0.connected ? "연결됨" : "꺼짐"))" }.joined(separator: ", ")
+				note("허용 IP 아님 · \(t.server.displayName)", ok: false)
+				throw MCPFailure(NetworkAccess.explain(r, server: t.server.displayName) + "\n" + list
+					+ "\n사용자에게 VPN 을 켜 달라고 안내한 뒤 다시 시도한다. iSQL 에서 이 서버를 열면 VPN 을 고르는 화면이 뜬다.")
+			}
+		}
 		let (tunnel, c) = try await Session.open(t.server, mysqlPassword: Keychain.get(t.server.mysqlPasswordKey),
 		                                         sshSecret: Keychain.get(t.server.sshSecretKey)) { _ in }
 		note("접속 · \(t.server.displayName)")
