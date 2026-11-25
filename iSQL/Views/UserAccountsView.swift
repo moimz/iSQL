@@ -12,7 +12,10 @@ struct UserAccountsView: View {
 	@State private var editing: Set<String>?
 	@State private var addingUser = false
 	@State private var changingPassword = false
-	@State private var addingDBGrant = false
+	/// 데이터베이스 권한 시트: 열 때 고를 DB (줄의 수정 버튼 → 그 DB, 추가 버튼 → 빈칸 = 첫 DB).
+	/// isPresented 와 DB 를 따로 두면 시트가 옛 DB 값을 잡고 뜰 때가 있어(사용자 2026-11-26) 열기 자체를 DB 값으로 한다
+	@State private var grantSheet: GrantSheetTarget?
+	private struct GrantSheetTarget: Identifiable { let id = UUID(); let db: String }
 	@State private var confirmDrop = false
 	@State private var confirmRevoke: DBGrant?
 	/// 오른쪽 탭 (계정을 바꿔도 그대로)
@@ -71,11 +74,12 @@ struct UserAccountsView: View {
 				}
 			}
 		}
-		.sheet(isPresented: $addingDBGrant) {
+		.sheet(item: $grantSheet) { target in
 			if let a = selected {
-				DBGrantSheet(account: a, dialect: dialect, databases: session.databases) { db, privs in
-					guard let sql = Privilege.grantSQL(privs, on: AccountManager.target(db, dialect), to: a, dialect) else { return true }
-					return await manager.run([sql], then: a)
+				let existing = Dictionary((manager.dbGrants[a.id] ?? []).map { ($0.db, $0.privileges) }, uniquingKeysWith: { x, _ in x })
+				DBGrantSheet(account: a, dialect: dialect, databases: session.databases, existing: existing, initialDB: target.db) { db, privs in
+					let sql = DBGrantSheet.changeSQL(from: existing[db] ?? [], to: privs, db: db, account: a, dialect)
+					return sql.isEmpty ? true : await manager.run(sql, then: a)
 				}
 			}
 		}
@@ -276,7 +280,7 @@ struct UserAccountsView: View {
 			HStack {
 				Text("데이터베이스별 권한").foregroundStyle(.secondary)
 				Spacer()
-				Button("데이터베이스 권한 추가…") { addingDBGrant = true }
+				Button("데이터베이스 권한 추가…") { grantSheet = GrantSheetTarget(db: "") }
 			}
 			if list.isEmpty {
 				Text("없음").foregroundStyle(.secondary).font(.callout)
@@ -290,6 +294,10 @@ struct UserAccountsView: View {
 					     : Privilege.all.map(\.sql).filter { g.privileges.contains($0) }.joined(separator: ", "))
 						.font(.callout).foregroundStyle(.secondary)
 						.frame(maxWidth: .infinity, alignment: .leading)
+					// 더하거나 고치기: 그 DB 를 고른 권한 시트 (지금 준 권한에 체크)
+					Button { grantSheet = GrantSheetTarget(db: g.db) } label: { Image(systemName: "plus.circle") }
+						.buttonStyle(.borderless)
+						.help("데이터베이스 권한 수정")
 					Button { confirmRevoke = g } label: { Image(systemName: "minus.circle") }
 						.buttonStyle(.borderless)
 						.help("데이터베이스 권한 제거")
@@ -433,30 +441,53 @@ struct PasswordSheet: View {
 	}
 }
 
-/// 데이터베이스 권한 추가: DB 고르기 + 권한 체크 (기본: 데이터 넷)
+/// 데이터베이스 권한 추가 · 수정: DB 고르기 + 권한 체크.
+/// 이미 권한을 준 DB 를 고르면 지금 준 권한에 체크된 채로 열리고, 바꾼 만큼 GRANT · REVOKE 한다 (사용자 2026-11-26). 처음 주는 DB 는 기본 데이터 넷
 struct DBGrantSheet: View {
 	let account: DBAccount
 	let dialect: any SQLDialect
 	let databases: [String]
-	let grant: (String, Set<String>) async -> Bool
+	/// DB → 지금 준 권한
+	let existing: [String: Set<String>]
+	var initialDB = ""
+	let apply: (String, Set<String>) async -> Bool
 	@Environment(\.dismiss) private var dismiss
 	@State private var db = ""
-	@State private var privs: Set<String> = ["SELECT", "INSERT", "UPDATE", "DELETE"]
+	@State private var privs: Set<String> = []
 	@State private var running = false
 
+	private static let defaultPrivs: Set<String> = ["SELECT", "INSERT", "UPDATE", "DELETE"]
 	private var perDB: [Privilege] { Privilege.all.filter(\.perDatabase) }
+	private var old: Set<String>? { existing[db] }
+	/// 권한을 준 DB 가 목록에 없을 수도 있다 (와일드카드 이름 · 지운 DB)
+	private var options: [String] { databases + existing.keys.filter { !databases.contains($0) }.sorted() }
+	private var sql: [String] { db.isEmpty ? [] : Self.changeSQL(from: old ?? [], to: privs, db: db, account: account, dialect) }
+
+	/// 지금 권한 → 고른 권한: 빠진 것은 REVOKE, 더한 것은 GRANT
+	static func changeSQL(from old: Set<String>, to new: Set<String>, db: String, account: DBAccount, _ dialect: any SQLDialect) -> [String] {
+		let target = AccountManager.target(db, dialect)
+		return [Privilege.revokeSQL(old.subtracting(new), on: target, from: account, dialect),
+		        Privilege.grantSQL(new.subtracting(old), on: target, to: account, dialect)].compactMap { $0 }
+	}
+
+	private func pick(_ name: String) {
+		db = name
+		privs = existing[name] ?? Self.defaultPrivs
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
-			Text("\(account.sql(dialect)) 에 데이터베이스 권한 추가").font(.headline)
+			Text("\(account.sql(dialect)) 의 데이터베이스 권한 " + (old == nil ? "추가" : "수정")).font(.headline)
 			HStack {
 				Text("데이터베이스").foregroundStyle(.secondary)
-				PopUp(selection: $db, options: databases.map { ($0, Optional($0)) })
+				PopUp(selection: Binding(get: { db }, set: { pick($0) }), options: options.map { ($0, Optional($0)) })
 					.frame(width: 240)
+				if old != nil { Text("권한을 준 데이터베이스").font(.callout).foregroundStyle(.secondary) }
 			}
 			HStack {
 				Button("모두 선택") { privs = Set(perDB.map(\.sql)) }.buttonStyle(.link)
 				Button("모두 해제") { privs = [] }.buttonStyle(.link)
+				if let old, old != privs { Button("되돌리기") { privs = old }.buttonStyle(.link) }
 			}
 			HStack(alignment: .top, spacing: 24) {
 				ForEach(Privilege.Group.allCases, id: \.self) { g in
@@ -475,26 +506,26 @@ struct DBGrantSheet: View {
 					}
 				}
 			}
-			if let sql = Privilege.grantSQL(privs, on: AccountManager.target(db, dialect), to: account, dialect), !db.isEmpty {
-				Text(sql).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+			if !sql.isEmpty {
+				Text(sql.joined(separator: ";\n") + ";").font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
 					.fixedSize(horizontal: false, vertical: true)
 			}
 			HStack {
 				Spacer()
 				Button("취소", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-				Button("추가") {
+				Button(old == nil ? "추가" : "적용") {
 					running = true
-					Task { let ok = await grant(db, privs); running = false; if ok { dismiss() } }
+					Task { let ok = await apply(db, privs); running = false; if ok { dismiss() } }
 				}
 				.buttonStyle(.borderedProminent)
 				.keyboardShortcut(.defaultAction)
-				.disabled(db.isEmpty || privs.isEmpty || running)
+				.disabled(db.isEmpty || sql.isEmpty || running)
 			}
 			.controlSize(.large)
 		}
 		.padding(20)
 		.frame(width: 620)
-		.onAppear { if db.isEmpty { db = databases.first ?? "" } }
+		.onAppear { if db.isEmpty { pick(initialDB.isEmpty ? (databases.first ?? "") : initialDB) } }
 	}
 }
 
