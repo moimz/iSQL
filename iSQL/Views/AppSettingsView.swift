@@ -23,11 +23,7 @@ struct AppSettingsView: View {
 /// 앱 설정 > 일반 (앱 전역 설정은 차례로 들어간다)
 private struct AppGeneralPage: View {
 	@AppStorage(AutoConnect.reconnectKey) private var reconnectLast = false
-	private var version: String {
-		let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-		let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-		return "\(v) (\(b))"
-	}
+	private var version: String { AboutView.versionText }
 
 	var body: some View {
 		Form {

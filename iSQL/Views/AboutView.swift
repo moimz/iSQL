@@ -6,11 +6,16 @@ import AppKit
 struct AboutView: View {
 	static let windowID = "about"
 
-	private var version: String {
-		let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-		let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-		return "버전 \(v) (\(b))"
+	/// "2.9 (빌드 210 · 2855fa9)" (Ai.md 10번 "앱 안의 버전 표시"). 해시는 빌드 단계 Scripts/stamp-commit.sh 가 ISQLCommit 에 넣는다
+	static var versionText: String {
+		let info = Bundle.main.infoDictionary
+		let v = info?["CFBundleShortVersionString"] as? String ?? "?"
+		let b = info?["CFBundleVersion"] as? String ?? "?"
+		let c = (info?["ISQLCommit"] as? String).map { " · \($0)" } ?? ""
+		return "\(v) (빌드 \(b)\(c))"
 	}
+
+	private var version: String { "버전 " + Self.versionText }
 
 	var body: some View {
 		VStack(spacing: 0) {
