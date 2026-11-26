@@ -116,3 +116,21 @@ struct WindowMenuItems: View {
 		Divider()
 	}
 }
+
+/// 도움말 메뉴: GitHub 페이지 · 문제 신고 (사용자 2026-11-27, Ai.md 10번 "도움말 메뉴")
+struct HelpMenuItems: View {
+	static let repo = "https://github.com/moimz/iSQL"
+
+	/// 새 이슈 본문 맨 아래에 버전 · macOS 만 채운다 (개인 정보 · 서버 · 경로는 넣지 않는다)
+	static var issueURL: URL {
+		let os = ProcessInfo.processInfo.operatingSystemVersion
+		var c = URLComponents(string: repo + "/issues/new")!
+		c.queryItems = [URLQueryItem(name: "body", value: "\n\n---\niSQL \(AboutView.versionText) · macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")]
+		return c.url!
+	}
+
+	var body: some View {
+		Button("iSQL GitHub 페이지") { NSWorkspace.shared.open(URL(string: Self.repo)!) }
+		Button("문제 신고…") { NSWorkspace.shared.open(Self.issueURL) }
+	}
+}

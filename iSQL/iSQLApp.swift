@@ -61,6 +61,8 @@ struct iSQLApp: App {
 				Button("서버 설정 가져오기…") { AppState.shared.requestTransfer(.importFile(nil)) }
 				Button("서버 정보 내보내기…") { AppState.shared.requestTransfer(.export) }
 			}
+			// 도움말: 기본 "iSQL 도움말"(도움말 책 없음) 대신 GitHub 페이지 · 문제 신고 (Ai.md 10번 "도움말 메뉴")
+			CommandGroup(replacing: .help) { HelpMenuItems() }
 		}
 
 		// iSQL 정보 창
