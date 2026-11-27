@@ -399,12 +399,12 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 			let got: Int
 			if let tls {
 				do { got = try chunk.withUnsafeMutableBytes { try tls.read($0.baseAddress!, $0.count) } }
-				catch { closeSync(); throw error }
+				catch { closeSocket(); throw error }
 			} else {
 				got = chunk.withUnsafeMutableBytes { Darwin.read(fd, $0.baseAddress, $0.count) }
 			}
 			if got <= 0 {
-				closeSync()
+				closeSocket()
 				throw got == 0 ? MySQLError.closed : MySQLError.io(String(cString: strerror(errno)))
 			}
 			readBuffer += chunk[0..<got]
@@ -423,15 +423,23 @@ final class MySQLConnection: DBConnection, @unchecked Sendable {
 			} else {
 				n = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress! + off, bytes.count - off) }
 			}
-			if n <= 0 { closeSync(); throw MySQLError.io(String(cString: strerror(errno))) }
+			if n <= 0 { closeSocket(); throw MySQLError.io(String(cString: strerror(errno))) }
 			off += n
 		}
 	}
 
+	/// 닫기 (close()): 서버에 COM_QUIT 을 보내고 소켓을 닫는다
 	private func closeSync() {
 		guard fd >= 0 else { return }
 		seq = 0
-		_ = try? writePacket([0x01])     // COM_QUIT
+		_ = try? writePacket([0x01])     // COM_QUIT (실패하면 writeAll 이 closeSocket 으로 이미 닫는다)
+		closeSocket()
+	}
+
+	/// 읽기·쓰기 오류 때: 아무것도 보내지 않고 소켓만 닫는다.
+	/// 예전엔 여기서 closeSync 를 불러 COM_QUIT 을 쓰다가 또 실패 → closeSync → … 끝없이 돌아 스택이 넘쳐 앱이 죽었다 (2.9.2 크래시)
+	private func closeSocket() {
+		guard fd >= 0 else { return }
 		tls?.close()
 		tls = nil
 		Darwin.close(fd)
