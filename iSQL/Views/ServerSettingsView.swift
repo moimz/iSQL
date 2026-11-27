@@ -188,7 +188,7 @@ struct ServerSettingsPage: View {
 			} header: {
 				Text("현재 서버 설정")
 			} footer: {
-				Text("서버별 설정으로, iCloud로 서버별 동기화됩니다.").foregroundStyle(.tertiary)
+				Text("서버별 설정으로, iCloud로 서버별 동기화됩니다.")
 			}
 		}
 		.formStyle(.grouped)

@@ -29,8 +29,10 @@ private struct AppGeneralPage: View {
 		Form {
 			Section {
 				Toggle("앱 실행 시 마지막 세션 복원", isOn: $reconnectLast)
+			} header: {
+				Text("시작")
 			} footer: {
-				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)").foregroundStyle(.tertiary)
+				Text("앱 실행 시 마지막 세션에서 접속 중인 모든 서버에 자동으로 접속합니다. (단, 앱 실행 시 자동 접속 설정이 된 서버는 마지막 세션 상태와 무관하게 접속합니다.)")
 			}
 			TimeZoneSection()
 			FileAssociationSection()
@@ -54,7 +56,7 @@ private struct TimeZoneSection: View {
 		} header: {
 			Text("시간 표시")
 		} footer: {
-			Text("컬럼을 날짜로 볼 때(유닉스 시간)와 Oracle 의 시간대가 붙은 값을 이 시간대로 보여 줍니다. 서버에 저장된 값은 바뀌지 않습니다.").foregroundStyle(.tertiary)
+			Text("컬럼을 날짜로 볼 때(유닉스 시간)와 Oracle 의 시간대가 붙은 값을 이 시간대로 보여 줍니다. 서버에 저장된 값은 바뀌지 않습니다.")
 		}
 	}
 }
@@ -68,7 +70,7 @@ private struct UpdateSection: View {
 		Section {
 			LabeledContent("버전") {
 				HStack(spacing: 8) {
-					Text(version).foregroundStyle(.secondary).monospacedDigit()
+					Text(version).foregroundStyle(.secondary).monospacedDigit().textSelection(.enabled)
 					Button("업데이트 확인…") { updater.checkForUpdates() }.disabled(!updater.canCheck)
 				}
 			}
@@ -76,7 +78,7 @@ private struct UpdateSection: View {
 		} header: {
 			Text("업데이트")
 		} footer: {
-			Text("하루에 한 번 새 버전이 있는지 확인하고, 있으면 설치할지 묻습니다.").foregroundStyle(.tertiary)
+			Text("하루에 한 번 새 버전이 있는지 확인하고, 있으면 설치할지 묻습니다.")
 		}
 	}
 }
@@ -98,8 +100,11 @@ private struct FileAssociationSection: View {
 		} header: {
 			Text("파일 연결")
 		} footer: {
-			Text(error ?? "Finder 의 \"다음으로 열기\" 에는 늘 iSQL 이 있습니다. 기본 앱으로 정하면 두 번 눌러 iSQL 로 엽니다.")
-				.foregroundStyle(error == nil ? .tertiary : .secondary)
+			if let error {
+				Text(error).foregroundStyle(.red)
+			} else {
+				Text("Finder 의 \"다음으로 열기\" 에는 늘 iSQL 이 있습니다. 기본 앱으로 정하면 두 번 눌러 iSQL 로 엽니다.")
+			}
 		}
 		.onAppear(perform: refresh)
 		.onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
@@ -189,7 +194,7 @@ private struct MCPSettingsPage: View {
 						Image(systemName: e.ok ? "checkmark.circle" : "xmark.octagon").foregroundStyle(e.ok ? Color.secondary : Color.orange)
 						Text(e.text).lineLimit(1).truncationMode(.tail)
 						Spacer()
-						Text(e.time, style: .time).foregroundStyle(.tertiary).monospacedDigit()
+						Text(e.time, style: .time).foregroundStyle(.secondary).monospacedDigit()
 					}
 					.font(.callout)
 				}

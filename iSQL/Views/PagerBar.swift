@@ -72,11 +72,12 @@ struct PagerBar: View {
 				}
 				.pill(interactive: false)
 				Menu {
-					ForEach(TableData.pageSizes, id: \.self) { n in
-						Button { Task { await pager.setPageSize(n) } } label: {
-							if n == pager.pageSize { Label("\(n)행", systemImage: "checkmark") } else { Text("\(n)행") }
-						}
+					// 지금 쪽 크기 체크: 맥 26 메뉴는 Label 의 checkmark 그림을 그리지 않아서(시험 앱으로 확인) 안쪽 Picker 의 표준 체크를 쓴다
+					Picker("", selection: Binding(get: { pager.pageSize }, set: { n in Task { await pager.setPageSize(n) } })) {
+						ForEach(TableData.pageSizes, id: \.self) { Text("\($0)행").tag($0) }
 					}
+					.pickerStyle(.inline)
+					.labelsHidden()
 				} label: {
 					// 메뉴 라벨은 아이콘을 앞으로 옮겨서, 화살표는 글자에 이어 붙인다
 					(Text("\(pager.pageSize)행 ").monospacedDigit()
